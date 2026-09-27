@@ -1,12 +1,10 @@
 package exh.eh
 
-import android.util.SparseArray
 import androidx.core.util.AtomicFile
-import androidx.core.util.forEach
 import exh.log.xLogD
+import exh.log.xLogE
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
@@ -33,6 +31,9 @@ import kotlin.concurrent.write
  * In memory Int -> Obj lookup table implementation that
  * automatically persists itself to disk atomically and asynchronously.
  *
+ * Bounded: the oldest inserted entry is evicted once [maxEntries] is reached, so
+ * neither the heap nor the backing file can grow without limit.
+ *
  * Thread safe
  *
  * @author nulldev
@@ -41,22 +42,22 @@ class MemAutoFlushingLookupTable<T>(
     file: File,
     private val serializer: EntrySerializer<T>,
     private val debounceTimeMs: Long = 3000,
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
 ) : CoroutineScope by CoroutineScope(AppDispatchersHolder.get().io + SupervisorJob()), Closeable {
-    /**
-     * The context of this scope.
-     * Context is encapsulated by the scope and used for implementation of coroutine builders that are extensions on the scope.
-     * Accessing this property in general code is not recommended for any purposes except accessing [Job] instance for advanced usages.
-     *
-     * By convention, should contain an instance of a [job][Job] to enforce structured concurrency.
-     */
 
-    private val table = SparseArray<T>(INITIAL_SIZE)
+    // Insertion ordered rather than access ordered: eviction drops the oldest
+    // insert, which keeps get() non-mutating so it only needs the read lock.
+    private val table = object : LinkedHashMap<Int, T>(INITIAL_SIZE, LOAD_FACTOR, false) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Int, T>?): Boolean =
+            this.size > maxEntries
+    }
+
     private val rwLock = ReentrantReadWriteLock()
     private val loadGate = CompletableDeferred<Unit>()
 
     // Used to debounce
     @Volatile
-    private var writeCounter = Long.MIN_VALUE
+    private var writeCounter = 0L
 
     @Volatile
     private var flushed = true
@@ -64,7 +65,7 @@ class MemAutoFlushingLookupTable<T>(
     private val atomicFile = AtomicFile(file)
 
     private val shutdownHook = thread(start = false) {
-        if (!flushed) writeSynchronously()
+        if (!flushed) runCatching { writeSnapshot() }
     }
 
     init {
@@ -85,24 +86,45 @@ class MemAutoFlushingLookupTable<T>(
 
     private fun initialLoad() {
         launch {
+            var skipped = 0
+            var firstFailure: Throwable? = null
             try {
                 atomicFile.openRead().source().buffer().use { input ->
-                    val bb = ByteBuffer.allocate(8)
+                    val bb = ByteBuffer.allocate(ENTRY_HEADER_BYTES)
 
                     while (true) {
-                        if (!input.requireBytes(bb.array(), 8)) break
+                        if (!input.requireBytes(bb.array(), ENTRY_HEADER_BYTES)) break
                         val k = bb.getInt(0)
                         val size = bb.getInt(4)
+                        // A corrupt length would otherwise allocate an arbitrary array
+                        if (size < 0 || size > MAX_ENTRY_BYTES) {
+                            skipped++
+                            break
+                        }
                         val strBArr = ByteArray(size)
                         if (!input.requireBytes(strBArr, size)) break
-                        table.put(k, serializer.read(strBArr.decodeToString()))
+                        val value = try {
+                            serializer.read(strBArr.decodeToString())
+                        } catch (e: Throwable) {
+                            skipped++
+                            if (firstFailure == null) firstFailure = e
+                            null
+                        }
+                        if (value != null) table[k] = value
                     }
                 }
             } catch (e: FileNotFoundException) {
                 this@MemAutoFlushingLookupTable.xLogD("Lookup table not found!", e)
                 // Ignored
+            } catch (e: Throwable) {
+                this@MemAutoFlushingLookupTable.xLogE("Failed to read lookup table", e)
             } finally {
-                if (!loadGate.isCompleted) loadGate.complete(Unit)
+                loadGate.complete(Unit)
+            }
+            if (skipped > 0) {
+                this@MemAutoFlushingLookupTable.xLogE(
+                    "Skipped $skipped unreadable lookup table entries: ${firstFailure?.message.orEmpty()}",
+                )
             }
         }
     }
@@ -114,26 +136,34 @@ class MemAutoFlushingLookupTable<T>(
             delay(debounceTimeMs)
             if (id != writeCounter) return@launch
 
-            rwLock.write {
-                // Second check inside of mutex to prevent dupe writes
-                if (id != writeCounter) return@launch
-                withContext(NonCancellable) {
-                    writeSynchronously()
-
-                    // Yes there is a race here, no it's isn't critical
+            // The snapshot and the disk write both run outside the lock. Holding a
+            // ReentrantReadWriteLock across withContext would release it on whichever
+            // thread resumes, which throws and strands the lock for every later reader.
+            withContext(NonCancellable) {
+                try {
+                    writeSnapshot()
                     if (id == writeCounter) flushed = true
+                } catch (e: Throwable) {
+                    // Uncaught here would reach the SupervisorJob's default handler
+                    // and take the process down on any disk write failure.
+                    this@MemAutoFlushingLookupTable.xLogE("Failed to persist lookup table", e)
                 }
             }
         }
     }
 
-    private fun writeSynchronously() {
-        val bb = ByteBuffer.allocate(ENTRY_SIZE_BYTES)
+    private fun writeSnapshot() {
+        val snapshot = rwLock.read { table.entries.map { it.key to it.value } }
+        writeToDisk(snapshot)
+    }
+
+    private fun writeToDisk(snapshot: List<Pair<Int, T>>) {
+        val bb = ByteBuffer.allocate(ENTRY_HEADER_BYTES)
 
         val fos = atomicFile.startWrite()
         try {
             val out = fos.sink().buffer()
-            table.forEach { key, value ->
+            snapshot.forEach { (key, value) ->
                 val v = serializer.write(value).encodeToByteArray()
                 bb.putInt(0, key)
                 bb.putInt(4, v.size)
@@ -150,67 +180,24 @@ class MemAutoFlushingLookupTable<T>(
 
     suspend fun put(key: Int, value: T) {
         loadGate.await()
-        rwLock.write { table.put(key, value) }
+        rwLock.write { table[key] = value }
         tryWrite()
     }
 
     suspend fun get(key: Int): T? {
         loadGate.await()
-        return rwLock.read { table.get(key) }
+        return rwLock.read { table[key] }
     }
 
     suspend fun size(): Int {
         loadGate.await()
-        return rwLock.read { table.size() }
+        return rwLock.read { table.size }
     }
 
-    /**
-     * Closes this resource, relinquishing any underlying resources.
-     * This method is invoked automatically on objects managed by the
-     * `try`-with-resources statement.
-     *
-     *
-     * While this interface method is declared to throw `Exception`, implementers are *strongly* encouraged to
-     * declare concrete implementations of the `close` method to
-     * throw more specific exceptions, or to throw no exception at all
-     * if the close operation cannot fail.
-     *
-     *
-     *  Cases where the close operation may fail require careful
-     * attention by implementers. It is strongly advised to relinquish
-     * the underlying resources and to internally *mark* the
-     * resource as closed, prior to throwing the exception. The `close` method is unlikely to be invoked more than once and so
-     * this ensures that the resources are released in a timely manner.
-     * Furthermore it reduces problems that could arise when the resource
-     * wraps, or is wrapped, by another resource.
-     *
-     *
-     * *Implementers of this interface are also strongly advised
-     * to not have the `close` method throw [ ].*
-     *
-     * This exception interacts with a thread's interrupted status,
-     * and runtime misbehavior is likely to occur if an `InterruptedException` is [ suppressed][Throwable.addSuppressed].
-     *
-     * More generally, if it would cause problems for an
-     * exception to be suppressed, the `AutoCloseable.close`
-     * method should not throw it.
-     *
-     *
-     * Note that unlike the [close][java.io.Closeable.close]
-     * method of [java.io.Closeable], this `close` method
-     * is *not* required to be idempotent.  In other words,
-     * calling this `close` method more than once may have some
-     * visible side effect, unlike `Closeable.close` which is
-     * required to have no effect if called more than once.
-     *
-     * However, implementers of this interface are strongly encouraged
-     * to make their `close` methods idempotent.
-     *
-     * @throws Exception if this resource cannot be closed
-     */
     override fun close() {
         runBlocking { coroutineContext.job.cancelAndJoin() }
-        Runtime.getRuntime().removeShutdownHook(shutdownHook)
+        runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
+        if (!flushed) runCatching { writeSnapshot() }
     }
 
     interface EntrySerializer<T> {
@@ -227,6 +214,9 @@ class MemAutoFlushingLookupTable<T>(
 
     companion object {
         private const val INITIAL_SIZE = 1000
-        private const val ENTRY_SIZE_BYTES = 8
+        private const val LOAD_FACTOR = 0.75f
+        private const val ENTRY_HEADER_BYTES = 8
+        private const val MAX_ENTRY_BYTES = 64 * 1024
+        private const val DEFAULT_MAX_ENTRIES = 5000
     }
 }

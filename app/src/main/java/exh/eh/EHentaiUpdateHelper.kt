@@ -309,9 +309,12 @@ data class GalleryEntry(val gId: String, val gToken: String) {
          */
         override fun read(string: String): GalleryEntry {
             val colonIndex = string.indexOf(':')
+            require(colonIndex > 0 && colonIndex < string.lastIndex) {
+                "Malformed gallery entry"
+            }
             return GalleryEntry(
                 string.substring(0, colonIndex),
-                string.substring(colonIndex + 1, string.length),
+                string.substring(colonIndex + 1),
             )
         }
     }

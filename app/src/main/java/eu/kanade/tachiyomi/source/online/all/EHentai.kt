@@ -36,7 +36,6 @@ import exh.eh.EHentaiUpdateHelper
 import exh.eh.EHentaiUpdateWorkerConstants
 import exh.eh.GalleryEntry
 import exh.log.xLogD
-import exh.log.xLogI
 import exh.metadata.MetadataUtil
 import exh.metadata.metadata.EHentaiSearchMetadata
 import exh.metadata.metadata.EHentaiSearchMetadata.Companion.CENSORSHIP_STATUS_CENSORED
@@ -373,40 +372,48 @@ class EHentai(
         SMangaUpdate(mangaDetails?.await() ?: manga, chapterDetails?.await() ?: chapters)
     }
 
+    private fun findDetailValue(doc: Document, label: String): Element? =
+        doc.select("#gdd .gdt1")
+            .firstOrNull { it.text().trim().equals(label, ignoreCase = true) }
+            ?.nextElementSibling()
+
+    private val maxParentDepth = 8
+
     suspend fun getChapterList(manga: SManga, throttleFunc: suspend () -> Unit): List<SChapter> {
         var url = manga.url
-        var doc: Document
-        val parentChain = mutableListOf<Pair<Int, String>>()
+        var doc: Document? = null
+        val visitedGids = mutableSetOf<Int>()
 
-        while (true) {
-            val gid = EHentaiSearchMetadata.galleryId(url).toInt()
+        while (visitedGids.size < maxParentDepth) {
+            val gid = EHentaiSearchMetadata.galleryId(url).toIntOrNull() ?: break
+            if (!visitedGids.add(gid)) {
+                xLogD("Parent cycle at gallery %s, stopping walk", gid)
+                break
+            }
+
             val cachedParent = updateHelper.parentLookupTable.get(gid)
 
             if (cachedParent == null) {
                 throttleFunc()
-                doc = client.newCall(exGet(baseUrl + url)).awaitSuccess().asJsoup()
+                val fetched = client.newCall(exGet(baseUrl + url)).awaitSuccess().asJsoup()
+                doc = fetched
 
-                val parentLink = doc.select("#gdd .gdt1").find { el ->
-                    el.text().lowercase() == "parent:"
-                }!!.nextElementSibling()!!.selectFirst("a")?.attr("href")
+                val parentLink = findDetailValue(fetched, "parent:")
+                    ?.selectFirst("a")
+                    ?.attr("href")
+                    ?.nullIfBlank()
+                    ?: break
+                val parentGid = EHentaiSearchMetadata.galleryId(parentLink).toIntOrNull() ?: break
+                val parentToken = EHentaiSearchMetadata.galleryToken(parentLink)
 
-                if (parentLink != null) {
-                    val parentGid = EHentaiSearchMetadata.galleryId(parentLink).toInt()
-                    val parentToken = EHentaiSearchMetadata.galleryToken(parentLink)
+                updateHelper.parentLookupTable.put(
+                    gid,
+                    GalleryEntry(parentGid.toString(), parentToken),
+                )
 
-                    updateHelper.parentLookupTable.put(
-                        gid,
-                        GalleryEntry(parentGid.toString(), parentToken),
-                    )
-
-                    parentChain.add(gid to url)
-                    url = EHentaiSearchMetadata.normalizeUrl(parentLink)
-                } else {
-                    break
-                }
+                url = EHentaiSearchMetadata.normalizeUrl(parentLink)
             } else {
                 xLogD("Parent cache hit: %s!", gid)
-                parentChain.add(gid to url)
                 url = EHentaiSearchMetadata.idAndTokenToUrl(
                     cachedParent.gId,
                     cachedParent.gToken,
@@ -414,16 +421,15 @@ class EHentai(
             }
         }
 
-        val location = doc.location()
+        val rootDoc = doc ?: client.newCall(exGet(baseUrl + url)).awaitSuccess().asJsoup()
+        val location = rootDoc.location()
         val self = SChapter(
             url = EHentaiSearchMetadata.normalizeUrl(location),
-            name = "v1: " + doc.selectFirst("#gn")?.text().orEmpty(),
+            name = "v1: " + rootDoc.selectFirst("#gn")?.text().orEmpty(),
             chapter_number = 1f,
             date_upload = try {
                 ZonedDateTime.parse(
-                    doc.select("#gdd .gdt1").find { el ->
-                        el.text().lowercase() == "posted:"
-                    }?.nextElementSibling()?.text().orEmpty(),
+                    findDetailValue(rootDoc, "posted:")?.text().orEmpty(),
                     MetadataUtil.EX_DATE_FORMAT.withZone(ZoneOffset.UTC),
                 )?.toInstant()?.toEpochMilli() ?: 0L
             } catch (_: Exception) {
@@ -432,7 +438,7 @@ class EHentai(
             scanlator = EHentaiSearchMetadata.galleryId(location),
         )
 
-        val newDisplay = doc.select("#gnd a[href*='/g/'], #gd2 a[href*='/g/'], .gnd a[href*='/g/']").filter { it.attr("href").contains("/g/") }
+        val newDisplay = rootDoc.select("#gnd a[href*='/g/'], #gd2 a[href*='/g/'], .gnd a[href*='/g/']").filter { it.attr("href").contains("/g/") }
 
         return if (DebugToggles.INCLUDE_ONLY_ROOT_WHEN_LOADING_EXH_VERSIONS.enabled) {
             listOf(self)
@@ -1105,6 +1111,11 @@ class EHentai(
         .appendQueryParameter(param, value)
         .toString()
 
+    // KMK -->
+    @Volatile
+    private var lastSeenCfCookieNames: String = ""
+    // KMK <--
+
     override val client =
         network.client.newBuilder()
             // .cookieJar(CookieJar.NO_COOKIES)
@@ -1122,7 +1133,14 @@ class EHentai(
                     // KMK -->
                     ?.associate { it.substringBefore("=").trim() to it.substringAfter("=").trim() }
                 val newCookies = cookiesHeader(cfCookies ?: emptyMap())
-                xLogI("Overwritten Cookie: $newCookies")
+                // KMK --> never log this header's values: it carries ipb_pass_hash,
+                // igneous, sk, s and hath_perks. Names only, on change only, so a solved
+                // challenge stays visible without string work on every request.
+                val cfCookieNames = cfCookies?.keys?.sorted()?.joinToString(",").orEmpty()
+                if (cfCookieNames != lastSeenCfCookieNames) {
+                    lastSeenCfCookieNames = cfCookieNames
+                    xLogD("Cloudflare cookies present: %s", cfCookieNames)
+                }
                 // KMK <--
 
                 val newReq =
