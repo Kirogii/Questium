@@ -72,6 +72,7 @@ import kotlin.math.abs
 @Composable
 fun TrackInfoDialogHome(
     trackItems: List<TrackItem>,
+    seriesTitle: String,
     dateFormat: DateTimeFormatter,
     onStatusClick: (TrackItem) -> Unit,
     onChapterClick: (TrackItem) -> Unit,
@@ -151,6 +152,7 @@ fun TrackInfoDialogHome(
             if (trackedItems.size > 1) {
                 UnifiedTrackerCard(
                     trackItems = trackItems,
+                    seriesTitle = seriesTitle,
                     dateFormat = dateFormat,
                     onStatusClick = onStatusClick,
                     onChapterClick = onChapterClick,
@@ -508,6 +510,7 @@ private fun TrackInfoItemMenu(
 @Composable
 private fun UnifiedTrackerCard(
     trackItems: List<TrackItem>,
+    seriesTitle: String,
     dateFormat: DateTimeFormatter,
     onStatusClick: (TrackItem) -> Unit,
     onChapterClick: (TrackItem) -> Unit,
@@ -578,6 +581,16 @@ private fun UnifiedTrackerCard(
             .padding(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (seriesTitle.isNotBlank()) {
+            Text(
+                text = seriesTitle,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(start = 6.dp, end = 6.dp, top = 2.dp),
+            )
+        }
         // KMK --> per-tracker unsynced dot (vs preferred) + untracked icons bind via onNewSearch
         Row(
             modifier = Modifier.fillMaxWidth(),

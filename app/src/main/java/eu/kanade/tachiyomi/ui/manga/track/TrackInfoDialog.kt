@@ -142,6 +142,9 @@ data class TrackInfoDialogHomeScreen(
             else {
                 TrackInfoDialogHome(
                     trackItems = state.trackItems,
+                    // KMK -->
+                    seriesTitle = mangaTitle,
+                    // KMK <--
                     dateFormat = dateFormat,
                     onStatusClick = {
                         navigator.push(

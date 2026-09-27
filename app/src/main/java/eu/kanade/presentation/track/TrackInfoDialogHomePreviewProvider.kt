@@ -49,6 +49,15 @@ internal class TrackInfoDialogHomePreviewProvider :
             name = "Example Tracker 2",
         ),
     )
+    // KMK -->
+    private val trackItemWithSecondTrack = TrackItem(
+        track = aTrack.copy(id = 2L, trackerId = 4L, lastChapterRead = 5.0, score = 8.0),
+        tracker = DummyTracker(
+            id = 4L,
+            name = "Example Tracker 3",
+        ),
+    )
+    // KMK <--
 
     private val trackersWithAndWithoutTrack = @Composable {
         TrackInfoDialogHome(
@@ -56,6 +65,7 @@ internal class TrackInfoDialogHomePreviewProvider :
                 trackItemWithoutTrack,
                 trackItemWithTrack,
             ),
+            seriesTitle = SERIES_TITLE,
             dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM),
             onStatusClick = {},
             onChapterClick = {},
@@ -73,6 +83,7 @@ internal class TrackInfoDialogHomePreviewProvider :
     private val noTrackers = @Composable {
         TrackInfoDialogHome(
             trackItems = listOf(),
+            seriesTitle = SERIES_TITLE,
             dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM),
             onStatusClick = {},
             onChapterClick = {},
@@ -90,6 +101,7 @@ internal class TrackInfoDialogHomePreviewProvider :
     private val trackerWithPrivateTracking = @Composable {
         TrackInfoDialogHome(
             trackItems = listOf(trackItemWithPrivateTrack),
+            seriesTitle = SERIES_TITLE,
             dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM),
             onStatusClick = {},
             onChapterClick = {},
@@ -104,10 +116,43 @@ internal class TrackInfoDialogHomePreviewProvider :
         )
     }
 
+    // KMK -->
+    private val multipleBoundTrackers = @Composable {
+        TrackInfoDialogHome(
+            trackItems = listOf(
+                trackItemWithTrack,
+                trackItemWithSecondTrack,
+                trackItemWithoutTrack,
+            ),
+            seriesTitle = SERIES_TITLE,
+            dateFormat = DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM),
+            onStatusClick = {},
+            onChapterClick = {},
+            onScoreClick = {},
+            onStartDateEdit = {},
+            onEndDateEdit = {},
+            onNewSearch = {},
+            onOpenInBrowser = {},
+            onRemoved = {},
+            onCopyLink = {},
+            onTogglePrivate = {},
+        )
+    }
+    // KMK <--
+
     override val values: Sequence<@Composable () -> Unit>
         get() = sequenceOf(
             trackersWithAndWithoutTrack,
             noTrackers,
             trackerWithPrivateTracking,
+            // KMK -->
+            multipleBoundTrackers,
+            // KMK <--
         )
+
+    companion object {
+        // KMK -->
+        private const val SERIES_TITLE = "Name Of The Series In The Library"
+        // KMK <--
+    }
 }
