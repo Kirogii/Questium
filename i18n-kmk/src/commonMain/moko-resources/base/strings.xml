@@ -356,6 +356,11 @@
     <string name="track_bulk_remove_title">Remove tracking</string>
     <string name="track_bulk_remove_text">Untrack the selected services? Your manga stays in the library.</string>
     <string name="track_bulk_remove_remote_text">Also delete the entries on those services</string>
+    <string name="track_manage_services">Add another service</string>
+    <string name="track_change_entry">Change entry</string>
+    <string name="track_step_failed">Couldn\'t update %1$s</string>
+    <string name="track_sync_error_a11y">%1$s: failed to sync. Check or rebind its entry.</string>
+    <string name="track_unsynced_a11y">%1$s: behind on chapters</string>
     <string name="pref_rail_button_alignment">Rail button alignment</string>
     <string name="rail_alignment_top">Top</string>
     <string name="rail_alignment_center">Center</string>

@@ -62,6 +62,7 @@ import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.source.online.all.MergedSource
+import eu.kanade.tachiyomi.ui.setting.SettingsScreen
 import eu.kanade.tachiyomi.util.lang.convertEpochMillisZone
 import eu.kanade.tachiyomi.util.lang.toLocalDate
 import eu.kanade.tachiyomi.util.system.copyToClipboard
@@ -93,6 +94,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.DeleteTrack
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.track.model.Track
+import tachiyomi.domain.track.service.TrackerProgressSync
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.LabeledCheckbox
@@ -219,6 +221,12 @@ data class TrackInfoDialogHomeScreen(
                     // KMK <--
                     onCopyLink = { context.copyTrackerLink(it) },
                     onTogglePrivate = screenModel::togglePrivate,
+                    // KMK -->
+                    onStepChapter = screenModel::stepChapter,
+                    onManageServices = {
+                        navigator.parent?.push(SettingsScreen(SettingsScreen.Destination.Tracking))
+                    },
+                    // KMK <--
                     // KMK --> badge trackers whose last refresh failed (e.g. a 404 entry)
                     errorTrackerIds = state.errorTrackerIds,
                     // KMK <--
@@ -424,6 +432,40 @@ data class TrackInfoDialogHomeScreen(
                 item.tracker.setRemotePrivate(track.toDbTrack(), !track.private)
             }
         }
+
+        // KMK -->
+        fun stepChapter(delta: Int) {
+            screenModelScope.launchNonCancellable {
+                val tracks = getTracks.await(mangaId)
+                if (tracks.isEmpty()) return@launchNonCancellable
+                val target = maxOf(0, TrackerProgressSync.maxProgress(tracks).toInt() + delta)
+                val failed = tracks.mapNotNull { track ->
+                    val tracker = trackerManager.get(track.trackerId)
+                    if (tracker == null) {
+                        track.trackerId.toString()
+                    } else {
+                        try {
+                            tracker.setRemoteLastChapterRead(track.toDbTrack(), target)
+                            null
+                        } catch (e: Throwable) {
+                            logcat(LogPriority.ERROR, e) {
+                                "Failed to set chapter $target on ${tracker.name}"
+                            }
+                            tracker.name
+                        }
+                    }
+                }
+                if (failed.isNotEmpty()) {
+                    val context = globalAppGraph.context
+                    withUIContext {
+                        context.toast(
+                            context.stringResource(KMR.strings.track_step_failed, failed.joinToString()),
+                        )
+                    }
+                }
+            }
+        }
+        // KMK <--
 
         private suspend fun List<Track>.mapToTrackItem(): List<TrackItem> {
             val loggedInTrackers = trackerManager.loggedInTrackers()
