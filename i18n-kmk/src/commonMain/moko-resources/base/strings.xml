@@ -129,6 +129,13 @@
     <string name="pref_subcategory_folder_layout">Use folder layout for subcategories</string>
     <string name="pref_subcategory_folder_layout_summary">Show subcategories as home-screen style folders inside their category. Entries not in a subcategory stay mixed in alongside the folders.</string>
     <string name="pref_hide_subcategory_all_chip">Hide the \"All\" subcategory</string>
+    <string name="action_open_subcategory">Open subcategory: %1$s</string>
+    <string name="action_create_subcategory">Create subcategory</string>
+    <string name="create_subcategory_title">New subcategory</string>
+    <string name="create_subcategory_from">Create from</string>
+    <string name="create_subcategory_from_artist">Artist: %1$s</string>
+    <string name="create_subcategory_from_author">Author: %1$s</string>
+    <string name="create_subcategory_from_manual">Manual name</string>
     <string name="action_crop_use_original">Use original</string>
     <string name="crop_ratio_portrait">Portrait</string>
     <string name="crop_ratio_square">Square</string>

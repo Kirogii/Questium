@@ -145,6 +145,124 @@ fun CategoryMergeDialog(
 }
 // KMK <--
 
+// KMK -->
+private enum class SubcategoryNameSource {
+    ARTIST,
+    AUTHOR,
+    MANUAL,
+}
+
+@Composable
+fun CreateSubcategoryDialog(
+    onDismissRequest: () -> Unit,
+    onCreate: (String) -> Unit,
+    artist: String?,
+    author: String?,
+) {
+    val initial = when {
+        !artist.isNullOrBlank() -> SubcategoryNameSource.ARTIST to artist.orEmpty()
+        !author.isNullOrBlank() -> SubcategoryNameSource.AUTHOR to author.orEmpty()
+        else -> SubcategoryNameSource.MANUAL to ""
+    }
+    var source by remember { mutableStateOf(initial.first) }
+    var name by remember { mutableStateOf(initial.second) }
+
+    val hasDetection = !artist.isNullOrBlank() || !author.isNullOrBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismissRequest,
+        confirmButton = {
+            TextButton(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onCreate(name)
+                    onDismissRequest()
+                },
+            ) {
+                Text(text = stringResource(MR.strings.action_add))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismissRequest) {
+                Text(text = stringResource(MR.strings.action_cancel))
+            }
+        },
+        title = { Text(text = stringResource(KMR.strings.create_subcategory_title)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(text = stringResource(MR.strings.name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (hasDetection) {
+                    Text(
+                        text = stringResource(KMR.strings.create_subcategory_from),
+                        style = MaterialTheme.typography.labelLarge,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
+                    )
+                    SubcategorySourceRow(
+                        label = stringResource(
+                            KMR.strings.create_subcategory_from_artist,
+                            artist.orEmpty(),
+                        ),
+                        selected = source == SubcategoryNameSource.ARTIST,
+                        enabled = !artist.isNullOrBlank(),
+                        onSelect = {
+                            source = SubcategoryNameSource.ARTIST
+                            name = artist.orEmpty()
+                        },
+                    )
+                    SubcategorySourceRow(
+                        label = stringResource(
+                            KMR.strings.create_subcategory_from_author,
+                            author.orEmpty(),
+                        ),
+                        selected = source == SubcategoryNameSource.AUTHOR,
+                        enabled = !author.isNullOrBlank(),
+                        onSelect = {
+                            source = SubcategoryNameSource.AUTHOR
+                            name = author.orEmpty()
+                        },
+                    )
+                    SubcategorySourceRow(
+                        label = stringResource(KMR.strings.create_subcategory_from_manual),
+                        selected = source == SubcategoryNameSource.MANUAL,
+                        enabled = true,
+                        onSelect = { source = SubcategoryNameSource.MANUAL },
+                    )
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun SubcategorySourceRow(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = enabled, onClick = onSelect)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null, enabled = enabled)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+        )
+    }
+}
+// KMK <--
+
 @Composable
 fun CategoryCreateDialog(
     onDismissRequest: () -> Unit,

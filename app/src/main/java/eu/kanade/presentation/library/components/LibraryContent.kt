@@ -1,5 +1,7 @@
 package eu.kanade.presentation.library.components
 
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,8 +38,10 @@ import kotlinx.coroutines.launch
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryManga
+import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.PullRefresh
 import tachiyomi.presentation.core.components.material.padding
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.LocalCensorEnabled
 import tachiyomi.presentation.core.util.collectAsState
 import kotlin.time.Duration.Companion.seconds
@@ -142,6 +147,24 @@ fun LibraryContent(
                     )
                 }
             }
+            // KMK --> exact name wins over partial, and the row hides itself once
+            // you are already inside that subcategory
+            val subcategorySuggestion = remember(subcategories, searchQuery, activeSubCategoryId) {
+                val query = searchQuery?.trim().orEmpty()
+                if (query.isEmpty()) {
+                    null
+                } else {
+                    val match = subcategories.firstOrNull { it.name.equals(query, ignoreCase = true) }
+                        ?: subcategories.firstOrNull { it.name.contains(query, ignoreCase = true) }
+                    match?.takeIf { it.id != activeSubCategoryId }
+                }
+            }
+            if (subcategorySuggestion != null) {
+                SubcategorySearchSuggestion(
+                    name = subcategorySuggestion.name,
+                    onClick = { onSelectSubcategory(subcategorySuggestion.id) },
+                )
+            }
             // KMK <--
 
             // KMK --> Achievements is a synthetic category (-100) that should render its own
@@ -205,6 +228,36 @@ fun LibraryContent(
         }
     }
 }
+
+// KMK -->
+@Composable
+private fun SubcategorySearchSuggestion(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = MaterialTheme.padding.small, vertical = MaterialTheme.padding.extraSmall),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Folder,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = stringResource(KMR.strings.action_open_subcategory, name),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+// KMK <--
 
 // KMK -->
 @Composable

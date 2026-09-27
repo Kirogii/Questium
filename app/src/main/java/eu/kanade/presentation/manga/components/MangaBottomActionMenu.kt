@@ -282,6 +282,7 @@ fun LibraryBottomActionMenu(
     // KMK -->
     onMergeClicked: () -> Unit,
     onSelectionUpdateClicked: () -> Unit,
+    onCreateSubcategoryClicked: (() -> Unit)? = null,
     // KMK <--
     // SY -->
     onClickCleanTitles: (() -> Unit)?,
@@ -420,6 +421,12 @@ fun LibraryBottomActionMenu(
                             text = { Text(stringResource(SYMR.strings.merge)) },
                             onClick = onMergeClicked,
                         )
+                        if (onCreateSubcategoryClicked != null) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(KMR.strings.action_create_subcategory)) },
+                                onClick = onCreateSubcategoryClicked,
+                            )
+                        }
                         if (onClickCleanTitles != null) {
                             DropdownMenuItem(
                                 text = { Text(stringResource(SYMR.strings.action_clean_titles)) },

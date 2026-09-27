@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
+import logcat.LogPriority
 import mihon.app.di.globalAppGraph
 import mihon.core.common.utils.mutate
 import tachiyomi.core.common.i18n.stringResource
@@ -91,6 +92,8 @@ import tachiyomi.core.common.util.lang.compareToWithCollator
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.category.interactor.CreateCategoryWithName
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
@@ -161,6 +164,7 @@ class LibraryScreenModel(
     // SY <--
     // KMK -->
     private val mergeMangaBySmartSearch: MergeMangaBySmartSearch = globalAppGraph.mergeMangaBySmartSearch,
+    private val createCategoryWithName: CreateCategoryWithName = globalAppGraph.createCategoryWithName,
     // KMK <--
 ) : StateScreenModel<LibraryScreenModel.State>(State()) {
 
@@ -1770,6 +1774,48 @@ class LibraryScreenModel(
         mutableState.update { it.copy(dialog = Dialog.DeleteManga(state.value.selectedManga)) }
     }
 
+    // KMK -->
+    /**
+     * Only offers an artist or author when every selected entry agrees on it, so a
+     * mixed selection falls back to a plain name instead of guessing.
+     */
+    fun openCreateSubcategoryDialog() {
+        val selected = state.value.selectedManga
+        mutableState.update {
+            it.copy(
+                dialog = Dialog.CreateSubcategory(
+                    artist = selected.sharedMetadata { manga -> manga.artist },
+                    author = selected.sharedMetadata { manga -> manga.author },
+                ),
+            )
+        }
+    }
+
+    private fun List<Manga>.sharedMetadata(selector: (Manga) -> String?): String? =
+        mapNotNull(selector)
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .singleOrNull()
+
+    fun createSubcategoryFromSelection(name: String) {
+        val parent = state.value.activeCategory ?: return
+        val manga = state.value.selectedManga
+        if (parent.id <= 0L || manga.isEmpty()) return
+        clearSelection()
+        screenModelScope.launchIO {
+            when (val result = createCategoryWithName.await(name, parent.id)) {
+                is CreateCategoryWithName.Result.Success -> {
+                    setMangaCategories(manga, addCategories = listOf(result.category.id), removeCategories = emptyList())
+                }
+                is CreateCategoryWithName.Result.InternalError -> {
+                    logcat(LogPriority.ERROR, result.error) { "Failed to create subcategory" }
+                }
+            }
+        }
+    }
+    // KMK <--
+
     fun closeDialog() {
         mutableState.update { it.copy(dialog = null) }
     }
@@ -1781,6 +1827,10 @@ class LibraryScreenModel(
             val initialSelection: ImmutableList<CheckboxState<Category>>,
         ) : Dialog
         data class DeleteManga(val manga: List<Manga>) : Dialog
+
+        // KMK -->
+        data class CreateSubcategory(val artist: String?, val author: String?) : Dialog
+        // KMK <--
 
         // SY -->
         data object SyncFavoritesWarning : Dialog

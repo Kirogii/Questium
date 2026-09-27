@@ -30,6 +30,7 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import cafe.adriel.voyager.navigator.tab.LocalTabNavigator
 import cafe.adriel.voyager.navigator.tab.TabOptions
 import eu.kanade.presentation.category.components.ChangeCategoryDialog
+import eu.kanade.presentation.category.components.CreateSubcategoryDialog
 import eu.kanade.presentation.library.DeleteLibraryMangaDialog
 import eu.kanade.presentation.library.LibrarySettingsDialog
 import eu.kanade.presentation.library.components.AchievementsContent
@@ -221,6 +222,10 @@ data object LibraryTab : Tab {
                     onDownloadClicked = screenModel::performDownloadAction
                         .takeIf { state.selectedManga.fastAll { !it.isLocal() } },
                     onDeleteClicked = screenModel::openDeleteMangaDialog,
+                    // KMK -->
+                    onCreateSubcategoryClicked = screenModel::openCreateSubcategoryDialog
+                        .takeIf { state.selection.isNotEmpty() },
+                    // KMK <--
                     onMigrateClicked = {
                         if (!canNavigate()) return@LibraryBottomActionMenu
                         val selection = state
@@ -421,6 +426,18 @@ data object LibraryTab : Tab {
                     },
                 )
             }
+            // KMK -->
+            is LibraryScreenModel.Dialog.CreateSubcategory -> {
+                CreateSubcategoryDialog(
+                    onDismissRequest = onDismissRequest,
+                    onCreate = { name ->
+                        screenModel.createSubcategoryFromSelection(name)
+                    },
+                    artist = dialog.artist,
+                    author = dialog.author,
+                )
+            }
+            // KMK <--
             is LibraryScreenModel.Dialog.DeleteManga -> {
                 DeleteLibraryMangaDialog(
                     containsLocalManga = dialog.manga.any(Manga::isLocal),
