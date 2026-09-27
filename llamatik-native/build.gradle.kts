@@ -107,7 +107,7 @@ if (hostIsWindows && wslExe == null) {
             "  Install/enable WSL:  wsl --install -d Debian\n" +
             "  Then set it up once:  wsl -e bash <repo>/llamatik-native/wsl-setup.sh\n" +
             "  Or build CPU-only without any of this:  -Pmtl.gpuOffload=false\n" +
-            "See llamatik-native/BUILD.md."
+            "See llamatik-native/BUILD.md.",
     )
 }
 
@@ -222,7 +222,7 @@ if (hostIsWindows) {
             val includeArg = if (gpu && headers != "/opt/vulkan-headers") headers else ""
 
             logger.lifecycle(
-                "llamatik-native: building ${abis.joinToString(", ")} inside WSL via ${exe.path}"
+                "llamatik-native: building ${abis.joinToString(", ")} inside WSL via ${exe.path}",
             )
             val proc = ProcessBuilder(
                 exe.path,
