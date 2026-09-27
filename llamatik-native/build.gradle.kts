@@ -179,16 +179,14 @@ android {
     }
 }
 
-/**
- * Runs the entire native build inside WSL, then leaves `src/main/jniLibs/<abi>/libllama_jni.so`
- * for AGP to package. Only registered on a Windows host — on Linux/WSL/CI AGP's own
- * `externalNativeBuild` is used instead and this task does not exist.
- *
- * Incrementality is delegated to ninja: this task never reports up-to-date, so it re-runs,
- * but a no-change rebuild is just ninja's own up-to-date check (seconds) rather than the
- * ~20 minutes a from-scratch four-ABI Vulkan build costs. Gradle cannot track ninja's
- * in-place object updates, so trusting its own snapshot here would skip real work.
- */
+// Runs the entire native build inside WSL, then leaves `src/main/jniLibs/<abi>/libllama_jni.so`
+// for AGP to package. Only registered on a Windows host — on Linux/WSL/CI AGP's own
+// `externalNativeBuild` is used instead and this task does not exist.
+//
+// Incrementality is delegated to ninja: this task never reports up-to-date, so it re-runs,
+// but a no-change rebuild is just ninja's own up-to-date check (seconds) rather than the
+// ~20 minutes a from-scratch four-ABI Vulkan build costs. Gradle cannot track ninja's
+// in-place object updates, so trusting its own snapshot here would skip real work.
 if (hostIsWindows) {
     val wslNativeBuild = tasks.register("wslNativeBuild") {
         group = "build"
