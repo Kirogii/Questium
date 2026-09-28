@@ -54,6 +54,11 @@ class BackupManga(
     @ProtoNumber(610) var rereadCount: Int = 0,
     @ProtoNumber(611) var rereading: Boolean = false,
     @ProtoNumber(612) var rereadStartedAt: Long = 0,
+    // KMK --> `categories` above holds per-parent sort values, which subcategories make
+    // ambiguous (a root and its first child are both sort 0), so the original category is
+    // unrecoverable from it. These ids are the real link; `categories` stays for old readers.
+    @ProtoNumber(613) var categoryIds: List<Long> = emptyList(),
+    // KMK <--
 
     // SY specific values
     @ProtoNumber(600) var mergedMangaReferences: List<BackupMergedMangaReference> = emptyList(),

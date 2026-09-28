@@ -105,7 +105,11 @@ class MangaBackupCreator(
             // Backup categories for this manga
             val categoriesForManga = getCategories.await(manga.id)
             if (categoriesForManga.isNotEmpty()) {
+                // KMK --> `categories` stays the legacy per-parent sort list for old readers;
+                // categoryIds is the only lossless link now that subcategories exist.
                 mangaObject.categories = categoriesForManga.map { it.order }
+                mangaObject.categoryIds = categoriesForManga.map { it.id }
+                // KMK <--
             }
         }
 

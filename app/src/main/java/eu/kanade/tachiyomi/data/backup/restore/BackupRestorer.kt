@@ -121,9 +121,14 @@ class BackupRestorer(
             }
 
             coroutineScope {
-                if (options.categories) {
+                // KMK --> Needed before restoreManga: a backup's category reference only means
+                // anything once the tree exists and each backup id has its new database id.
+                val restoredCategoryIds = if (options.categories) {
                     restoreCategories(backup.backupCategories)
+                } else {
+                    emptyMap()
                 }
+                // KMK <--
                 // SY -->
                 if (options.savedSearchesFeeds) {
                     restoreSavedSearches(
@@ -141,7 +146,13 @@ class BackupRestorer(
                     restoreSourcePreferences(backup.backupSourcePreferences)
                 }
                 if (options.libraryEntries) {
-                    restoreManga(backup.backupManga, if (options.categories) backup.backupCategories else emptyList())
+                    // KMK -->
+                    restoreManga(
+                        backup.backupManga,
+                        if (options.categories) backup.backupCategories else emptyList(),
+                        restoredCategoryIds,
+                    )
+                    // KMK <--
                 }
                 if (options.extensionStores) {
                     restoreExtensionStores(backup.backupExtensionStores)
@@ -165,6 +176,10 @@ class BackupRestorer(
                         -1L
                     }
                     if (count >= 0) graph.achievementManager.onLibraryCountChanged(count)
+                    // KMK --> Restore rewrites every category link, so the stale-unstarted set
+                    // changes wholesale. Forced because a restore must be exact immediately.
+                    runCatching { graph.achievementManager.refreshBacklog(force = true) }
+                    // KMK <--
                 }
             } catch (_: Exception) {}
             // KMK <--
@@ -172,9 +187,9 @@ class BackupRestorer(
     }
 
     context(scope: CoroutineScope)
-    private /* KMK --> */suspend /* KMK <-- */ fun restoreCategories(backupCategories: List<BackupCategory>) {
+    private /* KMK --> */suspend /* KMK <-- */ fun restoreCategories(backupCategories: List<BackupCategory>): Map<Long, Long> {
         scope.ensureActive()
-        categoriesRestorer(backupCategories)
+        val restoredIdsByBackupId = categoriesRestorer(backupCategories)
 
         restoreProgress.incrementAndGet()
         with(notifier) {
@@ -188,6 +203,7 @@ class BackupRestorer(
                 .show(Notifications.ID_RESTORE_PROGRESS)
             // KMK <--
         }
+        return restoredIdsByBackupId
     }
 
     // SY -->
@@ -221,6 +237,9 @@ class BackupRestorer(
     private fun CoroutineScope.restoreManga(
         backupMangas: List<BackupManga>,
         backupCategories: List<BackupCategory>,
+        // KMK -->
+        restoredCategoryIds: Map<Long, Long> = emptyMap(),
+        // KMK <--
     ) = launch {
         val semaphore = Semaphore(4)
         mangaRestorer.sortByNew(backupMangas)
@@ -230,7 +249,7 @@ class BackupRestorer(
                         ensureActive()
 
                         try {
-                            mangaRestorer.restore(it, backupCategories)
+                            mangaRestorer.restore(it, backupCategories, restoredCategoryIds)
                         } catch (e: Exception) {
                             val sourceName = sourceMapping[it.source] ?: it.source.toString()
                             errors.add(Date() to "${it.title} [$sourceName]: ${e.message}")

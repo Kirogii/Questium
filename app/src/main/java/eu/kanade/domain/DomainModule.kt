@@ -49,7 +49,6 @@ import tachiyomi.data.source.SourceRepositoryImpl
 import tachiyomi.data.source.StubSourceRepositoryImpl
 import tachiyomi.data.track.TrackRepositoryImpl
 import tachiyomi.data.updates.UpdatesRepositoryImpl
-import tachiyomi.domain.category.interactor.CreateCategoryWithName
 import tachiyomi.domain.category.interactor.DeleteCategory
 import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.HideCategory
@@ -116,7 +115,11 @@ class DomainModule : InjektModule {
         addFactory { ResetCategoryFlags(get(), get()) }
         addFactory { SetDisplayMode(get()) }
         addFactory { SetSortModeForCategory(get(), get()) }
-        addFactory { CreateCategoryWithName(get(), get()) }
+        // KMK --> CreateCategoryWithName's legacy Injekt registration removed: every caller
+        // resolves it through globalAppGraph, so Metro builds it (AppGraph) and the module copy
+        // was only a second, unmaintained construction path. See the Injekt deprecation note in
+        // AGENTS.md - do not re-add it for new interactor dependencies.
+        // KMK <--
         addFactory { RenameCategory(get()) }
         addFactory { ReorderCategory(get()) }
         addFactory { UpdateCategory(get()) }

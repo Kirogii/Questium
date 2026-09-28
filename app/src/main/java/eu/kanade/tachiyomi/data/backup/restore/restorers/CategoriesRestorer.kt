@@ -12,14 +12,19 @@ class CategoriesRestorer(
     private val libraryPreferences: LibraryPreferences = globalAppGraph.libraryPreferences,
 ) {
 
-    suspend operator fun invoke(backupCategories: List<BackupCategory>) {
+    /**
+     * Restores the category tree and returns backup category id -> restored database id, so
+     * callers can resolve a backup's category references by identity. [eu.kanade.tachiyomi.data.backup.models.BackupManga.categoryIds]
+     * needs that; resolving by name or sort is ambiguous once subcategories exist.
+     */
+    suspend operator fun invoke(backupCategories: List<BackupCategory>): Map<Long, Long> {
+        // KMK -->
+        val restoredIdsByBackupId = mutableMapOf<Long, Long>()
         if (backupCategories.isNotEmpty()) {
             val dbCategories = getCategories.await()
             val dbCategoriesByName = dbCategories.associateBy { it.name }
             var nextOrder = dbCategories.maxOfOrNull { it.order }?.plus(1) ?: 0L
 
-            // KMK -->
-            val restoredIdsByBackupId = mutableMapOf<Long, Long>()
             val pendingParents = mutableMapOf<Long, Long>()
             val allCurrent = (dbCategories + handler.awaitList { categoriesQueries.getCategories(tachiyomi.data.category.CategoryMapper::mapCategory) }).distinctBy { it.id }
             val existingNamesByParent = allCurrent.groupBy { it.parentId }.mapValues { e -> e.value.map { it.name.lowercase() }.toMutableSet() }.toMutableMap()
@@ -101,5 +106,6 @@ class CategoriesRestorer(
                     .size > 1,
             )
         }
+        return restoredIdsByBackupId
     }
 }

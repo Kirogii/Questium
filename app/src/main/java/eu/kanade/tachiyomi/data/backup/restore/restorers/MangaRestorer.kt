@@ -80,6 +80,9 @@ class MangaRestorer(
     suspend fun restore(
         backupManga: BackupManga,
         backupCategories: List<BackupCategory>,
+        // KMK --> backup category id -> restored database id, from CategoriesRestorer
+        restoredCategoryIds: Map<Long, Long> = emptyMap(),
+        // KMK <--
     ) {
         handler.await(inTransaction = true) {
             val dbManga = findExistingManga(backupManga)
@@ -97,6 +100,10 @@ class MangaRestorer(
                 manga = restoredManga,
                 chapters = backupManga.chapters,
                 categories = backupManga.categories,
+                // KMK -->
+                categoryIds = backupManga.categoryIds,
+                restoredCategoryIds = restoredCategoryIds,
+                // KMK <--
                 backupCategories = backupCategories,
                 history = backupManga.history,
                 tracks = backupManga.tracking,
@@ -374,6 +381,10 @@ class MangaRestorer(
         manga: Manga,
         chapters: List<BackupChapter>,
         categories: List<Long>,
+        // KMK -->
+        categoryIds: List<Long> = emptyList(),
+        restoredCategoryIds: Map<Long, Long> = emptyMap(),
+        // KMK <--
         backupCategories: List<BackupCategory>,
         history: List<BackupHistory>,
         tracks: List<BackupTracking>,
@@ -384,7 +395,7 @@ class MangaRestorer(
         customManga: CustomMangaInfo?,
         // SY <--
     ): Manga {
-        restoreCategories(manga, categories, backupCategories)
+        restoreCategories(manga, categories, categoryIds, backupCategories, restoredCategoryIds)
         restoreChapters(manga, chapters)
         restoreTracking(manga, tracks)
         restoreHistory(manga, history)
@@ -415,26 +426,55 @@ class MangaRestorer(
     private suspend fun restoreCategories(
         manga: Manga,
         categories: List<Long>,
+        // KMK -->
+        categoryIds: List<Long>,
         backupCategories: List<BackupCategory>,
+        restoredCategoryIds: Map<Long, Long>,
+        // KMK <--
     ) {
-        val dbCategories = getCategories.await()
-        val dbCategoriesByName = dbCategories.associateBy { it.name }
+        // KMK --> categoryIds is the only unambiguous link: `sort` is numbered per parent, so
+        // a root and its first child are both sort 0 and the order path below cannot tell
+        // them apart. Pre-resolve those ids; older backups, and runs that did not restore
+        // categories, resolve none and fall through to sort rather than dropping the manga's
+        // categories on the floor.
+        val resolvedIds = categoryIds.mapNotNull { restoredCategoryIds[it] }.distinct()
+        val useIds = resolvedIds.isNotEmpty()
+        val dbCategories = if (useIds) emptyList() else getCategories.await()
+        // KMK <--
 
-        val backupCategoriesByOrder = backupCategories.associateBy { it.order }
+        // KMK --> Same name can exist at two levels now, so a plain associateBy would silently
+        // keep whichever came last. Prefer the restored root when a backup entry is a subcategory.
+        val dbCategoriesByName = dbCategories
+            .groupBy { it.name }
+            .mapValues { (_, matches) -> matches.firstOrNull { it.parentId == 0L } ?: matches.first() }
 
-        val mangaCategoriesToUpdate = categories.mapNotNull { backupCategoryOrder ->
-            backupCategoriesByOrder[backupCategoryOrder]?.let { backupCategory ->
-                dbCategoriesByName[backupCategory.name]?.let { dbCategory ->
-                    Pair(manga.id, dbCategory.id)
+        // KMK --> Order stays last: it is the pre-subcategory encoding, still needed for backups
+        // written before categoryIds existed, and for runs that did not restore categories.
+        val backupCategoriesByOrder = if (useIds) {
+            emptyMap()
+        } else {
+            backupCategories.associateBy { it.order }
+        }
+        // KMK <--
+
+        // KMK --> distinct() stops a legacy duplicate sort value inserting the same category twice.
+        val mangaCategoriesToUpdate = if (useIds) {
+            resolvedIds
+        } else {
+            categories.mapNotNull { backupCategoryOrder ->
+                backupCategoriesByOrder[backupCategoryOrder]?.let { backupCategory ->
+                    dbCategoriesByName[backupCategory.name]?.let { dbCategory ->
+                        dbCategory.id
+                    }
                 }
-            }
+            }.distinct()
         }
 
         if (mangaCategoriesToUpdate.isNotEmpty()) {
             handler.await(true) {
                 mangas_categoriesQueries.deleteMangaCategoryByMangaId(manga.id)
-                mangaCategoriesToUpdate.forEach { (mangaId, categoryId) ->
-                    mangas_categoriesQueries.insert(mangaId, categoryId)
+                mangaCategoriesToUpdate.forEach { categoryId ->
+                    mangas_categoriesQueries.insert(manga.id, categoryId)
                 }
             }
         }
