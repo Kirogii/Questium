@@ -143,7 +143,18 @@ open class WebGpuViewer(
 
         @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
         override fun onTrimMemory(level: Int) {
-            if (level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE) shrinkCacheOnTrim()
+            // KMK --> Screen-off is TRIM_MEMORY_UI_HIDDEN (20), and this guard used to require
+            // MODERATE (60) - so every sleep held the whole decoded working set. The numeric
+            // order is not the urgency order: RUNNING_CRITICAL (15) matters more than UI_HIDDEN
+            // (20), so a single `>=` cannot express this set.
+            if (
+                level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ||
+                level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+                level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL
+            ) {
+                shrinkCacheOnTrim()
+            }
+            // KMK <--
         }
     }
     // KMK <--
@@ -1048,6 +1059,11 @@ open class WebGpuViewer(
 
                 if ((this@WebGpuViewer as? WebGpuViewerContinuous)?.useGap == true) {
                     pageGap = config.continuousGap / 100f
+                } else {
+                    // WEBTOON (useGap = false) must pin the gap to 0 rather than leave it. The
+                    // strip clears to transparent black (ImageViewerState.renderPass), so any gap
+                    // the state still holds paints a hard black band between every page.
+                    pageGap = 0f
                 }
                 // KMK <--
             }
