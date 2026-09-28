@@ -3,6 +3,7 @@ package tachiyomi.domain.achievement.service
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import tachiyomi.domain.achievement.interactor.GetStaleUnstartedBacklog
 import tachiyomi.domain.achievement.model.AchievementStats
 import tachiyomi.domain.achievement.model.Achievements
 
@@ -15,6 +16,10 @@ class AchievementManager(
     // nullable binding, so the old nullable param silently resolved to null and webhooks
     // never fired. Non-null forces a compile-time graph error instead of silent loss.
     private val notifier: AchievementUnlockNotifier,
+    // KMK <--
+    // KMK --> Only source of the backlog number now; the two counters it used to subtract
+    // described a different population and could not tell "never started" from "not finished".
+    private val getStaleUnstartedBacklog: GetStaleUnstartedBacklog,
     // KMK <--
 ) {
     @Synchronized
@@ -48,10 +53,113 @@ class AchievementManager(
         return unlocked
     }
 
-    @Synchronized
-    fun onBacklogChanged(libraryCount: Long, finishedCount: Long): List<String> {
+    // KMK -->
+    /**
+     * Recomputes the stale-unstarted backlog and re-evaluates its thresholds. The count is a
+     * library query, so it is cached in prefs for the synchronous [AchievementPreferences.computeStats].
+     *
+     * Not `@Synchronized`: it suspends across the query and must not hold the monitor. Only the
+     * pref writes and the unlock evaluation are guarded, by [onBacklogChanged].
+     *
+     * [force] skips [REFRESH_THROTTLE_MS]. Callers that fire on ordinary reading pass false so a
+     * chapter-turn cannot run a full library query; the ones that must be exact (library
+     * changes, the startup pass that catches the 30-day threshold) pass true.
+     */
+    suspend fun refreshBacklog(force: Boolean = false): List<String> {
         if (!prefs.achievementsEnabled().get()) return emptyList()
-        val backlog = (libraryCount - finishedCount).coerceAtLeast(0L)
+        val now = System.currentTimeMillis()
+        if (!force && now - prefs.backlogLastRefresh().get() < REFRESH_THROTTLE_MS) return emptyList()
+        val stale = getStaleUnstartedBacklog.await()
+        prefs.setStaleUnstartedCount(stale)
+        prefs.backlogLastRefresh().set(now)
+        return onBacklogChanged(stale)
+    }
+    // KMK <--
+
+    // KMK -->
+    /**
+     * Records today as a reading day and unlocks the streak tiers it now satisfies. This is the
+     * only thing that can ever unlock `streak_3/7/30/100`: they previously had no call site and
+     * no day state behind them, so they were unreachable.
+     */
+    @Synchronized
+    fun onReadingDay(): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val today = currentEpochDay()
+        prefs.markReadingDay(today)
+        val days = prefs.readDays()
+        var streak = 0
+        for (i in days.indices.reversed()) {
+            if (today - days[i] > STREAK_GRACE_DAYS) break
+            streak++
+        }
+        val unlocked = mutableListOf<String>()
+        if (streak >= 3) tryUnlock("streak_3", unlocked)
+        if (streak >= 7) tryUnlock("streak_7", unlocked)
+        if (streak >= 30) tryUnlock("streak_30", unlocked)
+        if (streak >= 100) tryUnlock("streak_100", unlocked)
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /** Longest run of reading days in the recorded window, breaking a gap of over [STREAK_GRACE_DAYS]. */
+    fun longestStreak(): Int {
+        val days = prefs.readDays()
+        var best = 0
+        var run = 0
+        for (i in days.indices) {
+            val expected = if (i == 0) days[0] else days[i - 1] + 1
+            run = if (days[i] - expected <= STREAK_GRACE_DAYS) run + 1 else 1
+            if (run > best) best = run
+        }
+        return best
+    }
+    // KMK <--
+
+    // KMK -->
+    /**
+     * Counts one occurrence of [name] and unlocks every tier it now reaches. Tiers are declared
+     * here rather than at each call site so the numbers, the ids and the progress bars
+     * ([AchievementProgress.thresholds]) cannot drift apart - the audit found these ids
+     * defined with no unlock site at all, spread over half the catalogue.
+     */
+    @Synchronized
+    fun incrementCounter(name: String, amount: Int = 1): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        prefs.incrementCounter(name, amount)
+        return evaluateCounter(name, prefs.counter(name).get())
+    }
+
+    /**
+     * Same, for a counter that resets at the day boundary. [name] must be listed in
+     * [DAILY_COUNTER_TIERS]; anything else is ignored so a stray call cannot create junk prefs.
+     */
+    @Synchronized
+    fun incrementDailyCounter(name: String, amount: Int = 1): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        if (name !in DAILY_COUNTER_TIERS) return emptyList()
+        if (amount <= 0) return emptyList()
+        var count = 0L
+        repeat(amount.coerceIn(1, 1000)) { count = prefs.bumpDailyCounter(name, currentEpochDay()) }
+        return evaluateCounter(name, count)
+    }
+
+    private fun evaluateCounter(name: String, count: Long): List<String> {
+        val tiers = COUNTER_TIERS[name] ?: return emptyList()
+        val unlocked = mutableListOf<String>()
+        for ((at, id) in tiers) {
+            if (count >= at) tryUnlock(id, unlocked)
+        }
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+    // KMK <--
+
+    @Synchronized
+    fun onBacklogChanged(staleUnstarted: Long): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val backlog = staleUnstarted.coerceAtLeast(0L)
+        val finishedCount = prefs.mangaFinishedCount().get()
         val unlocked = mutableListOf<String>()
         if (backlog >= 10) tryUnlock("backlog_10", unlocked)
         if (backlog >= 25) tryUnlock("backlog_25", unlocked)
@@ -130,7 +238,9 @@ class AchievementManager(
         if (count >= 20) tryUnlock("twenty_manga_finished", unlocked)
         if (count >= 50) tryUnlock("fifty_manga_finished", unlocked)
         onBacklogCleared(1)
-        onBacklogChanged(prefs.libraryMangaCount().get(), count)
+        // KMK --> No backlog recompute here: finishing implies the entry was already started, so
+        // it cannot be in the stale-unstarted set. refreshBacklog covers the other triggers.
+        // KMK <--
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
         checkUltimateProgress()
         return unlocked
@@ -179,7 +289,10 @@ class AchievementManager(
         if (safe >= 250) tryUnlock("library_250", unlocked)
         if (safe >= 500) tryUnlock("library_500", unlocked)
         if (safe >= 1000) tryUnlock("library_1000", unlocked)
-        onBacklogChanged(safe, prefs.mangaFinishedCount().get())
+        // KMK --> Library membership changed, so the stale-unstarted set did too - but that needs
+        // a query, and this entry point is synchronous and called from the library's own flows.
+        // The caller refreshes with force = true instead.
+        // KMK <--
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
         checkUltimateProgress()
         return unlocked
@@ -295,6 +408,41 @@ class AchievementManager(
     }
 
     fun getStats(): AchievementStats = prefs.computeStats(Achievements.all.size)
+
+    // KMK -->
+    private companion object {
+        const val REFRESH_THROTTLE_MS = 15L * 60L * 1000L
+        // A single missed day does not end a streak, so "read N days in a row" tolerates one gap.
+        const val STREAK_GRACE_DAYS = 1L
+
+        fun currentEpochDay(): Long =
+            java.util.concurrent.TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
+
+        /** Counter name -> ordered (count, achievement id) tiers. */
+        val COUNTER_TIERS: Map<String, List<Pair<Long, String>>> = mapOf(
+            "downloads" to listOf(
+                1L to "download_one",
+                10L to "download_ten",
+                100L to "download_hundred",
+                1000L to "download_thousand",
+            ),
+            "custom_covers" to listOf(10L to "cover_ten"),
+            "categories" to listOf(5L to "category_master", 10L to "category_ten"),
+            "sources" to listOf(5L to "sources_five", 10L to "sources_ten"),
+            "subcategories" to listOf(
+                1L to "subcategory_creator",
+                5L to "subcategory_five",
+                20L to "subcategory_twenty",
+            ),
+            "tracker_updates" to listOf(10L to "track_status"),
+        )
+
+        /** Counters that reset at the day boundary; same tier shape. */
+        val DAILY_COUNTER_TIERS: Map<String, List<Pair<Long, String>>> = mapOf(
+            "binge" to listOf(10L to "binge_10", 50L to "binge_50", 100L to "binge_100"),
+        )
+    }
+    // KMK <--
 
     fun getUnlockedWithMeta(): List<Pair<String, Long>> {
         val map = prefs.getUnlockedWithTimestamps()

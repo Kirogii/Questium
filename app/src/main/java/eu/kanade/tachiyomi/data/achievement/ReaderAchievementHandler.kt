@@ -4,6 +4,10 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import tachiyomi.domain.achievement.service.AchievementManager
 
 /**
@@ -26,9 +30,18 @@ import tachiyomi.domain.achievement.service.AchievementManager
 class ReaderAchievementHandler(
     private val achievementManager: AchievementManager,
 ) {
+    // KMK --> Own scope: starting a chapter is what pulls an entry out of the stale-unstarted
+    // backlog, and the query has to leave the reader's call site. refreshBacklog throttles
+    // itself, so a page turn cannot run a library query.
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     fun onChapterRead(readingModeFlag: Int) {
         try {
             achievementManager.onOrganicChapterRead(0)
+            // KMK --> Day state first, so the streak tiers see today, then the per-day binge
+            // count. Both are the only path to streak_*/binge_* - nothing else counts a read.
+            runCatching { achievementManager.onReadingDay() }
+            runCatching { achievementManager.incrementDailyCounter("binge") }
             when (readingModeFlag) {
                 ReadingMode.LEFT_TO_RIGHT.flagValue -> achievementManager.onLtrFinished()
                 ReadingMode.RIGHT_TO_LEFT.flagValue -> achievementManager.tryUnlockDirect("rtl_reader")
@@ -39,6 +52,9 @@ class ReaderAchievementHandler(
             }
             // Pager double-page spreads are handled separately via PagerConfig,
             // WebGPU spreads via WebGpuViewer — keep out of this handler.
+            // KMK --> Throttled: not every chapter read needs a library query.
+            scope.launch { runCatching { achievementManager.refreshBacklog() } }
+            // KMK <--
         } catch (_: Exception) {
         }
     }

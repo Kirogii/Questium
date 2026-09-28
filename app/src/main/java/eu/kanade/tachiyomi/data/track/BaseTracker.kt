@@ -97,6 +97,11 @@ abstract class BaseTracker(
     }
 
     override suspend fun setRemoteStatus(track: Track, status: Long) {
+        // KMK --> Every tracker funnels a status change through here, so one hook covers all
+        // twelve services instead of one per override. Counted before the remote call so a
+        // network failure still counts the user's edit.
+        runCatching { globalAppGraph.achievementManager.incrementCounter("tracker_updates") }
+        // KMK <--
         // KMK --> leaving a not-started list starts the clock when no start date is set
         val wasNotStarted = hasNotStartedReading(track.status)
         // KMK <--

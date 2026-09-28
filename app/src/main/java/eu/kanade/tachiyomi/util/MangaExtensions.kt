@@ -31,5 +31,9 @@ suspend fun Manga.editCover(
     } else if (favorite) {
         coverCache.setCustomCoverToCache(this, stream)
         updateManga.awaitUpdateCoverLastModified(id)
+        // KMK --> After the write, and only on the cached-custom-cover branch, so this counts
+        // covers the user actually set rather than every cover save.
+        runCatching { mihon.app.di.globalAppGraph.achievementManager.incrementCounter("custom_covers") }
+        // KMK <--
     }
 }

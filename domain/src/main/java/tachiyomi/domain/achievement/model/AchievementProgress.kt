@@ -63,6 +63,28 @@ object AchievementProgress {
         "backlog_250" to 250,
         "backlog_cleared_10" to 10,
         "backlog_cleared_100" to 100,
+        // KMK --> Counter tiers, matching AchievementManager.COUNTER_TIERS exactly.
+        "download_one" to 1,
+        "download_ten" to 10,
+        "download_hundred" to 100,
+        "download_thousand" to 1000,
+        "cover_ten" to 10,
+        "category_master" to 5,
+        "category_ten" to 10,
+        "sources_five" to 5,
+        "sources_ten" to 10,
+        "subcategory_creator" to 1,
+        "subcategory_five" to 5,
+        "subcategory_twenty" to 20,
+        "track_status" to 10,
+        "binge_10" to 10,
+        "binge_50" to 50,
+        "binge_100" to 100,
+        "streak_3" to 3,
+        "streak_7" to 7,
+        "streak_30" to 30,
+        "streak_100" to 100,
+        // KMK <--
         // Reread
         "rereader" to 1,
         "reread_five" to 5,
@@ -109,9 +131,26 @@ object AchievementProgress {
             prefs.totalReadingTimeMinutes().get().coerceAtLeast(0)
         // Backlog
         in setOf("backlog_10", "backlog_25", "backlog_50", "backlog_100", "backlog_250") ->
-            (prefs.libraryMangaCount().get() - prefs.mangaFinishedCount().get()).coerceAtLeast(0)
+            prefs.staleUnstartedCount().get().coerceAtLeast(0)
         in setOf("backlog_cleared_10", "backlog_cleared_100") ->
             prefs.backlogClearedCount().get().coerceAtLeast(0)
+        // KMK --> Named counters, same names as AchievementManager.COUNTER_TIERS so the bar and
+        // the unlock tiers read the same number.
+        in setOf("download_one", "download_ten", "download_hundred", "download_thousand") ->
+            prefs.counter("downloads").get().coerceAtLeast(0)
+        "cover_ten" -> prefs.counter("custom_covers").get().coerceAtLeast(0)
+        in setOf("category_master", "category_ten") ->
+            prefs.counter("categories").get().coerceAtLeast(0)
+        in setOf("sources_five", "sources_ten") ->
+            prefs.counter("sources").get().coerceAtLeast(0)
+        in setOf("subcategory_creator", "subcategory_five", "subcategory_twenty") ->
+            prefs.counter("subcategories").get().coerceAtLeast(0)
+        "track_status" -> prefs.counter("tracker_updates").get().coerceAtLeast(0)
+        in setOf("binge_10", "binge_50", "binge_100") ->
+            prefs.dailyCounter("binge").get().coerceAtLeast(0)
+        in setOf("streak_3", "streak_7", "streak_30", "streak_100") ->
+            prefs.readDays().size.toLong().coerceAtLeast(0)
+        // KMK <--
         // Reread derived from mangaFinished? No dedicated counter; approximate via finished? For progress, use 0.
         // Translation increments tracked elsewhere; for progress we use 0 fallback.
         // Trackers: special, need injected count — handled via unlocked check only.

@@ -480,6 +480,10 @@ class Downloader(
 
             download.status = Download.State.DOWNLOADED
 
+            // KMK --> Counted here, the one place a chapter download is known good; the ERROR
+            // paths above return before this.
+            runCatching { globalAppGraph.achievementManager.incrementCounter("downloads") }
+
             // KMK --> Enqueue translation after successful download if enabled
             try {
                 val translationEnabled = globalAppGraph.translationManager.isEnabled()

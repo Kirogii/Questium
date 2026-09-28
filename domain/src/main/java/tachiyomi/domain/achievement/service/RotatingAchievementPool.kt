@@ -29,6 +29,7 @@ class RotatingAchievementPool(
         val selected = candidates.shuffled(Random(epoch)).take(3)
         prefs.rotatingLastDailyEpoch().set(epoch)
         prefs.rotatingDailyIds().set(selected.joinToString(",") { it.id })
+        pruneProgress()
         return selected
     }
 
@@ -47,8 +48,39 @@ class RotatingAchievementPool(
         val selected = candidates.shuffled(Random(epoch + 1000)).take(4)
         prefs.rotatingLastWeeklyEpoch().set(epoch)
         prefs.rotatingWeeklyIds().set(selected.joinToString(",") { it.id })
+        pruneProgress()
         return selected
     }
+
+    /**
+     * Drops progress for ids that are no longer in either period's active set. Rotating progress
+     * is keyed per achievement id, so without this a count earned in one period is still sitting
+     * there when the same id comes back around and the bar starts part-finished.
+     *
+     * Keeps the union of the stored daily and weekly sets, so it is safe whichever period's
+     * getter triggered it - pruning on the daily set alone would wipe the weekly progress.
+     * Only called from an epoch rollover, after the caller's own ids have been stored.
+     */
+    private fun pruneProgress() {
+        val raw = prefs.rotatingProgress().get()
+        if (raw.isBlank()) return
+        val stillActive = (prefs.rotatingDailyIds().get() + "," + prefs.rotatingWeeklyIds().get())
+            .split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        val kept = parseProgress(raw).filterKeys { it in stillActive }
+        if (kept.size != parseProgress(raw).size) {
+            prefs.rotatingProgress().set(kept.entries.joinToString(",") { "${it.key}:${it.value}" })
+        }
+    }
+
+    private fun parseProgress(raw: String): Map<String, Int> =
+        raw.split(",").mapNotNull {
+            val parts = it.split(":", limit = 2)
+            if (parts.size != 2) return@mapNotNull null
+            parts[0] to (parts[1].toIntOrNull() ?: 0)
+        }.toMap()
 
     fun getAllActive(): List<Achievement> = getActiveDaily() + getActiveWeekly()
 
@@ -57,15 +89,7 @@ class RotatingAchievementPool(
         if (!ach.isRotating) return
         if (prefs.getUnlockedIds().contains(id)) return
         val raw = prefs.rotatingProgress().get()
-        val map = if (raw.isBlank()) {
-            mutableMapOf<String, Int>()
-        } else {
-            raw.split(",").mapNotNull {
-                val parts = it.split(":", limit = 2)
-                if (parts.size != 2) return@mapNotNull null
-                parts[0] to (parts[1].toIntOrNull() ?: 0)
-            }.toMap().toMutableMap()
-        }
+        val map = parseProgress(raw).toMutableMap()
         val cur = (map[id] ?: 0) + progress
         map[id] = cur
         prefs.rotatingProgress().set(map.entries.joinToString(",") { "${it.key}:${it.value}" })
@@ -77,14 +101,7 @@ class RotatingAchievementPool(
         }
     }
 
-    fun getProgress(id: String): Int {
-        val raw = prefs.rotatingProgress().get()
-        if (raw.isBlank()) return 0
-        return raw.split(",").firstNotNullOfOrNull {
-            val parts = it.split(":", limit = 2)
-            if (parts[0] == id) parts[1].toIntOrNull() else null
-        } ?: 0
-    }
+    fun getProgress(id: String): Int = parseProgress(prefs.rotatingProgress().get())[id] ?: 0
 
     private fun rotatingThreshold(id: String): Int = when (id) {
         "rotating_daily_read_15" -> 15

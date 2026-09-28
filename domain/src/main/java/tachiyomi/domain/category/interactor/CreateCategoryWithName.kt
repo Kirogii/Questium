@@ -4,6 +4,7 @@ import dev.zacsweers.metro.Inject
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.achievement.service.AchievementManager
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.category.repository.CategoryRepository
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -12,6 +13,9 @@ import tachiyomi.domain.library.service.LibraryPreferences
 class CreateCategoryWithName(
     private val categoryRepository: CategoryRepository,
     private val preferences: LibraryPreferences,
+    // KMK -->
+    private val achievementManager: AchievementManager,
+    // KMK <--
 ) {
 
     private val initialFlags: Long
@@ -46,6 +50,15 @@ class CreateCategoryWithName(
 
         try {
             categoryRepository.insert(newCategory)
+            // KMK --> Only on the success path, so a failed insert never counts. A subcategory is
+            // a distinct tier from a root category, so the two counters are kept apart.
+            runCatching {
+                if (parentId != 0L) {
+                    achievementManager.incrementCounter("subcategories")
+                } else {
+                    achievementManager.incrementCounter("categories")
+                }
+            }
             Result.Success(/* SY --> */newCategory/* SY <-- */)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)

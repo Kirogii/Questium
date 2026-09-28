@@ -11,6 +11,11 @@ import tachiyomi.domain.achievement.model.Achievements
 class AchievementPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
+    // KMK --> Longest streak tier is 100, so 200 days of history covers it with slack and keeps
+    // the stored list small.
+    private companion object {
+        const val READING_DAY_WINDOW = 200
+    }
     fun achievementsEnabled() = preferenceStore.getBoolean("pref_achievements_enabled", true)
     fun achievementToastsEnabled() = preferenceStore.getBoolean("pref_achievement_toasts_enabled", true)
     fun achievementSoundsEnabled() = preferenceStore.getBoolean("pref_achievement_sounds_enabled", false)
@@ -24,6 +29,59 @@ class AchievementPreferences(
     fun unlockedTimestamps() = preferenceStore.getString("pref_achievement_timestamps", "")
     fun totalReadingTimeMinutes() = preferenceStore.getLong("pref_achievement_reading_time_minutes", 0)
     fun backlogClearedCount() = preferenceStore.getLong("pref_achievement_backlog_cleared", 0)
+    // KMK --> Cached because computeStats is synchronous and the count needs a library query;
+    // AchievementManager.refreshBacklog owns writing it.
+    fun staleUnstartedCount() = preferenceStore.getLong("pref_achievement_stale_unstarted", 0)
+    fun backlogLastRefresh() = preferenceStore.getLong("pref_achievement_backlog_refresh", 0)
+    // KMK <--
+    // KMK --> Day epochs (UTC) on which a chapter was read, comma separated, oldest first.
+    // Bounded to the trailing window the longest streak needs, so it cannot grow without limit.
+    fun readingDays() = preferenceStore.getString("pref_achievement_reading_days", "")
+
+    @Synchronized
+    fun markReadingDay(epochDay: Long) {
+        val days = readDays()
+        if (days.contains(epochDay)) return
+        val updated = (days + epochDay).sorted().takeLast(READING_DAY_WINDOW)
+        readingDays().set(updated.joinToString(","))
+    }
+
+    fun readDays(): List<Long> =
+        readingDays().get().split(",").mapNotNull { it.trim().toLongOrNull() }
+
+    /**
+     * Named lifetime counter, keyed off a shared prefix so a new counter needs no accessor.
+     * Only the names in AchievementManager.COUNTER_TIERS are read; anything else is ignored.
+     */
+    fun counter(name: String) = preferenceStore.getLong("pref_achievement_ctr_$name", 0)
+
+    /** Day-stamped counters (binge) reset when [dayEpoch] no longer matches the stored one. */
+    fun dailyCounter(name: String) = preferenceStore.getLong("pref_achievement_day_$name", 0)
+    fun dailyCounterDay() = preferenceStore.getLong("pref_achievement_day_epoch", 0)
+
+    @Synchronized
+    fun incrementCounter(name: String, amount: Int = 1) {
+        if (amount <= 0) return
+        val cur = counter(name).get()
+        if (cur < 10_000_000L) counter(name).set(cur + amount)
+    }
+
+    /**
+     * Returns the day's count, resetting first when the stored day is not [dayEpoch]. Returns 0
+     * after a reset so a caller can treat "count before increment" and "count after" the same.
+     */
+    @Synchronized
+    fun bumpDailyCounter(name: String, dayEpoch: Long): Long {
+        if (dailyCounterDay().get() != dayEpoch) {
+            dailyCounterDay().set(dayEpoch)
+            dailyCounter(name).set(0)
+        }
+        val cur = dailyCounter(name).get()
+        val next = cur + 1
+        dailyCounter(name).set(next)
+        return next
+    }
+    // KMK <--
     fun ltrMangaFinishedCount() = preferenceStore.getLong("pref_achievement_ltr_finished", 0)
     fun animationsEnabled() = preferenceStore.getBoolean("pref_achievement_animations_enabled", true)
     fun rotatingLastDailyEpoch() = preferenceStore.getLong("pref_achievement_rotating_daily_epoch", 0)
@@ -73,6 +131,13 @@ class AchievementPreferences(
         val cur = backlogClearedCount().get()
         if (cur < 1_000_000L) backlogClearedCount().set(cur + 1)
     }
+
+    // KMK -->
+    @Synchronized
+    fun setStaleUnstartedCount(count: Long) {
+        staleUnstartedCount().set(count.coerceIn(0L, 10_000L))
+    }
+    // KMK <--
 
     @Synchronized
     fun incrementLtrFinished() {
@@ -173,7 +238,7 @@ class AchievementPreferences(
         val unlocked = countableIds.size
         val secretUnlocked = ids.count { tachiyomi.domain.achievement.model.Achievements.forId(it)?.isSecret == true }
         val negatives = ids.count { tachiyomi.domain.achievement.model.Achievements.forId(it)?.isNegative == true }
-        val backlog = (libraryMangaCount().get() - mangaFinishedCount().get()).coerceAtLeast(0L)
+        val backlog = staleUnstartedCount().get().coerceAtLeast(0L)
         return tachiyomi.domain.achievement.model.AchievementStats(
             organicChaptersRead = organicChaptersRead().get().coerceAtLeast(0L),
             mangaFinished = mangaFinishedCount().get().coerceAtLeast(0L),
@@ -197,6 +262,11 @@ class AchievementPreferences(
         libraryMangaCount().set(0)
         totalReadingTimeMinutes().set(0)
         backlogClearedCount().set(0)
+        // KMK -->
+        staleUnstartedCount().set(0)
+        backlogLastRefresh().set(0)
+        readingDays().set("")
+        // KMK <--
         ltrMangaFinishedCount().set(0)
         upscalesServed().set(0)
         upscalePageCounts().set("")

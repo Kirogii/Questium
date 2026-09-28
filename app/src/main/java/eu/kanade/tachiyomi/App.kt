@@ -198,6 +198,29 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             runCatching { globalAppGraph.achievementNotifier.start() }
                 .onFailure { xLogE("Failed to start achievement notifier", it) }
         }
+        // KMK --> Also the daily pass: a stale-unstarted entry joins the backlog purely because
+        // 30 days elapsed, and nothing else fires on that. Forced so it is exact on every start.
+        ProcessLifecycleOwner.get().lifecycleScope.launchIO {
+            kotlinx.coroutines.delay(3000)
+            runCatching { globalAppGraph.achievementManager.refreshBacklog(force = true) }
+                .onFailure { xLogE("Failed to refresh achievement backlog", it) }
+        }
+        // KMK -->
+        ProcessLifecycleOwner.get().lifecycleScope.launchIO {
+            kotlinx.coroutines.delay(1500)
+            runCatching {
+                eu.kanade.tachiyomi.data.achievement.FeatureAchievementHooks(
+                    prefs = globalAppGraph.achievementPreferences,
+                    manager = globalAppGraph.achievementManager,
+                    uiPreferences = globalAppGraph.uiPreferences,
+                    connectionsPreferences = globalAppGraph.connectionsPreferences,
+                    webhookPreferences = globalAppGraph.webhookPreferences,
+                    readerPreferences = globalAppGraph.readerPreferences,
+                    translationPreferences = globalAppGraph.translationPreferences,
+                ).install(this)
+            }.onFailure { xLogE("Failed to install feature achievement hooks", it) }
+        }
+        // KMK <--
         // KMK -->
         runCatching { eu.kanade.tachiyomi.ui.reader.viewer.ViewerRegistry.register(eu.kanade.tachiyomi.ui.reader.viewer.novel.NovelViewerProvider) }
             .onFailure { xLogE("Failed to register novel viewer", it) }

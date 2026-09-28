@@ -7,7 +7,9 @@ sealed interface AchievementEvent {
     data class MangaFinished(val isPermanent: Boolean) : AchievementEvent
     object MangaCaughtUp : AchievementEvent
     object LtrFinished : AchievementEvent
-    data class BacklogChanged(val libraryCount: Long, val finishedCount: Long) : AchievementEvent
+    // KMK --> Carries the count itself, not the two counters it used to be derived from.
+    data class BacklogChanged(val staleUnstarted: Long) : AchievementEvent
+    // KMK <--
     data class BacklogCleared(val count: Int = 1) : AchievementEvent
     data class Negative(val id: String) : AchievementEvent
     object EhBrowsed : AchievementEvent
@@ -32,7 +34,9 @@ class AchievementDispatcher(
             is AchievementEvent.MangaFinished -> if (event.isPermanent) manager.onMangaFinished() else manager.onMangaCaughtUp()
             is AchievementEvent.MangaCaughtUp -> manager.onMangaCaughtUp()
             is AchievementEvent.LtrFinished -> manager.onLtrFinished()
-            is AchievementEvent.BacklogChanged -> manager.onBacklogChanged(event.libraryCount, event.finishedCount)
+            // KMK -->
+            is AchievementEvent.BacklogChanged -> manager.onBacklogChanged(event.staleUnstarted)
+            // KMK <--
             is AchievementEvent.BacklogCleared -> manager.onBacklogCleared(event.count)
             is AchievementEvent.Negative -> manager.onNegativeEvent(event.id)
             is AchievementEvent.EhBrowsed -> manager.onEhBrowsed()
