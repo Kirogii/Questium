@@ -11,6 +11,11 @@ import tachiyomi.domain.history.repository.HistoryRepository
 import tachiyomi.domain.manga.interactor.GetManga
 import kotlin.math.max
 
+// KMK -->
+/** Bounds [GetNextChapters.awaitFirstReadable] so a long History cannot make one tap scan it all. */
+private const val DEFAULT_HISTORY_SCAN_LIMIT = 25
+// KMK <--
+
 @Inject
 class GetNextChapters(
     private val getChaptersByMangaId: GetChaptersByMangaId,
@@ -25,6 +30,24 @@ class GetNextChapters(
         val history = historyRepository.getLastHistory() ?: return emptyList()
         return await(history.mangaId, history.chapterId, onlyUnread)
     }
+
+    // KMK -->
+    /**
+     * The next chapter to read, walking back through recent History until an entry has
+     * something left. [await] only considers the single newest entry, so a fully caught-up
+     * most-recent series would otherwise report no chapter.
+     *
+     * [scanLimit] bounds the walk so a long, fully-read History cannot turn one resume tap
+     * into a full-table scan.
+     */
+    suspend fun awaitFirstReadable(scanLimit: Int = DEFAULT_HISTORY_SCAN_LIMIT): Chapter? {
+        historyRepository.getRecentHistory(scanLimit).forEach { history ->
+            val next = await(history.mangaId, history.chapterId, onlyUnread = false).firstOrNull()
+            if (next != null) return next
+        }
+        return null
+    }
+    // KMK <--
 
     suspend fun await(mangaId: Long, onlyUnread: Boolean = true): List<Chapter> {
         val manga = getManga.await(mangaId) ?: return emptyList()

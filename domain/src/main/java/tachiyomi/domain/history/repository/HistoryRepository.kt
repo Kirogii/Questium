@@ -19,6 +19,10 @@ interface HistoryRepository {
 
     suspend fun getLastHistory(): HistoryWithRelations?
 
+    // KMK -->
+    suspend fun getRecentHistory(limit: Int): List<HistoryWithRelations>
+    // KMK <--
+
     suspend fun getTotalReadDuration(): Long
 
     // KMK -->

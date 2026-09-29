@@ -126,3 +126,38 @@ FROM historyView
 WHERE historyView.readAt > 0
 ORDER BY readAt DESC
 LIMIT 1;
+
+-- KMK --> Resuming from the History tab walks back through the most recent
+-- entries until one has a chapter left, so it needs them in order rather than
+-- just the newest. Same projection as getLatestHistory, capped by the caller.
+getRecentHistory:
+SELECT
+id,
+mangaId,
+chapterId,
+title,
+thumbnailUrl,
+source,
+favorite,
+cover_last_modified,
+chapterNumber,
+-- KMK -->
+read,
+lastPageRead,
+CASE
+    WHEN (chapterFlags & :bookmarkUnmask) != 0 THEN totalCount - bookmarkCount
+    WHEN (chapterFlags & :bookmarkMask) != 0 THEN bookmarkCount
+    ELSE totalCount
+END AS totalCount,
+CASE
+    WHEN (chapterFlags & :bookmarkUnmask) != 0 THEN readCount - bookmarkReadCount
+    WHEN (chapterFlags & :bookmarkMask) != 0 THEN bookmarkReadCount
+    ELSE readCount
+END AS readCount,
+-- KMK <--
+readAt,
+readDuration
+FROM historyView
+WHERE historyView.readAt > 0
+ORDER BY readAt DESC
+LIMIT :limit;

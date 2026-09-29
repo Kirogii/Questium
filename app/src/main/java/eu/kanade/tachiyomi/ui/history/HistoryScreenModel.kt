@@ -147,7 +147,9 @@ class HistoryScreenModel(
     }
 
     suspend fun getNextChapter(): Chapter? {
-        return withIOContext { getNextChapters.await(onlyUnread = false).firstOrNull() }
+        // KMK -->
+        return withIOContext { getNextChapters.awaitFirstReadable() }
+        // KMK <--
     }
 
     fun getNextChapterForManga(mangaId: Long, chapterId: Long) {
