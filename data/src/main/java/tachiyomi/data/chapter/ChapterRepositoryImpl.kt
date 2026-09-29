@@ -78,6 +78,9 @@ class ChapterRepositoryImpl(
                     version = chapterUpdate.version,
                     isSyncing = 0,
                     memo = chapterUpdate.memo?.let(MemoColumnAdapter::encode),
+                    // KMK -->
+                    bookmarkColor = chapterUpdate.bookmarkColor?.value?.toLong(),
+                    // KMK <--
                 )
             }
         }

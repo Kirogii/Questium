@@ -19,6 +19,9 @@ data class Chapter(
     val lastModifiedAt: Long,
     val version: Long,
     val memo: JsonObject,
+    // KMK -->
+    val bookmarkColor: BookmarkColor = BookmarkColor.NONE,
+    // KMK <--
 ) {
     val isRecognizedNumber: Boolean
         get() = chapterNumber >= 0f

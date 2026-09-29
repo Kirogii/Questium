@@ -9,6 +9,11 @@ CREATE TABLE chapters(
     scanlator TEXT,
     read INTEGER AS Boolean NOT NULL,
     bookmark INTEGER AS Boolean NOT NULL,
+    -- KMK -->
+    -- Kept directly after `bookmark` so the SELECT * column order still lines up
+    -- with ChapterMapper.mapChapter's parameter order.
+    bookmark_color INTEGER NOT NULL DEFAULT 0,
+    -- KMK <--
     last_page_read INTEGER NOT NULL,
     chapter_number REAL NOT NULL,
     source_order INTEGER NOT NULL,
@@ -156,6 +161,12 @@ SET manga_id = coalesce(:mangaId, manga_id),
     scanlator = coalesce(:scanlator, scanlator),
     read = coalesce(:read, read),
     bookmark = coalesce(:bookmark, bookmark),
+    -- KMK -->
+    -- Deliberately absent from update_chapter_and_manga_version's WHEN clause:
+    -- the colour is a local annotation like memo, so recolouring a bookmark
+    -- shouldn't bump the sync version and re-push the chapter to other devices.
+    bookmark_color = coalesce(:bookmarkColor, bookmark_color),
+    -- KMK <--
     last_page_read = coalesce(:lastPageRead, last_page_read),
     chapter_number = coalesce(:chapterNumber, chapter_number),
     source_order = coalesce(:sourceOrder, source_order),

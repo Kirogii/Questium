@@ -1,6 +1,7 @@
 package tachiyomi.data.chapter
 
 import kotlinx.serialization.json.JsonObject
+import tachiyomi.domain.chapter.model.BookmarkColor
 import tachiyomi.domain.chapter.model.Chapter
 
 object ChapterMapper {
@@ -12,6 +13,9 @@ object ChapterMapper {
         scanlator: String?,
         read: Boolean,
         bookmark: Boolean,
+        // KMK -->
+        bookmarkColor: Long,
+        // KMK <--
         lastPageRead: Long,
         chapterNumber: Double,
         sourceOrder: Long,
@@ -38,5 +42,8 @@ object ChapterMapper {
         lastModifiedAt = lastModifiedAt,
         version = version,
         memo = memo,
+        // KMK -->
+        bookmarkColor = BookmarkColor.fromValue(bookmarkColor),
+        // KMK <--
     )
 }
