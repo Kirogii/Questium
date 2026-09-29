@@ -24,6 +24,7 @@ import tachiyomi.domain.category.interactor.RenameCategory
 import tachiyomi.domain.category.interactor.ReorderCategory
 import tachiyomi.domain.category.interactor.UpdateCategory
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.category.model.CategorySortOrder
 import tachiyomi.domain.category.model.CategoryUpdate
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.interactor.GetLibraryManga
@@ -401,5 +402,22 @@ object CategoryManagerSort {
     const val ZA = 2
     const val MOST_ITEMS = 3
     const val LEAST_ITEMS = 4
+    const val DATE_ADDED_NEWEST = 5
+    const val DATE_ADDED_OLDEST = 6
+    const val DATE_MODIFIED_NEWEST = 7
+    const val DATE_MODIFIED_OLDEST = 8
+}
+
+// Persisted as a raw Int, so new modes must be appended and never renumbered.
+// The count-based modes have no meaning for tab ordering, where the tab list is
+// the library's own display order, so they fall back to manual.
+fun categorySortOrderOf(mode: Int): CategorySortOrder = when (mode) {
+    CategoryManagerSort.AZ -> CategorySortOrder.NAME_ASC
+    CategoryManagerSort.ZA -> CategorySortOrder.NAME_DESC
+    CategoryManagerSort.DATE_ADDED_NEWEST -> CategorySortOrder.DATE_ADDED_NEWEST
+    CategoryManagerSort.DATE_ADDED_OLDEST -> CategorySortOrder.DATE_ADDED_OLDEST
+    CategoryManagerSort.DATE_MODIFIED_NEWEST -> CategorySortOrder.DATE_MODIFIED_NEWEST
+    CategoryManagerSort.DATE_MODIFIED_OLDEST -> CategorySortOrder.DATE_MODIFIED_OLDEST
+    else -> CategorySortOrder.MANUAL
 }
 // KMK <--

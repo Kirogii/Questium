@@ -19,6 +19,7 @@ import eu.kanade.domain.manga.interactor.MergeMangaBySmartSearch
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.tachiyomi.ui.category.categorySortOrderOf
 import eu.kanade.presentation.components.SEARCH_DEBOUNCE_MILLIS
 import eu.kanade.presentation.library.components.LibraryToolbarTitle
 import eu.kanade.presentation.manga.DownloadAction
@@ -98,6 +99,7 @@ import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.category.model.Category.Companion.UNCATEGORIZED_ID
+import tachiyomi.domain.category.model.sortedForDisplay
 import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
@@ -197,11 +199,12 @@ class LibraryScreenModel(
                 combine(
                     state.map { it.includedCategories }.distinctUntilChanged(),
                     state.map { it.excludedCategories }.distinctUntilChanged(),
-                    ::Pair,
+                    libraryPreferences.categoryManagerSortMode().changes(),
+                    ::Triple,
                 ),
                 // KMK <--
                 getLibraryItemPreferencesFlow(),
-            ) { (searchQuery, categories, favorites), (tracksMap, trackingFilters, trackedOverall), (includedCategories, excludedCategories), itemPreferences ->
+            ) { (searchQuery, categories, favorites), (tracksMap, trackingFilters, trackedOverall), (includedCategories, excludedCategories, categorySortMode), itemPreferences ->
                 val filteredFavorites = favorites
                     .applyFilters(
                         tracksMap,
@@ -229,7 +232,8 @@ class LibraryScreenModel(
 
                 LibraryData(
                     isInitialized = true,
-                    categories = categories,
+                    // KMK --> display order only; the stored manual order is untouched
+                    categories = categories.sortedForDisplay(categorySortOrderOf(categorySortMode)),
                     favorites = filteredFavorites,
                     tracksMap = tracksMap,
                     loggedInTrackerIds = trackingFilters.keys,

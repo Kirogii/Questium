@@ -11,6 +11,8 @@ object CategoryMapper {
         // KMK -->
         hidden: Long,
         parentId: Long,
+        dateAdded: Long,
+        dateModified: Long,
         // KMK <--
     ): Category {
         return Category(
@@ -21,6 +23,8 @@ object CategoryMapper {
             // KMK -->
             hidden = hidden == 1L,
             parentId = parentId,
+            dateAdded = dateAdded,
+            dateModified = dateModified,
             // KMK <--
         )
     }

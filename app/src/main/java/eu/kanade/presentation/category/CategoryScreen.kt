@@ -39,11 +39,13 @@ import eu.kanade.presentation.category.components.CategoryListItem
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.tachiyomi.ui.category.CategoryManagerSort
 import eu.kanade.tachiyomi.ui.category.CategoryScreenState
+import eu.kanade.tachiyomi.ui.category.categorySortOrderOf
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import tachiyomi.domain.category.model.Category
+import tachiyomi.domain.category.model.sortedForDisplay
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.Scaffold
@@ -197,7 +199,7 @@ private fun CategoryContent(
                     CategoryManagerSort.ZA -> subs.sortedByDescending { it.name.lowercase() }
                     CategoryManagerSort.MOST_ITEMS -> subs.sortedByDescending { mangaCounts[it.id] ?: 0 }
                     CategoryManagerSort.LEAST_ITEMS -> subs.sortedBy { mangaCounts[it.id] ?: 0 }
-                    else -> subs.sortedBy { it.order }
+                    else -> subs.sortedForDisplay(categorySortOrderOf(sortMode))
                 }
             }
     }
@@ -405,6 +407,10 @@ private fun SortModeDropdown(sortMode: Int, onSortMode: (Int) -> Unit, modifier:
         CategoryManagerSort.ZA to stringResource(KMR.strings.category_manager_sort_za),
         CategoryManagerSort.MOST_ITEMS to stringResource(KMR.strings.category_manager_sort_most),
         CategoryManagerSort.LEAST_ITEMS to stringResource(KMR.strings.category_manager_sort_least),
+        CategoryManagerSort.DATE_ADDED_NEWEST to stringResource(KMR.strings.category_manager_sort_date_added_newest),
+        CategoryManagerSort.DATE_ADDED_OLDEST to stringResource(KMR.strings.category_manager_sort_date_added_oldest),
+        CategoryManagerSort.DATE_MODIFIED_NEWEST to stringResource(KMR.strings.category_manager_sort_date_modified_newest),
+        CategoryManagerSort.DATE_MODIFIED_OLDEST to stringResource(KMR.strings.category_manager_sort_date_modified_oldest),
     )
     Box(modifier = modifier) {
         TextButton(onClick = { menuOpen = true }) {
