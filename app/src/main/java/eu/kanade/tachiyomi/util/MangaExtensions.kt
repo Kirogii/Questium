@@ -34,6 +34,10 @@ suspend fun Manga.editCover(
         // KMK --> After the write, and only on the cached-custom-cover branch, so this counts
         // covers the user actually set rather than every cover save.
         runCatching { mihon.app.di.globalAppGraph.achievementManager.incrementCounter("custom_covers") }
+        runCatching {
+            mihon.app.di.globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_extra_7")
+            mihon.app.di.globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_upload_cover_3")
+        }
         // KMK <--
     }
 }

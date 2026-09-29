@@ -154,6 +154,14 @@ class ChapterCompleteSoundPlayer(
             if (loadedIds.isNotEmpty()) {
                 val volume = Random.nextFloat() * 0.3f + 0.7f
                 pool.play(loadedIds.random(), volume, volume, 1, 0, 1.0f)
+                // KMK --> On the play, not on entry: the two early returns above mean a sound
+                // was never heard. The rarity roll already happened, so the legendary tier is
+                // known here rather than guessed.
+                runCatching { mihon.app.di.globalAppGraph.achievementManager.incrementCounter("moans") }
+                if (rarity == SoundTier.LEGENDARY) {
+                    runCatching { mihon.app.di.globalAppGraph.achievementManager.tryUnlockDirect("moan_legendary") }
+                }
+                // KMK <--
                 return
             }
         }

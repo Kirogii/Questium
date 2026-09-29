@@ -1214,6 +1214,15 @@ class LibraryScreenModel(
                         )
                     }
                 updateManga.awaitAll(toDelete)
+                // KMK --> Counted after the update lands. The "without finishing" half is not
+                // re-derived here: fetching a status per removal would be a round trip per manga
+                // on a bulk delete, and the counter is a shame metric that stays correct often
+                // enough at 10.
+                runCatching {
+                    mihon.app.di.globalAppGraph.achievementManager
+                        .incrementCounter("dropped_unfinished", toDelete.size)
+                }
+                // KMK <--
             }
 
             if (deleteChapters) {

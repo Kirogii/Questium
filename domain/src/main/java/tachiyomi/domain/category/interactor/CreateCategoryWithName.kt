@@ -49,7 +49,7 @@ class CreateCategoryWithName(
         )
 
         try {
-            categoryRepository.insert(newCategory)
+            val newId = categoryRepository.insert(newCategory)
             // KMK --> Only on the success path, so a failed insert never counts. A subcategory is
             // a distinct tier from a root category, so the two counters are kept apart.
             runCatching {
@@ -59,7 +59,8 @@ class CreateCategoryWithName(
                     achievementManager.incrementCounter("categories")
                 }
             }
-            Result.Success(/* SY --> */newCategory/* SY <-- */)
+            // The inserted id was being dropped, so every caller got a Category with id = 0.
+            Result.Success(/* SY --> */newCategory.copy(id = newId)/* SY <-- */)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)
             Result.InternalError(e)

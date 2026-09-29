@@ -17,6 +17,16 @@ sealed interface AchievementEvent {
     data class TrackerConnected(val total: Int) : AchievementEvent
     data class Reread(val count: Int = 1) : AchievementEvent
     data class Translated(val count: Long) : AchievementEvent
+
+    // KMK --> Secrets and negatives. Each carries only what the trigger needs, so the manager
+    // keeps the rule and the call site stays a one-liner at an existing event.
+    data class ChapterReadAtHour(val hour: Int, val minute: Int) : AchievementEvent
+    data class AppOpenedAt(val hour: Int, val minute: Int) : AchievementEvent
+    data class ReaderDirectionChanged(val direction: Int) : AchievementEvent
+    data class ReaderSessionEnded(val durationMs: Long) : AchievementEvent
+    data class MangaSpeedrun(val totalChapters: Long, val durationMs: Long) : AchievementEvent
+    data class MangaFinishedOnDay(val dummy: Int = 0) : AchievementEvent
+    // KMK <--
 }
 
 @dev.zacsweers.metro.Inject
@@ -44,6 +54,14 @@ class AchievementDispatcher(
             is AchievementEvent.TrackerConnected -> manager.onTrackerConnected(event.total)
             is AchievementEvent.Reread -> manager.onReread(event.count)
             is AchievementEvent.Translated -> manager.onTranslated(event.count)
+            // KMK -->
+            is AchievementEvent.ChapterReadAtHour -> manager.onChapterReadAtHour(event.hour, event.minute)
+            is AchievementEvent.AppOpenedAt -> manager.onAppOpenedAt(event.hour, event.minute)
+            is AchievementEvent.ReaderDirectionChanged -> manager.onReaderDirectionChanged(event.direction)
+            is AchievementEvent.ReaderSessionEnded -> manager.onReaderSessionEnded(event.durationMs)
+            is AchievementEvent.MangaSpeedrun -> manager.onMangaSpeedrun(event.totalChapters, event.durationMs)
+            is AchievementEvent.MangaFinishedOnDay -> manager.onMangaFinishedOnDay()
+            // KMK <--
         }
     }
 

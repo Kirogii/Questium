@@ -77,6 +77,15 @@ class AppLanguageScreen : Screen() {
                 items(langs) {
                     ListItem(
                         modifier = Modifier.clickable {
+                            // KMK --> Counted only when the tag actually changes. The effect
+                            // below re-runs on recomposition, so counting there would count
+                            // every recompose rather than every language the user picked.
+                            if (currentLanguage != it.langTag) {
+                                runCatching {
+                                    mihon.app.di.globalAppGraph.achievementManager
+                                        .incrementCounter("language_changes")
+                                }
+                            }
                             currentLanguage = it.langTag
                         },
                         headlineContent = { Text(it.displayName) },

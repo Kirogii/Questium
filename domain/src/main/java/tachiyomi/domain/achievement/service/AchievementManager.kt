@@ -5,6 +5,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import tachiyomi.domain.achievement.interactor.GetStaleUnstartedBacklog
 import tachiyomi.domain.achievement.model.AchievementStats
+import tachiyomi.domain.achievement.model.AchievementTier
 import tachiyomi.domain.achievement.model.Achievements
 
 @SingleIn(AppScope::class)
@@ -150,6 +151,115 @@ class AchievementManager(
         for ((at, id) in tiers) {
             if (count >= at) tryUnlock(id, unlocked)
         }
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+    // KMK <--
+
+    // KMK -->
+    /**
+     * Reader-side time-of-day achievements. [hour] and [minute] are local, so a 3 AM read is 3 AM
+     * for the user rather than UTC. All of it comes off the same chapter-read event that already
+     * drives the binge counter, so there is no extra query here.
+     */
+    @Synchronized
+    fun onChapterReadAtHour(hour: Int, minute: Int): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val unlocked = mutableListOf<String>()
+        if (hour < 6) tryUnlock("early_bird", unlocked)
+        // 11:30-13:30 inclusive, so the noon window covers both stated endpoints.
+        if ((hour == 11 && minute >= 30) || hour == 12 || (hour == 13 && minute <= 30)) {
+            tryUnlock("lunch_break", unlocked)
+        }
+        if (hour in 0..3) unlocked += incrementDailyCounterQuiet("midnight_reads")
+        if (hour == 3) unlocked += incrementDailyCounterQuiet("late_night_reads")
+        if (hour == 0) unlocked += incrementDailyCounterQuiet("after_midnight_reads")
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /**
+     * Completion tiers that depend on how long the series was. Separate from [onMangaSpeedrun]
+     * because these are about the finish, not the time taken.
+     */
+    @Synchronized
+    fun onMangaCompletedWithCount(totalChapters: Long): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val unlocked = mutableListOf<String>()
+        if (totalChapters == 1L) tryUnlock("one_shot", unlocked)
+        if (totalChapters >= 200L) tryUnlock("long_runner", unlocked)
+        if (totalChapters >= 500L) tryUnlock("ultra_long", unlocked)
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    private fun incrementDailyCounterQuiet(name: String): List<String> =
+        if (name in DAILY_COUNTER_TIERS) incrementDailyCounter(name) else emptyList()
+
+    /** "Open the app at 03:33". Checked on process start only, which is the only place that is true. */
+    @Synchronized
+    fun onAppOpenedAt(hour: Int, minute: Int): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        if (hour != 3 || minute != 33) return emptyList()
+        val unlocked = mutableListOf<String>()
+        tryUnlock("secret_houri", unlocked)
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /**
+     * "Switch reader direction 20 times in a row." The streak resets on the opposite direction, so
+     * alternating forever never counts - which is the point, since the description says "in a row".
+     */
+    @Synchronized
+    fun onReaderDirectionChanged(direction: Int): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val unlocked = mutableListOf<String>()
+        val streak = if (prefs.directionStreakDir().get() == direction) {
+            prefs.directionStreakCount().get()
+        } else {
+            prefs.directionStreakDir().set(direction)
+            0
+        }
+        val next = (streak + 1).coerceAtMost(1_000)
+        prefs.directionStreakCount().set(next)
+        if (next >= 20) tryUnlock("secret_flip_phone", unlocked)
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /**
+     * Time-windowed reader sessions. [durationMs] is one continuous stretch with the reader
+     * open, so a quit and reopen does not stitch two sittings into one 3-hour run.
+     */
+    @Synchronized
+    fun onReaderSessionEnded(durationMs: Long): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val unlocked = mutableListOf<String>()
+        if (durationMs >= 3 * 60 * 60 * 1000L) tryUnlock("secret_no_sleep", unlocked)
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /** "Finish a 20+ chapter manga in under an hour." */
+    @Synchronized
+    fun onMangaSpeedrun(totalChapters: Long, durationMs: Long): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        val unlocked = mutableListOf<String>()
+        if (totalChapters >= 20 && durationMs in 1..(60 * 60 * 1000L)) {
+            tryUnlock("secret_speedrun", unlocked)
+        }
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /** "Complete 7 manga in 7 days", counted over the recorded reading days. */
+    @Synchronized
+    fun onMangaFinishedOnDay(): List<String> {
+        if (!prefs.achievementsEnabled().get()) return emptyList()
+        prefs.markReadingDay(currentEpochDay())
+        val unlocked = mutableListOf<String>()
+        if (prefs.readDays().size >= 7) tryUnlock("secret_perfect_week", unlocked)
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
         return unlocked
     }
@@ -396,6 +506,44 @@ class AchievementManager(
 
     private fun tryUnlock(id: String, out: MutableList<String>) {
         if (!prefs.achievementsEnabled().get()) return
+        if (prefs.unlock(id)) {
+            out.add(id)
+            // Collection achievements are a function of the whole unlocked set, so they can only
+            // be reached by re-checking on every unlock. tryUnlock is the one funnel all of them
+            // pass through. Without this they were wait-and-see-forever: defined, given a
+            // progress bar, and no code path ever evaluated them.
+            unlockCollections(out)
+        }
+    }
+
+    /**
+     * Re-evaluates the achievements defined over the unlocked set rather than over a counter.
+     *
+     * Calls [AchievementPreferences.unlock] directly rather than [tryUnlock] on purpose:
+     * routing back through tryUnlock would re-enter unlockCollections on every collection
+     * unlock, which is unbounded recursion. Going straight to the pref store cannot re-enter.
+     */
+    private fun unlockCollections(out: MutableList<String>) {
+        val unlocked = prefs.getUnlockedIds()
+        val all = Achievements.all
+
+        val secrets = all.count { it.isSecret && it.id in unlocked }
+        if (secrets >= 10) unlockQuietly("secret_all_secret", out)
+        if (secrets >= 20) unlockQuietly("ultimate_secret_hunter_ultimate", out)
+
+        val mythic = all.filter { it.tier == AchievementTier.MYTHIC }
+        if (mythic.count { it.id in unlocked } >= 5) unlockQuietly("secret_mythic_hoard", out)
+
+        // "Every PLATINUM" reads as the non-secret tiers; the secret platinums are themselves
+        // gated behind collection achievements, so counting them here would deadlock.
+        val platinum = all.filter { it.tier == AchievementTier.PLATINUM && !it.isSecret }
+        if (platinum.isNotEmpty() && platinum.all { it.id in unlocked }) unlockQuietly("secret_platinum_club", out)
+
+        val openIds = all.filterNot { it.isSecret }.map { it.id }
+        if (openIds.isNotEmpty() && unlocked.containsAll(openIds)) unlockQuietly("secret_100_percent", out)
+    }
+
+    private fun unlockQuietly(id: String, out: MutableList<String>) {
         if (prefs.unlock(id)) out.add(id)
     }
 
@@ -435,11 +583,21 @@ class AchievementManager(
                 20L to "subcategory_twenty",
             ),
             "tracker_updates" to listOf(10L to "track_status"),
+            // Behaviour counters, same mechanism: a one-off misbehaviour rather than a pile.
+            "empty_searches" to listOf(5L to "secret_404"),
+            "moans" to listOf(50L to "secret_pillow"),
+            "language_changes" to listOf(10L to "secret_uwu"),
+            "dropped_unfinished" to listOf(10L to "negative_rage_quit"),
+            "spoiler_jumps" to listOf(1L to "negative_spoiled"),
+            "webgpu_rescues" to listOf(1L to "secret_webgpu_rescue"),
         )
 
         /** Counters that reset at the day boundary; same tier shape. */
         val DAILY_COUNTER_TIERS: Map<String, List<Pair<Long, String>>> = mapOf(
             "binge" to listOf(10L to "binge_10", 50L to "binge_50", 100L to "binge_100"),
+            "midnight_reads" to listOf(100L to "secret_midnight_100"),
+            "late_night_reads" to listOf(5L to "negative_midnight_oil"),
+            "after_midnight_reads" to listOf(10L to "night_owl"),
         )
     }
     // KMK <--

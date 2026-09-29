@@ -38,6 +38,10 @@ class AchievementPreferences(
     // Bounded to the trailing window the longest streak needs, so it cannot grow without limit.
     fun readingDays() = preferenceStore.getString("pref_achievement_reading_days", "")
 
+    // Direction-switch streak for the flip-phone secret: the last direction and its run length.
+    fun directionStreakDir() = preferenceStore.getInt("pref_achievement_dir_streak_dir", -1)
+    fun directionStreakCount() = preferenceStore.getInt("pref_achievement_dir_streak_count", 0)
+
     @Synchronized
     fun markReadingDay(epochDay: Long) {
         val days = readDays()
@@ -89,6 +93,9 @@ class AchievementPreferences(
     fun rotatingDailyIds() = preferenceStore.getString("pref_achievement_rotating_daily_ids", "")
     fun rotatingWeeklyIds() = preferenceStore.getString("pref_achievement_rotating_weekly_ids", "")
     fun rotatingProgress() = preferenceStore.getString("pref_achievement_rotating_progress", "")
+    // KMK --> Day stamps for the "once per day" rotating ids, so a page turn cannot fill a
+    // multi-day tier on its own. Format is id:epochDay,id:epochDay.
+    fun rotatingDayStamps() = preferenceStore.getString("pref_achievement_rotating_day_stamps", "")
     fun upscalesServed() = preferenceStore.getLong("pref_achievement_upscales_served", 0)
     fun upscalePageCounts() = preferenceStore.getString("pref_achievement_upscale_page_counts", "")
 
@@ -273,6 +280,7 @@ class AchievementPreferences(
         rotatingDailyIds().set("")
         rotatingWeeklyIds().set("")
         rotatingProgress().set("")
+        rotatingDayStamps().set("")
         rotatingLastDailyEpoch().set(0)
         rotatingLastWeeklyEpoch().set(0)
         achievementsData().set("")

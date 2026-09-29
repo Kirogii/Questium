@@ -453,6 +453,7 @@ class ExtensionManager(
             // KMK --> Only on install, not onExtensionUpdated below: these tiers count sources
             // the user added, and an update to an existing source is not a new one.
             runCatching { globalAppGraph.achievementManager.incrementCounter("sources") }
+            runCatching { globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_extra_1") }
             // KMK <--
         }
 

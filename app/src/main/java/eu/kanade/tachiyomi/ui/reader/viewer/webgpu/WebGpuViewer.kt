@@ -162,6 +162,10 @@ open class WebGpuViewer(
     private val deviceLostListener =
         ca.mpreg.webgpuviewer.renderer.WebGpuRenderer.Companion.DeviceLostListener { _, _ ->
             if (isDestroyed) return@DeviceLostListener
+            // KMK --> Counted on the loss itself, not on a successful recovery: a device loss
+            // on a phone is usually the app being backgrounded and the GPU going away, and
+            // recovery routinely succeeds either way, so waiting for success would under-count.
+            runCatching { mihon.app.di.globalAppGraph.achievementManager.incrementCounter("webgpu_rescues") }
             scope.launch {
                 try {
                     val recovered = pager.state.recoverFromDeviceLoss()

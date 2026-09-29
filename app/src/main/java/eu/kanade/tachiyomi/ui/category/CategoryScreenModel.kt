@@ -84,9 +84,10 @@ class CategoryScreenModel(
 
     fun createCategory(name: String) {
         screenModelScope.launch {
-            when (createCategoryWithName.await(name)) {
+            when (val r = createCategoryWithName.await(name)) {
                 is CreateCategoryWithName.Result.InternalError -> _events.send(CategoryEvent.InternalError)
-                else -> {}
+                // KMK --> Remembered so deleteCategory can spot a create-then-delete.
+                is CreateCategoryWithName.Result.Success -> noteCreated(r.category.id)
             }
         }
     }
@@ -94,9 +95,9 @@ class CategoryScreenModel(
     // KMK -->
     fun createSubcategory(name: String, parentId: Long) {
         screenModelScope.launch {
-            when (createCategoryWithName.await(name, parentId)) {
+            when (val r = createCategoryWithName.await(name, parentId)) {
                 is CreateCategoryWithName.Result.InternalError -> _events.send(CategoryEvent.InternalError)
-                else -> {}
+                is CreateCategoryWithName.Result.Success -> noteCreated(r.category.id)
             }
         }
     }
@@ -117,10 +118,42 @@ class CategoryScreenModel(
         screenModelScope.launch {
             when (deleteCategory.await(categoryId = categoryId)) {
                 is DeleteCategory.Result.InternalError -> _events.send(CategoryEvent.InternalError)
-                else -> {}
+                // KMK -->
+                else -> {
+                    if (wasJustCreated(categoryId)) {
+                        runCatching { mihon.app.di.globalAppGraph.achievementManager.tryUnlockDirect("secret_ghost_category") }
+                    }
+                    if (lastCreatedCategoryId == categoryId) lastCreatedCategoryId = 0L
+                }
+                // KMK <--
             }
         }
     }
+
+    // KMK --> "Create and immediately delete a category". Scoped to this screen model on purpose:
+    // create and delete of the same id only happen here, so there is no cross-screen state to
+    // keep and no risk of matching a delete against an unrelated older category.
+    private var lastCreatedCategoryId: Long = 0L
+    private var lastCreatedAtMs: Long = 0L
+
+    private fun noteCreated(id: Long) {
+        if (id <= 0L) return
+        lastCreatedCategoryId = id
+        lastCreatedAtMs = System.currentTimeMillis()
+        runCatching {
+            mihon.app.di.globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_category_2")
+        }
+    }
+
+    private fun wasJustCreated(categoryId: Long): Boolean =
+        categoryId > 0L && categoryId == lastCreatedCategoryId &&
+            System.currentTimeMillis() - lastCreatedAtMs <= GHOST_CATEGORY_WINDOW_MS
+
+    private companion object {
+        /** Long enough to be "immediately", short enough not to catch a later tidy-up. */
+        const val GHOST_CATEGORY_WINDOW_MS = 30_000L
+    }
+    // KMK <--
 
     fun changeOrder(category: Category, newIndex: Int) {
         screenModelScope.launch {

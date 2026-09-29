@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.data.track.mdlist.MdList
 import exh.md.utils.FollowStatus
 import exh.source.isMergedSourceId
 import logcat.LogPriority
+import mihon.app.di.globalAppGraph
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
@@ -50,6 +51,15 @@ class StartRereading(
         )
 
         syncTrackers(manga)
+
+        // KMK --> Only a real transition counts: the early return above already rejects
+        // non-library entries and rereads that are already running. onReread owns the
+        // rereader/reread_five/reread_twenty/reread_hundred tiers.
+        runCatching {
+            globalAppGraph.achievementManager.onReread()
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_reread_2")
+        }
+        // KMK <--
 
         return Result.Success(now)
     }

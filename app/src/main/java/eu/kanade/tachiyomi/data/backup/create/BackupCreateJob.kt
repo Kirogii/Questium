@@ -72,6 +72,13 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
                 )
                 // KMK <--
             }
+            // KMK --> Any successful backup counts, not just the manual one, so this sits
+            // outside the isAutoBackup branch rather than next to the event emit.
+            runCatching {
+                globalAppGraph.achievementManager.tryUnlockDirect("backup_created")
+                globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_backup")
+            }
+            // KMK <--
             Result.success()
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e)

@@ -193,6 +193,13 @@ abstract class SearchScreenModel(
                             .distinctBy { it.url }
                             .let { networkToLocalManga(it) }
 
+                        // KMK --> Counts a source that answered with nothing. On the Success
+                        // branch only, so a source that errored does not read as an empty hit.
+                        if (titles.isEmpty()) {
+                            runCatching { globalAppGraph.achievementManager.incrementCounter("empty_searches") }
+                        }
+                        // KMK <--
+
                         if (isActive) {
                             updateItem(source, SearchItemResult.Success(titles))
                         }

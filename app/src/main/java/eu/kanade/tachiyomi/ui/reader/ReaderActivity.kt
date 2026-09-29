@@ -217,6 +217,9 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is created. Initializes the presenter and configuration.
      */
     override fun onCreate(savedInstanceState: Bundle?) {
+        // KMK --> Start of the session reported from onDestroy.
+        readerOpenedAtMs = System.currentTimeMillis()
+        // KMK <--
         graph.inject(this)
         registerSecureActivity(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -565,6 +568,11 @@ class ReaderActivity : BaseActivity() {
      * Called when the activity is destroyed. Cleans up the viewer, configuration and any view.
      */
     override fun onDestroy() {
+        // KMK --> One continuous stretch: recorded here and reported here, so quitting and
+        // reopening starts a new session rather than stitching two sittings into one run.
+        val sessionMs = System.currentTimeMillis() - readerOpenedAtMs
+        runCatching { graph.achievementManager.onReaderSessionEnded(sessionMs) }
+        // KMK <--
         // KMK -->
         // Must run BEFORE super.onDestroy(): reaching DESTROYED disposes the viewer's
         // Compose composition and its WebGPU renderer/device. Cleaning up cached page
@@ -1018,6 +1026,10 @@ class ReaderActivity : BaseActivity() {
     // destroyed and rebuilt (each rebuild drops decoded pages and risks landing
     // on the legacy fallback, which would hide the WebGPU settings mid-session).
     private var lastViewerReadingMode: Int? = null
+
+    // KMK --> Reader session start, for the "kept the reader open 3 hours" secret.
+    private var readerOpenedAtMs: Long = 0L
+    // KMK <--
     // KMK <--
 
     /**
@@ -1055,6 +1067,12 @@ class ReaderActivity : BaseActivity() {
         viewModel.onViewerLoaded(newViewer)
         // KMK --> Record only after a successful build so a throw retries next time.
         lastViewerReadingMode = mode
+        // KMK -->
+        // Reading mode *is* the reading direction, so a rebuilt viewer is a direction switch.
+        // Skipped on the very first build: opening the reader is not a switch.
+        if (prevViewer != null) {
+            runCatching { graph.achievementManager.onReaderDirectionChanged(mode) }
+        }
         // KMK <--
         updateViewerInset(readerPreferences.fullscreen().get(), readerPreferences.drawUnderCutout().get())
         binding.viewerContainer.addView(newViewer.getView())

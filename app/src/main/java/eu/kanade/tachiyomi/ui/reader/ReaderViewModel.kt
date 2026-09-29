@@ -1039,6 +1039,18 @@ class ReaderViewModel(
                     ),
                 )
             }
+            // KMK --> "Skip to the last chapter without reading the middle". Needs the whole
+            // list, so it is judged here rather than on a page turn: the completed chapter has
+            // to be the final one, and something before it has to still be unread. Position in
+            // the list is the user's own ordering, which is what "the middle" means here.
+            val completedIndex = unfilteredChapterList.indexOfFirst { it.id == readerChapter.chapter.id }
+            if (completedIndex >= 0 &&
+                completedIndex == unfilteredChapterList.lastIndex &&
+                unfilteredChapterList.take(completedIndex).any { !it.read }
+            ) {
+                runCatching { achievementManager.incrementCounter("spoiler_jumps") }
+            }
+            // KMK <--
             if (unfilteredChapterList.isNotEmpty() &&
                 unfilteredChapterList.all { it.read } &&
                 !currentManga.rereading &&
@@ -1057,7 +1069,13 @@ class ReaderViewModel(
                         mangaId = currentManga.id,
                     ),
                 )
-                readerAchievementHandler.onMangaCompleted(currentManga.status)
+                // KMK --> The chapter list is in scope and is exactly what the length tiers
+                // ("single-chapter", "200+", "500+") are measured against.
+                readerAchievementHandler.onMangaCompleted(
+                    currentManga.status,
+                    unfilteredChapterList.size.toLong(),
+                )
+                // KMK <--
             }
         }
         // KMK <--

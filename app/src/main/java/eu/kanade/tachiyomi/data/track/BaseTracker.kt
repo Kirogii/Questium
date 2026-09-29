@@ -101,6 +101,10 @@ abstract class BaseTracker(
         // twelve services instead of one per override. Counted before the remote call so a
         // network failure still counts the user's edit.
         runCatching { globalAppGraph.achievementManager.incrementCounter("tracker_updates") }
+        runCatching {
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_tracker_update_3")
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_tracker_5")
+        }
         // KMK <--
         // KMK --> leaving a not-started list starts the clock when no start date is set
         val wasNotStarted = hasNotStartedReading(track.status)

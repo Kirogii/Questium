@@ -198,6 +198,16 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             runCatching { globalAppGraph.achievementNotifier.start() }
                 .onFailure { xLogE("Failed to start achievement notifier", it) }
         }
+        // KMK --> Process start is the only moment "opened the app at 03:33" can be true.
+        ProcessLifecycleOwner.get().lifecycleScope.launchIO {
+            val now = java.util.Calendar.getInstance()
+            runCatching {
+                globalAppGraph.achievementManager.onAppOpenedAt(
+                    now.get(java.util.Calendar.HOUR_OF_DAY),
+                    now.get(java.util.Calendar.MINUTE),
+                )
+            }.onFailure { xLogE("Failed to check app-open achievements", it) }
+        }
         // KMK --> Also the daily pass: a stale-unstarted entry joins the backlog purely because
         // 30 days elapsed, and nothing else fires on that. Forced so it is exact on every start.
         ProcessLifecycleOwner.get().lifecycleScope.launchIO {

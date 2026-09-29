@@ -64,23 +64,20 @@ class RotatingAchievementPool(
     private fun pruneProgress() {
         val raw = prefs.rotatingProgress().get()
         if (raw.isBlank()) return
-        val stillActive = (prefs.rotatingDailyIds().get() + "," + prefs.rotatingWeeklyIds().get())
-            .split(",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .toSet()
-        val kept = parseProgress(raw).filterKeys { it in stillActive }
+        val kept = parseProgress(raw).filterKeys { it in activeIds() }
         if (kept.size != parseProgress(raw).size) {
             prefs.rotatingProgress().set(kept.entries.joinToString(",") { "${it.key}:${it.value}" })
         }
     }
 
     private fun parseProgress(raw: String): Map<String, Int> =
-        raw.split(",").mapNotNull {
-            val parts = it.split(":", limit = 2)
-            if (parts.size != 2) return@mapNotNull null
-            parts[0] to (parts[1].toIntOrNull() ?: 0)
-        }.toMap()
+        raw.splitToSequence(',')
+            .mapNotNull { entry ->
+                val id = entry.substringBefore(':').trim()
+                val value = entry.substringAfter(':', "").trim().toIntOrNull()
+                if (id.isEmpty() || value == null) null else id to value
+            }
+            .toMap()
 
     fun getAllActive(): List<Achievement> = getActiveDaily() + getActiveWeekly()
 
@@ -103,6 +100,37 @@ class RotatingAchievementPool(
 
     fun getProgress(id: String): Int = parseProgress(prefs.rotatingProgress().get())[id] ?: 0
 
+    /**
+     * Marks [id] at most once per calendar day, for tiers that count days rather than events.
+     * A plain [markProgress] here would let a single sitting fill a seven-day tier.
+     */
+    @Synchronized
+    fun markOncePerDay(id: String) {
+        val epoch = TimeUnit.MILLISECONDS.toDays(System.currentTimeMillis())
+        val stamps = parseDayStamps(prefs.rotatingDayStamps().get()).toMutableMap()
+        if (stamps[id] == epoch) return
+        stamps[id] = epoch
+        val kept = stamps.filterKeys { it in activeIds() }
+        prefs.rotatingDayStamps().set(kept.entries.joinToString(",") { "${it.key}:${it.value}" })
+        markProgress(id)
+    }
+
+    private fun parseDayStamps(raw: String): Map<String, Long> =
+        raw.splitToSequence(',')
+            .mapNotNull { entry ->
+                val key = entry.substringBefore(':').trim()
+                val day = entry.substringAfter(':', "").trim().toLongOrNull()
+                if (key.isEmpty() || day == null) null else key to day
+            }
+            .toMap()
+
+    private fun activeIds(): Set<String> =
+        (prefs.rotatingDailyIds().get() + ',' + prefs.rotatingWeeklyIds().get())
+            .splitToSequence(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
     private fun rotatingThreshold(id: String): Int = when (id) {
         "rotating_daily_read_15" -> 15
         "rotating_weekly_read_30" -> 30
@@ -119,6 +147,14 @@ class RotatingAchievementPool(
         "rotating_weekly_ltr_3" -> 3
         "rotating_weekly_category_2" -> 2
         "rotating_weekly_upload_cover_3" -> 3
+        "rotating_weekly_backup" -> 1
+        "rotating_daily_extra_4" -> 2
+        "rotating_daily_extra_10" -> 10
+        "rotating_weekly_extra_4" -> 5
+        "rotating_weekly_extra_5" -> 7
+        "rotating_weekly_extra_6" -> 2
+        "rotating_weekly_extra_7" -> 300
+        "rotating_weekly_extra_8" -> 15
         "rotating_daily_read_5",
         "rotating_daily_library_add_3",
         "rotating_daily_translate_2",
