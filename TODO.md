@@ -554,7 +554,7 @@
   - 2026-09-09: all redirect URIs verified as `houri://` (bangumi `houri://bangumi-auth`, mangabaka `houri://mangabaka-auth`, shikimori `houri://shikimori-auth`, MAL PKCE with `houri://myanimelist-auth`); CLIENT_IDs kept pending provider re-registration where needed, redirects already houri
 - [ ] **Google Drive**: Update oauth token
 - [ ] **MyAnimeList**: Update oauth token
-- [ ] **Hikka**: Update oauth token
+- [x] **Hikka**: Update oauth token
 - [x] **App**: Multithreading
   - [x] Dedicated thread for readers
   - [x] Dedicated thread for app UI
