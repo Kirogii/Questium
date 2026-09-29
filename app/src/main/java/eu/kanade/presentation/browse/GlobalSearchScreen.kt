@@ -41,6 +41,8 @@ fun GlobalSearchScreen(
     // KMK -->
     bulkFavoriteScreenModel: BulkFavoriteScreenModel,
     hasPinnedSources: Boolean,
+    sourceCategories: List<String>,
+    onChangeSourceCategory: (String) -> Unit,
     // KMK <--
 ) {
     // KMK -->
@@ -88,6 +90,9 @@ fun GlobalSearchScreen(
                     toggleSelectionMode = bulkFavoriteScreenModel::toggleSelectionMode,
                     isRunning = bulkFavoriteState.isRunning,
                     hasPinnedSources = hasPinnedSources,
+                    sourceCategory = state.sourceCategory,
+                    sourceCategories = sourceCategories,
+                    onChangeSourceCategory = onChangeSourceCategory,
                     // KMK <--
                 )
             }

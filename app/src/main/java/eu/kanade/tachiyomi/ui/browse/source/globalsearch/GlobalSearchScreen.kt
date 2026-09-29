@@ -19,6 +19,7 @@ import eu.kanade.presentation.util.Screen
 import eu.kanade.tachiyomi.ui.browse.BulkFavoriteScreenModel
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.manga.MangaScreen
+import mihon.app.di.globalAppGraph
 import tachiyomi.presentation.core.screens.LoadingScreen
 
 class GlobalSearchScreen(
@@ -55,6 +56,10 @@ class GlobalSearchScreen(
         BackHandler(enabled = bulkFavoriteState.selectionMode) {
             bulkFavoriteScreenModel.backHandler()
         }
+
+        val getSourceCategories = remember { globalAppGraph.getSourceCategories }
+        val sourceCategories by remember { getSourceCategories.subscribe() }
+            .collectAsState(initial = emptyList())
         // KMK <--
 
         if (showSingleLoadingScreen) {
@@ -108,6 +113,8 @@ class GlobalSearchScreen(
                 // KMK -->
                 bulkFavoriteScreenModel = bulkFavoriteScreenModel,
                 hasPinnedSources = screenModel.hasPinnedSources(),
+                sourceCategories = sourceCategories,
+                onChangeSourceCategory = screenModel::setSourceCategory,
                 // KMK <--
             )
         }

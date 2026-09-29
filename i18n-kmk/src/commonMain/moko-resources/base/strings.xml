@@ -587,4 +587,6 @@
     <string name="pref_yakuyomi_prompt_reset">Reset prompt policy</string>
     <string name="pref_yakuyomi_prompt_reset_summary">Restore the default formality, SFX, glossary, and custom instructions</string>
     <string name="pref_yakuyomi_prompt_info">Prompt changes apply to the next translation and invalidate cached results that depend on the previous prompt.</string>
+    <string name="pref_global_search_source_category">Source category</string>
+    <string name="pref_global_search_source_category_all">All categories</string>
 </resources>

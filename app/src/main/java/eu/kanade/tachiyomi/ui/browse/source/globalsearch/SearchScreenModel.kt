@@ -53,6 +53,9 @@ abstract class SearchScreenModel(
 
     private var lastQuery: String? = null
     private var lastSourceFilter: SourceFilter? = null
+    // KMK -->
+    private var lastSourceCategory: String? = null
+    // KMK <--
 
     protected var extensionFilter: String? = null
 
@@ -74,6 +77,11 @@ abstract class SearchScreenModel(
         screenModelScope.launch {
             preferences.globalSearchPinnedState().changes().collectLatest { state ->
                 mutableState.update { it.copy(sourceFilter = state) }
+            }
+        }
+        screenModelScope.launch {
+            preferences.globalSearchSourceCategory().changes().collectLatest { category ->
+                mutableState.update { it.copy(sourceCategory = category) }
             }
         }
         // KMK <--
@@ -140,6 +148,14 @@ abstract class SearchScreenModel(
         search()
     }
 
+    // KMK -->
+    fun setSourceCategory(category: String) {
+        preferences.globalSearchSourceCategory().set(category)
+        mutableState.update { it.copy(sourceCategory = category) }
+        search()
+    }
+    // KMK <--
+
     fun toggleFilterResults() {
         preferences.globalSearchFilterState().toggle()
     }
@@ -147,14 +163,18 @@ abstract class SearchScreenModel(
     fun search() {
         val query = state.value.searchQuery
         val sourceFilter = state.value.sourceFilter
+        // KMK --> Part of the cache key too, or changing category would early-return
+        val sourceCategory = state.value.sourceCategory
+        // KMK <--
 
         if (query.isNullOrBlank()) return
 
         val sameQuery = this.lastQuery == query
-        if (sameQuery && this.lastSourceFilter == sourceFilter) return
+        if (sameQuery && this.lastSourceFilter == sourceFilter && this.lastSourceCategory == sourceCategory) return
 
         this.lastQuery = query
         this.lastSourceFilter = sourceFilter
+        this.lastSourceCategory = sourceCategory
 
         searchJob?.cancel()
 
@@ -244,6 +264,9 @@ abstract class SearchScreenModel(
         val from: Manga? = null,
         val searchQuery: String? = null,
         val sourceFilter: SourceFilter = SourceFilter.PinnedOnly,
+        // KMK --> Empty string means "no source category" rather than null.
+        val sourceCategory: String = "",
+        // KMK <--
         val onlyShowHasResults: Boolean = false,
         val items: PersistentMap<Source, SearchItemResult> = persistentMapOf(),
         val dialog: Dialog? = null,

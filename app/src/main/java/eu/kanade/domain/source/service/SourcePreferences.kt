@@ -99,6 +99,11 @@ class SourcePreferences(
         SourceFilter.PinnedOnly,
     )
 
+    fun globalSearchSourceCategory() = preferenceStore.getString(
+        Preference.appStateKey("global_search_source_category"),
+        "",
+    )
+
     fun disabledRepos() = preferenceStore.getStringSet("disabled_repos", emptySet())
     // KMK <--
 

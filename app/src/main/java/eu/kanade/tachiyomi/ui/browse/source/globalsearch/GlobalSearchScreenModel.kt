@@ -23,7 +23,11 @@ class GlobalSearchScreenModel(
     }
 
     override fun getEnabledSources(): List<Source> {
+        // KMK -->
+        val category = state.value.sourceCategory
         return super.getEnabledSources()
             .filter { state.value.sourceFilter != SourceFilter.PinnedOnly || "${it.id}" in pinnedSources }
+            .filter { category.isBlank() || category in it.categories }
+        // KMK <--
     }
 }
