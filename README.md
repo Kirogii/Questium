@@ -3,7 +3,7 @@
 <br/>
 <img src="./.github/readme-images/houri-icon.svg" width="200" height="200" alt="Houri icon"/>
 <br/>
- <h1 align="center"> Houri </h1>
+ <h1 align="center">Houri</h1>
 
 *A new approach to Komikku.*
 
@@ -18,7 +18,7 @@
 *Requires Android 8.0 or higher.*
 
 <div align="left">
-A free and open source manga reader, forked from Komikku (itself based on TachiyomiSY & Mihon/Tachiyomi).
+A free, open source, and bleeding edge manga reader, forked from Komikku (itself based on TachiyomiSY & Mihon/Tachiyomi).
 
 <div align="left">
 
@@ -47,6 +47,7 @@ A free and open source manga reader, forked from Komikku (itself based on Tachiy
 - **On-device AI upscaling** — optional Real-CUGAN / Real-ESRGAN / Waifu2x via NCNN/ONNX Runtime with Vulkan/NPU auto-detect, per-series toggle, presets and 200 MB LRU cache (MTL-gated).
 - **WebAssembly engine for extensions** — J2V8 + WASM runtime for site WASM bundles (keygen/auth via `WebAssembly.Memory/Table`), LRU module cache and standalone fallback, used for MangaBaka auth and other site WASM.
 - All features from Komikku, Mihon, and TachiyomiSY.
+- And much more not listed!
 
 
 <details>
