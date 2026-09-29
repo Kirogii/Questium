@@ -6,7 +6,8 @@ Env vars (set by GitHub Actions):
   VERSION_TAG          - e.g. v1.2.3
   RELEASE_URL          - https://github.com/org/repo/releases/tag/v1.2.3
   AVATAR_URL           - thumbnail / webhook avatar
-  CHANGELOG            - multiline "- subject (@author)" bullets
+  CHANGELOG            - multiline "- subject (@author)" bullets (fallback)
+  RELEASE_NOTES        - curated notes with headings (preferred when set)
   PREV_TAG_NAME        - previous release tag for compare link
   TODO_COMPLETED       - markdown block from todo_release_checklist.py (may be empty)
   TODO_OPEN            - markdown block (may be empty)
@@ -56,6 +57,41 @@ def _validate_webhook(url: str) -> None:
         raise ValueError(f"Invalid DISCORD_WEBHOOK_URL: {e}") from e
 
 
+def _discord_notes(raw: str, limit: int = 1650) -> str:
+    """Render curated release notes (##/### headings + - bullets) for Discord.
+
+    Differs from _truncate_changelog: headings are kept as bold labels instead
+    of being forced into "- " bullets, which is what would happen to the
+    `##### New` / `##### Fix` headings RELEASE_NOTES.md renders.
+    """
+    if not raw or not raw.strip():
+        return ""
+    out: list[str] = []
+    total = 0
+    hidden = 0
+    lines = [l.rstrip() for l in raw.strip().splitlines() if l.strip()]
+    for index, line in enumerate(lines):
+        stripped = line.lstrip("#").strip()
+        if line.startswith("#"):
+            rendered = f"**{stripped}**"
+        else:
+            rendered = line if line.startswith("- ") else "- " + line
+            if len(rendered) > 220:
+                rendered = rendered[:219] + "…"
+        cost = len(rendered) + 1
+        if total + cost > limit and out:
+            hidden = len(lines) - index
+            break
+        out.append(rendered)
+        total += cost
+    if hidden:
+        out.append(
+            f"…and {hidden} more — see "
+            f"[full changelog]({_env('RELEASE_URL', 'https://github.com/' + _env('GITHUB_REPOSITORY'))})"
+        )
+    return "\n".join(out)
+
+
 def _truncate_changelog(raw: str, limit: int = 1650) -> tuple[str, int]:
     if not raw or not raw.strip():
         return "- No notable changes", 0
@@ -91,13 +127,19 @@ def build_payload() -> dict:
     release_url = _env("RELEASE_URL") or f"{server}/{repo}/releases/tag/{version_tag}"
     avatar_url = _env("AVATAR_URL") or f"https://raw.githubusercontent.com/{repo}/master/.github/readme-images/app-icon.png"
     changelog_raw = _env("CHANGELOG")
+    # Curated notes win when present: they are written for humans, whereas
+    # CHANGELOG is the raw "- subject (@author)" commit list used as the
+    # fallback for runs without them.
+    notes_raw = _env("RELEASE_NOTES")
     prev_tag = _env("PREV_TAG_NAME")
     todo_completed = _env("TODO_COMPLETED")
     todo_open = _env("TODO_OPEN")
 
     version_number = version_tag[1:] if version_tag.startswith("v") else version_tag
     # changelog
-    changes, _hidden = _truncate_changelog(changelog_raw)
+    changes = _discord_notes(notes_raw)
+    if not changes:
+        changes, _hidden = _truncate_changelog(changelog_raw)
 
     # embed color: green if all closed, yellow if mixed, orange if nothing closed but still open
     if todo_completed and not todo_open:

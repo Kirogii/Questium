@@ -41,6 +41,7 @@ Houri (`applicationId app.houri`) — Android manga reader (min SDK 26, target 3
 | Commit | **OK** on a feature branch when work is ready. **Never** commit directly to `master` / `main` unless the user explicitly asks. |
 | Push | **OK** to push the **current feature branch** when work is ready. **Never** push to `master` / `main` unless the user explicitly asks. |
 | Ported PRs | When porting code from an upstream PR (Mihon/Komikku/SY or any fork), **co-author the PR author** on the porting commit: add `Co-authored-by: <author-name> <<author-email>>` (fetch from the PR's commits API — `https://api.github.com/repos/<owner>/<repo>/pulls/<n>/commits`). |
+| **Release notes** | **Always add user-facing entries to `RELEASE_NOTES.md` for any change a user could notice — before finishing work and committing.** See [Release notes](#release-notes). |
 
 Before `git push`, confirm the current branch is not `master` or `main` (`git branch --show-current`).
 
@@ -213,6 +214,47 @@ ignores Weblate-owned non-base locales), `build_preview` / `build_release` / `bu
 (manual/tag), `auto_release` (auto-tags `v<versionName>` on master), `sync_extensions`,
 `todo_discord`, `delete_merged_branch`, `pr_label`. All actions SHA-pinned; all build workflows
 gate on `spotlessCheck`. JDK 21 in CI vs JVM 17 target is intentional.
+
+## Release notes
+
+`RELEASE_NOTES.md` is the curated, human-readable staging area for the **next**
+release. It is what `auto_release` renders into the GitHub release body and the
+Discord announcement, so users read prose instead of commit subjects.
+
+**Add an entry for any change a user could notice** — fixes, features, behaviour
+changes, anything that alters what someone sees or gets. Skip pure refactors,
+test-only and CI-only edits.
+
+| Heading | Use for |
+|---------|---------|
+| `### New` | New features, settings, or capabilities |
+| `### Improve` | Changes and enhancements to existing behaviour |
+| `### Fix` | Bug fixes |
+
+```bash
+python3 .github/scripts/release_notes.py --check            # validate; fails if empty
+python3 .github/scripts/release_notes.py --render           # preview the release body
+python3 .github/scripts/release_notes.py --cut v1.23.0      # archive to CHANGELOG.md, reset
+```
+
+Write for someone deciding whether to update: **what changed for them**, not which
+files moved. Markdown (bold, `` `code` ``, links) is preserved.
+
+**The cycle is deliberately split in two**, because the release and the clear
+cannot be the same commit — clearing notes alongside the version bump would ship an
+empty changelog:
+
+1. Append bullets to `RELEASE_NOTES.md` as work lands.
+2. Bump `versionName` in `app/build.gradle.kts` — **notes still present**, since CI
+   reads the file at that commit.
+3. Push. `auto_release` validates the notes *before* creating the tag, so an empty
+   file fails the run on `master` with nothing tagged, rather than publishing an
+   empty release.
+4. **After** the release lands, run `--cut v<version>` to archive the notes into
+   `CHANGELOG.md` under that version and reset the file for the next cycle. Commit
+   the result.
+
+Commit messages are for developers; `RELEASE_NOTES.md` is for users. Write both.
 
 ```bash
 ./gradlew spotlessApply              # format (run before spotlessCheck)

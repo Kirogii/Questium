@@ -34,6 +34,7 @@ jobs:
     outputs:
       NEW_VERSION: ${{ steps.check.outputs.NEW_VERSION }}
       VERSION_TAG: ${{ steps.version.outputs.TAG }}
+      RELEASE_NOTES: ${{ steps.notes.outputs.NOTES }}
     steps:
       - name: Clone repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -42,6 +43,22 @@ jobs:
           # and tag existence is checked against the remote, not local refs.
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Curated release notes
+        id: notes
+        run: |
+          # Deliberately before the tag step below. RELEASE_NOTES.md is cleared
+          # by --cut *after* a release, so at bump time it must still hold this
+          # cycle's notes; a push that bumps the version with an empty file
+          # would otherwise create the tag and publish an empty changelog, and
+          # the tag already existing would then make every later run skip the
+          # release. Failing here leaves master untagged and fixable.
+          python3 .github/scripts/release_notes.py --check
+          {
+            echo "NOTES<<notes_delimiter"
+            python3 .github/scripts/release_notes.py --render
+            echo "notes_delimiter"
+          } >> $GITHUB_OUTPUT
 
       - name: Extract version from build.gradle.kts
         id: version
@@ -90,6 +107,7 @@ jobs:
       CURRENT_SHA: ${{ steps.current_commit.outputs.CURRENT_SHA }}
       PREV_RELEASE_SHA: ${{ steps.previous_commit.outputs.PREV_RELEASE_SHA }}
       COMMIT_LOGS: ${{ steps.commit_logs.outputs.COMMIT_LOGS }}
+      COMMIT_COUNT: ${{ steps.commit_logs.outputs.COMMIT_COUNT }}
       PREV_TAG_NAME: ${{ steps.previous_commit.outputs.PREV_TAG_NAME }}
       TODO_COMPLETED: ${{ steps.todo_checklist.outputs.COMPLETED }}
       TODO_OPEN: ${{ steps.todo_checklist.outputs.OPEN }}
@@ -185,6 +203,7 @@ jobs:
               done)
           $([ "$total" -gt "$MAX_COMMITS" ] && echo "- …and $((total - MAX_COMMITS)) more")
           {delimiter}" >> $GITHUB_OUTPUT
+          echo "COMMIT_COUNT=$total" >> $GITHUB_OUTPUT
 
   build-app:
     name: Build release app
@@ -348,6 +367,7 @@ jobs:
     name: Sign and release
     runs-on: 'ubuntu-24.04'
     needs:
+      - check-version
       - prepare-build
       - build-app
     steps:
@@ -396,13 +416,14 @@ jobs:
           body: |
             [![GitHub downloads](https://img.shields.io/github/downloads/${{ github.repository }}/${{ needs.prepare-build.outputs.VERSION_TAG }}/total?label=Downloaded&labelColor=27303D&color=0D1117&logo=github&logoColor=FFFFFF&style=flat)](https://github.com/${{ github.repository }}/releases/${{ needs.prepare-build.outputs.VERSION_TAG }})
             #### What's Changed
-            ##### New
+            ${{ needs.check-version.outputs.RELEASE_NOTES }}
 
-            ##### Improve
-
-            ##### Fix
+            <details>
+            <summary>Technical changes (${{ needs.prepare-build.outputs.COMMIT_COUNT }} commits)</summary>
 
             ${{ needs.prepare-build.outputs.COMMIT_LOGS }}
+
+            </details>
 
             ##### Which APK?
             - `Houri-arm64-v8a-*` — standard build with the on-device AI translation (MTL) engine. Pick this if unsure; it suits most modern devices.
@@ -448,6 +469,7 @@ jobs:
           RELEASE_URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare-build.outputs.VERSION_TAG }}
           AVATAR_URL: https://raw.githubusercontent.com/${{ github.repository }}/master/.github/readme-images/app-icon.png
           CHANGELOG: ${{ needs.prepare-build.outputs.COMMIT_LOGS }}
+          RELEASE_NOTES: ${{ needs.check-version.outputs.RELEASE_NOTES }}
           PREV_TAG_NAME: ${{ needs.prepare-build.outputs.PREV_TAG_NAME }}
           TODO_COMPLETED: ${{ needs.prepare-build.outputs.TODO_COMPLETED }}
           TODO_OPEN: ${{ needs.prepare-build.outputs.TODO_OPEN }}

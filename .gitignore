@@ -37,3 +37,7 @@ tasks/
 
 # WSL-built native libs (llamatik-native/build.gradle.kts wslNativeBuild)
 llamatik-native/src/main/jniLibs/
+
+# Python bytecode from the .github/scripts release tooling
+__pycache__/
+*.py[cod]
