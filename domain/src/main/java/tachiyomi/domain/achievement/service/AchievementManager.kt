@@ -29,10 +29,38 @@ class AchievementManager(
         if (totalRead < 0) return emptyList()
         prefs.incrementOrganicRead()
         val count = prefs.organicChaptersRead().get().coerceAtLeast(0L)
-        val r = checkThresholds(count)
+        val r = checkThresholds(count).toMutableList()
+        r += bumpWeekendReads()
         if (r.isNotEmpty()) notifyIfNeeded(r)
         checkUltimateProgress()
         return r
+    }
+
+    /**
+     * Counts a read toward the current Sat+Sun window. The key is the Saturday's epoch day, so
+     * Saturday and Sunday share one bucket and Monday starts a fresh one. Weekdays leave the
+     * stored window alone rather than clearing it, so a partial weekend is not lost before
+     * Sunday arrives.
+     */
+    @Synchronized
+    private fun bumpWeekendReads(): List<String> {
+        val today = currentEpochDay()
+        val dayOfWeek = (today + 4L) % 7L
+        val key = when (dayOfWeek) {
+            6L -> today
+            0L -> today - 1L
+            else -> return emptyList()
+        }
+        if (prefs.weekendReadKey().get() != key) {
+            prefs.weekendReadKey().set(key)
+            prefs.weekendReadCount().set(0L)
+        }
+        val weekend = prefs.weekendReadCount().get() + 1L
+        prefs.weekendReadCount().set(weekend)
+        if (weekend < 20L) return emptyList()
+        val unlocked = mutableListOf<String>()
+        tryUnlock("weekend_warrior", unlocked)
+        return unlocked
     }
 
     @Synchronized

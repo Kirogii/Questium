@@ -53,6 +53,11 @@ class AchievementPreferences(
     fun readDays(): List<Long> =
         readingDays().get().split(",").mapNotNull { it.trim().toLongOrNull() }
 
+    // Chapters read in the current Sat+Sun window, and the Saturday's epoch day as the key. Both
+    // reset together, so a new weekend starts from zero without a scheduled cleanup.
+    fun weekendReadKey() = preferenceStore.getLong("pref_achievement_weekend_key", 0L)
+    fun weekendReadCount() = preferenceStore.getLong("pref_achievement_weekend_count", 0L)
+
     /**
      * Named lifetime counter, keyed off a shared prefix so a new counter needs no accessor.
      * Only the names in AchievementManager.COUNTER_TIERS are read; anything else is ignored.
