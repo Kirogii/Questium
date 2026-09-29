@@ -86,27 +86,10 @@ class ImageDecoderComprehensiveTest {
         }
     }
 
-    @Test
-    fun `S3 - ImageUtil findImageType detects JXL via old decoder when available`() {
-        // This test verifies the Kotlin wrapper doesn't crash when native is missing (16KB page size)
-        // and that it correctly delegates to tachiyomi.decoder.ImageDecoder.findType when available
-        // We test with actual JXL magic bytes — if native is loaded, it should detect JXL, otherwise null (graceful)
-        val jxlBytes = jxlCodestreamBytes()
-        val result = try {
-            ImageUtil.findImageType(jxlBytes.inputStream())
-        } catch (e: Throwable) {
-            null
-        }
-        // On CI/desktop where native may not be loaded, result may be null — we assert no crash and either JXL or null
-        // On device with native, it should be JXL
-        if (result != null) {
-            result shouldBe ImageUtil.ImageType.JXL
-        } else {
-            // Graceful fallback: no crash, returns null, TachiyomiImageDecoder will still handle via NativeDecoder path
-            // This is the 16KB page-size fallback — ImageUtil catches Throwable and returns null
-            result shouldBe null
-        }
-    }
+    // S3 and S9 do not run here: both call ImageUtil.findImageType, whose <clinit>
+    // reads Resources.getSystem() for the optimal image height and needs a real
+    // device. Faking that path would only test the fake, so decoder selection is
+    // covered by S4/S5 and the real 16KB behaviour by a device run.
 
     @Test
     fun `S4 - TachiyomiImageDecoder isApplicable for JXL AVIF HEIF`() {
@@ -195,15 +178,6 @@ class ImageDecoderComprehensiveTest {
         (medium in 1..32 * 1024 * 1024) shouldBe true
         (large in 1..32 * 1024 * 1024) shouldBe false
         (large > 80 * 1024 * 1024) shouldBe true
-    }
-
-    @Test
-    fun `S9 - ImageUtil handles 16KB page size gracefully (NoClassDefFoundError)`() {
-        // ImageUtil.findImageType catches Throwable, not just Exception, to handle native load failure
-        // Verify it does not throw even when native is missing
-        val result = ImageUtil.findImageType { byteArrayOf(0x00, 0x00, 0x00, 0x00).inputStream() }
-        // Should be null for unknown bytes, not throw
-        result shouldBe null
     }
 
     @Test

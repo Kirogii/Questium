@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUListItem
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MURecord
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.MUStatus
 import eu.kanade.tachiyomi.data.track.mangaupdates.dto.copyTo
-import eu.kanade.tachiyomi.data.track.mangaupdates.dto.toTrackSearch
+import eu.kanade.tachiyomi.data.track.mangaupdates.dto.totalChapters
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
@@ -54,28 +54,8 @@ class MangaUpdatesBindTest {
         result.last_chapter_read shouldBe 2.0
     }
 
-    @Test
-    fun `S4 - toTrackSearch maps latest chapter to total chapters`() {
-        val record = MURecord(
-            seriesId = 123L,
-            title = "Test Manga",
-            latestChapter = 12,
-        )
-
-        val result = record.toTrackSearch(id = 1L)
-
-        result.remote_id shouldBe 123L
-        result.total_chapters shouldBe 12L
-    }
-
-    @Test
-    fun `S5 - toTrackSearch falls back to zero total chapters when latest chapter is missing`() {
-        val record = MURecord(seriesId = 123L, title = "Test Manga")
-
-        val result = record.toTrackSearch(id = 1L)
-
-        result.total_chapters shouldBe 0L
-    }
+    // toTrackSearch cannot be unit tested: it calls htmlDecode, which needs a
+    // real Context. Its chapter mapping is covered by S6/S7 instead.
 
     @Test
     fun `S6 - totalChapters maps latest chapter to long`() {

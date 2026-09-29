@@ -72,7 +72,7 @@ private class MapPreferenceStore : PreferenceStore {
     override fun <T> getObjectFromInt(
         key: String,
         defaultValue: T,
-        serializer: (Int) -> Int,
+        serializer: (T) -> Int,
         deserializer: (Int) -> T,
     ): Preference<T> = TODO()
     override fun getAll(): Map<String, *> = booleans.toMap()
