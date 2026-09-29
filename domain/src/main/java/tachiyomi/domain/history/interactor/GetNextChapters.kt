@@ -13,7 +13,7 @@ import kotlin.math.max
 
 // KMK -->
 /** Bounds [GetNextChapters.awaitFirstReadable] so a long History cannot make one tap scan it all. */
-private const val DEFAULT_HISTORY_SCAN_LIMIT = 25
+private const val DEFAULT_HISTORY_SCAN_LIMIT = 25L
 // KMK <--
 
 @Inject
@@ -40,7 +40,7 @@ class GetNextChapters(
      * [scanLimit] bounds the walk so a long, fully-read History cannot turn one resume tap
      * into a full-table scan.
      */
-    suspend fun awaitFirstReadable(scanLimit: Int = DEFAULT_HISTORY_SCAN_LIMIT): Chapter? {
+    suspend fun awaitFirstReadable(scanLimit: Long = DEFAULT_HISTORY_SCAN_LIMIT): Chapter? {
         historyRepository.getRecentHistory(scanLimit).forEach { history ->
             val next = await(history.mangaId, history.chapterId, onlyUnread = false).firstOrNull()
             if (next != null) return next

@@ -60,7 +60,7 @@ class HistoryRepositoryImpl(
     }
 
     // KMK -->
-    override suspend fun getRecentHistory(limit: Int): List<HistoryWithRelations> {
+    override suspend fun getRecentHistory(limit: Long): List<HistoryWithRelations> {
         return handler.awaitList {
             historyViewQueries.getRecentHistory(
                 Manga.CHAPTER_SHOW_NOT_BOOKMARKED,
