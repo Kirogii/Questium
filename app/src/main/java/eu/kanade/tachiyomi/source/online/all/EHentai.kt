@@ -279,6 +279,16 @@ class EHentai(
                     tags += parsedTags
 
                     censorshipStatus = detectCensorshipStatus()
+                    // KMK --> "Find a decensored/uncensored manga". The status is resolved from
+                    // the uploader's own tags, so this fires the moment a page is parsed as one,
+                    // which is the earliest a reader could have seen it.
+                    if (censorshipStatus == CENSORSHIP_STATUS_DECENSORED ||
+                        censorshipStatus == CENSORSHIP_STATUS_UNCENSORED
+                    ) {
+                        runCatching {
+                            mihon.app.di.globalAppGraph.achievementManager.tryUnlockDirect("decensored")
+                        }
+                    }
 
                     if (isExtended && infoElement != null) {
                         val gl3e = infoElement

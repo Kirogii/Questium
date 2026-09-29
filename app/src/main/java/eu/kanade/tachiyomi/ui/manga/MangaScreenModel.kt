@@ -2084,7 +2084,7 @@ class MangaScreenModel(
             val sequelPrequelLibraryTitles: Set<String> = emptySet(),
             val seedColor: Color? = manga.asMangaCover().vibrantCoverColor?.let { Color(it) },
             // KMK --> Manga-details metadata translation state (spec 2026-09-23).
-            val mangaInfoUiState: MangaInfoUiState = MangaInfoUiState.Disabled,
+            val mangaInfoUiState: MangaInfoUiState = MangaInfoUiState.Unresolved,
             // KMK <--
         ) : State {
             // KMK -->

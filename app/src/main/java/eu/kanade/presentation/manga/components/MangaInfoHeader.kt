@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.SelectionState
+import androidx.compose.foundation.text.selection.rememberSelectionState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.CallMerge
 import androidx.compose.material.icons.filled.Brush
@@ -53,6 +55,7 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -70,6 +73,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.rememberVectorPainter
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToDown
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
@@ -971,6 +978,24 @@ private fun descriptionAnnotator(loadImages: Boolean, linkStyle: SpanStyle) = re
     )
 }
 
+/**
+ * Work around an AndroidX crash (`IndexOutOfBoundsException` in `MultiSelectionLayout`): a text
+ * selection snapshots the selectable nodes it was made against and refers to them by index, so
+ * when a summary re-measures underneath a live selection, the next pointer to resolve it indexes
+ * past the end of the live node list. Selecting with a finger and then clicking the same text with
+ * a mouse is enough to hit it, so the selection is dropped before a non-touch press is handled.
+ */
+internal fun Modifier.dismissSelectionOnNonTouchPress(state: SelectionState) = pointerInput(state) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            if (event.changes.any { it.changedToDown() && it.type != PointerType.Touch }) {
+                state.clear()
+            }
+        }
+    }
+}
+
 @Composable
 private fun MangaSummary(
     description: String,
@@ -986,8 +1011,14 @@ private fun MangaSummary(
         label = "summary",
     )
     var infoHeight by remember { mutableIntStateOf(0) }
+    val descriptionSelectionState = rememberSelectionState()
+    LaunchedEffect(infoHeight, description, notes) {
+        descriptionSelectionState.clear()
+    }
     Layout(
-        modifier = modifier.clipToBounds(),
+        modifier = modifier
+            .clipToBounds()
+            .dismissSelectionOnNonTouchPress(descriptionSelectionState),
         contents = listOf(
             {
                 // shrunk: calculate minimum size when shrunk
@@ -1010,7 +1041,7 @@ private fun MangaSummary(
                         expanded = expanded,
                         onEditNotes = onEditNotesClicked,
                     )
-                    SelectionContainer {
+                    SelectionContainer(state = descriptionSelectionState) {
                         MarkdownRender(
                             content = description,
                             modifier = Modifier.secondaryItemAlpha(),

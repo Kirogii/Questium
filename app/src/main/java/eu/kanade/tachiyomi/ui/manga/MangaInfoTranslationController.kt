@@ -25,6 +25,12 @@ enum class MangaInfoErrorKind {
 
 /** Publishable metadata-translation state for the details screen. */
 sealed interface MangaInfoUiState {
+    /**
+     * Availability not evaluated yet. Must stay distinct from [Disabled], which renders a row:
+     * starting there flashed the control on every manga page before [bind] resolved it to
+     * [Hidden] for a build/setting with the feature off.
+     */
+    data object Unresolved : MangaInfoUiState
     data object Hidden : MangaInfoUiState
     data object Disabled : MangaInfoUiState
     data object Translating : MangaInfoUiState
@@ -76,7 +82,7 @@ class MangaInfoTranslationController(
 ) {
     private val enabledPref = preferenceStore.getBoolean("pref_translate_info_$mangaId", false)
 
-    private val _state = MutableStateFlow<MangaInfoUiState>(MangaInfoUiState.Disabled)
+    private val _state = MutableStateFlow<MangaInfoUiState>(MangaInfoUiState.Unresolved)
     val state: StateFlow<MangaInfoUiState> = _state.asStateFlow()
 
     val isEnabled: Boolean

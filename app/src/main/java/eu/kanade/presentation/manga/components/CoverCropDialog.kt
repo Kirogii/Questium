@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateRight
@@ -41,6 +42,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -149,7 +151,9 @@ fun CoverCropDialog(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(420.dp),
+                    .height(420.dp)
+                    // The scaled image overflows this box, and the scrim only covers the box.
+                    .clipToBounds(),
             ) {
                 val containerWpx = with(density) { maxWidth.toPx() }
                 val containerHpx = with(density) { maxHeight.toPx() }
@@ -185,18 +189,31 @@ fun CoverCropDialog(
                 }
 
                 bitmap?.let { bmp ->
+                    val bitmapWidth = with(density) { bmp.width.toDp() }
+                    val bitmapHeight = with(density) { bmp.height.toDp() }
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = null,
                         modifier = Modifier
-                            .fillMaxSize()
+                            .align(Alignment.Center)
+                            // Laid out 1:1 so `baseScale` (derived from the bitmap's own size) and
+                            // the exported rect agree with what is on screen. `requiredSize`, since
+                            // a larger bitmap would otherwise be clamped to the viewport.
+                            .requiredSize(bitmapWidth, bitmapHeight)
                             .graphicsLayer {
                                 // Read the transform states here so gestures apply immediately
                                 scaleX = baseScale * scale
                                 scaleY = baseScale * scale
                                 translationX = offset.x
                                 translationY = offset.y
-                            }
+                            },
+                    )
+
+                    // Gesture surface spans the whole viewport: hit testing uses layout bounds,
+                    // not the graphics layer transform, so the image itself is the wrong target.
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
                             .pointerInput(bmp, frameRatio, containerWpx, containerHpx) {
                                 detectTransformGestures { _, pan, zoom, _ ->
                                     val geo = geometry

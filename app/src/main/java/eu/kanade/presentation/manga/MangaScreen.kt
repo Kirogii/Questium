@@ -1779,6 +1779,7 @@ fun MangaInfoTranslationControl(
     modifier: Modifier = Modifier,
 ) {
     when (uiState) {
+        MangaInfoUiState.Unresolved -> Unit
         MangaInfoUiState.Hidden -> Unit
         MangaInfoUiState.Disabled -> {
             Row(

@@ -4,6 +4,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.selection.rememberSelectionState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,9 +30,11 @@ fun MangaNotesDisplay(
     var contentUpdatedOnce by remember { mutableStateOf(false) }
 
     val richTextState = rememberRichTextState()
+    val selectionState = rememberSelectionState()
     val primaryColor = MaterialTheme.colorScheme.primary
     LaunchedEffect(content) {
         richTextState.setMarkdown(content)
+        selectionState.clear()
 
         if (!contentUpdatedOnce) {
             contentUpdatedOnce = true
@@ -49,7 +52,10 @@ fun MangaNotesDisplay(
         richTextState.config.linkColor = primaryColor
     }
 
-    SelectionContainer {
+    SelectionContainer(
+        state = selectionState,
+        modifier = Modifier.dismissSelectionOnNonTouchPress(selectionState),
+    ) {
         RichText(
             modifier = modifier
                 // Only animate size if the notes changes

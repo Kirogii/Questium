@@ -113,6 +113,13 @@ class MangaInfoTranslationControllerTest {
     }
 
     @Test
+    fun `state before bind renders nothing so the control cannot flash`() = runTest {
+        val h = harness(this)
+
+        h.controller.state.value shouldBe MangaInfoUiState.Unresolved
+    }
+
+    @Test
     fun `bind emits Hidden in no-MTL builds without translating`() = runTest {
         val h = harness(this, isNoMtl = true)
         enableInfoPref(h.prefs)
