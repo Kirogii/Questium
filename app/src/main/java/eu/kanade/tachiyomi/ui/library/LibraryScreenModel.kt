@@ -1314,6 +1314,9 @@ class LibraryScreenModel(
             // KMK -->
             if (query.trim().lowercase() == "mango") {
                 // Mango easter egg: show manga with "mango" in the title
+                runCatching {
+                    mihon.app.di.globalAppGraph.achievementManager.tryUnlockDirect("mango_easter")
+                }
                 return unfiltered.fastFilter {
                     it.libraryManga.manga.title.lowercase().contains("mango")
                 }

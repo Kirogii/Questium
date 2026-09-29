@@ -11,6 +11,7 @@ import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +21,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 import eu.kanade.core.preference.PreferenceMutableState
 import eu.kanade.tachiyomi.ui.library.LibraryItem
+import mihon.app.di.globalAppGraph
 import tachiyomi.domain.category.model.Category
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryManga
@@ -165,6 +167,13 @@ fun LibraryPager(
                 )
             }
             LibraryDisplayMode.StaggeredGrid -> {
+                // KMK --> Keyed on the page, so it marks once per visit rather than on every
+                // recomposition of the grid.
+                LaunchedEffect(page) {
+                    runCatching {
+                        globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_extra_6")
+                    }
+                }
                 LibraryStaggeredGrid(
                     items = items,
                     columns = columns,

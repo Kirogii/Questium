@@ -427,6 +427,9 @@ private suspend fun autofillFromTracker(binding: EditMangaDialogBinding, track: 
         setTextIfNotBlank(binding.mangaDescription::setText, trackerMangaMetadata.description)
         // KMK -->
         trackerMangaMetadata.tags?.takeIf { it.isNotEmpty() }?.let { tags ->
+            runCatching {
+                globalAppGraph.achievementManager.tryUnlockDirect("fill_metadata_tags")
+            }
             try {
                 val existing = binding.mangaGenresTags.getTextStrings()
                 val merged = (existing + tags).distinct()
@@ -463,6 +466,16 @@ private suspend fun autofillFromTracker(binding: EditMangaDialogBinding, track: 
                     else -> 0
                 }
                 if (idx != 0) binding.status.setSelection(idx)
+            }
+        }
+        // KMK <--
+        // KMK --> After the fills, and only when a field actually carried a value, so an empty
+        // tracker payload does not read as a fill.
+        if (!trackerMangaMetadata.title.isNullOrBlank() ||
+            !trackerMangaMetadata.description.isNullOrBlank()
+        ) {
+            runCatching {
+                globalAppGraph.achievementManager.tryUnlockDirect("fill_metadata")
             }
         }
         // KMK <--

@@ -208,6 +208,10 @@ open class FeedScreenModel(
                     feedOrder = 0,
                 ),
             )
+            runCatching {
+                globalAppGraph.achievementManager.tryUnlockDirect("feed_user")
+                globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_extra_3")
+            }
         }
     }
 
