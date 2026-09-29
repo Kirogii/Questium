@@ -74,8 +74,24 @@ object ReaderTranslation : PageTranslator {
                 if (!manager.shouldTranslateForManga(mangaId)) return@launchIO
                 val webp = manager.translatePage(mangaId, chapterId, originalBytes, pageIndex) ?: return@launchIO
                 withUIContext { onResult(webp) }
+                countChapterOnceComplete(mangaId, chapterId)
             } catch (_: Exception) {
             }
+        }
+    }
+
+    // Chapters already counted this session. pendingCount settles at 0 and stays there, so
+    // without this the last page of a chapter would count once per remaining page.
+    private val countedChapters = mutableSetOf<Pair<Long, Long>>()
+
+    private fun countChapterOnceComplete(mangaId: Long, chapterId: Long) {
+        runCatching {
+            val status = globalAppGraph.translationStatus.chapterStatus(mangaId, chapterId) ?: return
+            if (status.pendingCount != 0 || status.translatedCount == 0) return
+            if (!countedChapters.add(mangaId to chapterId)) return
+            globalAppGraph.achievementManager.incrementCounter("translated_chapters")
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_translate_2")
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_translate_10")
         }
     }
 }

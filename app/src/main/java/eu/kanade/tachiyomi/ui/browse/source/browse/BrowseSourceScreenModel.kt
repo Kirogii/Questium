@@ -367,6 +367,7 @@ open class BrowseSourceScreenModel(
             try {
                 mihon.app.di.globalAppGraph.achievementManager.onEhBrowsed()
                 mihon.app.di.globalAppGraph.achievementManager.tryUnlockDirect("eh_enabled")
+                mihon.app.di.globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_extra_9")
             } catch (_: Exception) {}
         }
         try {

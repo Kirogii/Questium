@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import mihon.app.di.globalAppGraph
 import tachiyomi.core.common.preference.PreferenceStore
 
 // KMK --> Manga-details metadata translation lifecycle owner (spec 2026-09-23).
@@ -267,6 +268,12 @@ class MangaInfoTranslationController(
                 throw e
             } catch (e: Exception) {
                 null
+            }
+            // KMK --> Only a non-null result: a failed translation is not info translated.
+            if (result != null) {
+                runCatching {
+                    globalAppGraph.achievementManager.tryUnlockDirect("mtl_info")
+                }
             }
             if (myGeneration != generation) return@launch
             if (result == null) {

@@ -227,6 +227,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                     webhookPreferences = globalAppGraph.webhookPreferences,
                     readerPreferences = globalAppGraph.readerPreferences,
                     translationPreferences = globalAppGraph.translationPreferences,
+                    libraryPreferences = globalAppGraph.libraryPreferences,
                 ).install(this)
             }.onFailure { xLogE("Failed to install feature achievement hooks", it) }
         }

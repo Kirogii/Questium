@@ -161,6 +161,11 @@ class BackupRestorer(
                 if (options.libraryEntries) {
                     LibraryUpdateJob.startNow(context)
                 }
+                // KMK --> Inside the try, so a restore that threw does not count.
+                runCatching {
+                    mihon.app.di.globalAppGraph.achievementManager.tryUnlockDirect("backup_restored")
+                }
+                // KMK <--
             }
         } finally {
             if (prevSuppress != null) achievementPrefs.suppressOrganicForImport = prevSuppress

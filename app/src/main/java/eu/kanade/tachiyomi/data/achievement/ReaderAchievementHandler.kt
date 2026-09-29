@@ -42,9 +42,13 @@ class ReaderAchievementHandler(
     // itself, so a page turn cannot run a library query.
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
-    fun onChapterRead(readingModeFlag: Int) {
+    fun onChapterRead(readingModeFlag: Int, incognito: Boolean = false) {
         try {
             achievementManager.onOrganicChapterRead(0)
+            if (incognito) {
+                runCatching { achievementManager.incrementCounter("incognito_reads") }
+                mark("rotating_daily_extra_4")
+            }
             // KMK --> Day state first, so the streak tiers see today, then the per-day binge
             // count. Both are the only path to streak_*/binge_* - nothing else counts a read.
             runCatching { achievementManager.onReadingDay() }

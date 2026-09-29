@@ -7,6 +7,7 @@ import eu.kanade.domain.track.model.toDomainTrack
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.core.TrackerException
+import eu.kanade.tachiyomi.data.track.core.TrackerId
 import eu.kanade.tachiyomi.data.track.model.TrackMangaMetadata
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -105,6 +106,7 @@ abstract class BaseTracker(
             globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_tracker_update_3")
             globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_tracker_5")
         }
+        unlockTrackerUsage()
         // KMK <--
         // KMK --> leaving a not-started list starts the clock when no start date is set
         val wasNotStarted = hasNotStartedReading(track.status)
@@ -160,6 +162,14 @@ abstract class BaseTracker(
             if (scores[index].toDoubleOrNull() == null) return
         }
         track.score = indexToScore(index)
+        // KMK --> After the score is resolved, so a string that failed to snap to a real
+        // entry does not count as scoring.
+        runCatching {
+            globalAppGraph.achievementManager.tryUnlockDirect("track_score")
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_extra_6")
+        }
+        unlockTrackerUsage()
+        // KMK <--
         updateRemote(track)
     }
 
@@ -213,6 +223,19 @@ abstract class BaseTracker(
      */
     open fun parseRelatedEntryId(url: String): Long? = null
     // KMK <--
+
+    // KMK --> Per-service achievements, keyed off this.id so one base-class hook covers
+    // every service instead of one override each.
+    private fun unlockTrackerUsage() {
+        runCatching {
+            val achievementId = when (id) {
+                TrackerId.ANILIST -> "tracker_anilist"
+                TrackerId.MANGA_UPDATES -> "tracker_mangaupdates"
+                else -> null
+            } ?: return
+            globalAppGraph.achievementManager.tryUnlockDirect(achievementId)
+        }
+    }
 
     private suspend fun updateRemote(track: Track): Unit = withIOContext {
         try {

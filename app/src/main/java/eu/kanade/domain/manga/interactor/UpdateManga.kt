@@ -65,6 +65,19 @@ class UpdateManga(
                     mangaId = manga.id,
                 ),
             )
+            // Bulk adds use awaitAll, so this is the single-manga path and the count
+            // query is not per item.
+            if (favorite) {
+                runCatching {
+                    val graph = globalAppGraph
+                    graph.achievementManager.onLibraryCountChanged(
+                        mangaRepository.getFavorites().size.toLong(),
+                    )
+                    graph.rotatingAchievementPool.markProgress("rotating_daily_library_add_3")
+                    graph.rotatingAchievementPool.markProgress("rotating_weekly_library_10")
+                    graph.rotatingAchievementPool.markProgress("rotating_weekly_extra_8")
+                }
+            }
         }
         // KMK <--
         return result

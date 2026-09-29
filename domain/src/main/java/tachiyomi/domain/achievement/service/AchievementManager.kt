@@ -436,20 +436,6 @@ class AchievementManager(
     }
 
     @Synchronized
-    fun onTranslated(count: Long): List<String> {
-        if (!prefs.achievementsEnabled().get()) return emptyList()
-        val safe = count.coerceIn(0L, 10_000L)
-        val unlocked = mutableListOf<String>()
-        if (safe >= 1) tryUnlock("translator", unlocked)
-        if (safe >= 5) tryUnlock("translator_five", unlocked)
-        if (safe >= 10) tryUnlock("translator_ten", unlocked)
-        if (safe >= 50) tryUnlock("translator_fifty", unlocked)
-        if (safe >= 100) tryUnlock("translator_hundred", unlocked)
-        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        return unlocked
-    }
-
-    @Synchronized
     fun onUpscaled(count: Long): List<String> {
         if (!prefs.achievementsEnabled().get()) return emptyList()
         val safe = count.coerceIn(0L, 1_000_000L)
@@ -575,7 +561,15 @@ class AchievementManager(
                 1000L to "download_thousand",
             ),
             "custom_covers" to listOf(10L to "cover_ten"),
+            "incognito_reads" to listOf(10L to "incognito_reader"),
             "categories" to listOf(5L to "category_master", 10L to "category_ten"),
+            "translated_chapters" to listOf(
+                1L to "translator",
+                5L to "translator_five",
+                10L to "translator_ten",
+                50L to "translator_fifty",
+                100L to "translator_hundred",
+            ),
             "sources" to listOf(5L to "sources_five", 10L to "sources_ten"),
             "subcategories" to listOf(
                 1L to "subcategory_creator",

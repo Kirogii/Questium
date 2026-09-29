@@ -658,6 +658,11 @@ class MangaScreen(
                             onCropped = { cropped ->
                                 pendingCropUri = null
                                 sm.editCover(context, cropped)
+                                // KMK --> Only onCropped, not onUseOriginal: choosing the
+                                // original is not a crop.
+                                runCatching {
+                                    globalAppGraph.achievementManager.tryUnlockDirect("cover_cropped")
+                                }
                             },
                             onUseOriginal = {
                                 pendingCropUri = null

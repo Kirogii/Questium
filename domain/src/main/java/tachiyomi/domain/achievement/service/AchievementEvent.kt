@@ -16,7 +16,6 @@ sealed interface AchievementEvent {
     data class DirectUnlock(val id: String) : AchievementEvent
     data class TrackerConnected(val total: Int) : AchievementEvent
     data class Reread(val count: Int = 1) : AchievementEvent
-    data class Translated(val count: Long) : AchievementEvent
 
     // KMK --> Secrets and negatives. Each carries only what the trigger needs, so the manager
     // keeps the rule and the call site stays a one-liner at an existing event.
@@ -53,7 +52,6 @@ class AchievementDispatcher(
             is AchievementEvent.DirectUnlock -> if (manager.tryUnlockDirect(event.id)) listOf(event.id) else emptyList()
             is AchievementEvent.TrackerConnected -> manager.onTrackerConnected(event.total)
             is AchievementEvent.Reread -> manager.onReread(event.count)
-            is AchievementEvent.Translated -> manager.onTranslated(event.count)
             // KMK -->
             is AchievementEvent.ChapterReadAtHour -> manager.onChapterReadAtHour(event.hour, event.minute)
             is AchievementEvent.AppOpenedAt -> manager.onAppOpenedAt(event.hour, event.minute)

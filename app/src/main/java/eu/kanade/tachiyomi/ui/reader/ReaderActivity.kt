@@ -1073,6 +1073,9 @@ class ReaderActivity : BaseActivity() {
         if (prevViewer != null) {
             runCatching { graph.achievementManager.onReaderDirectionChanged(mode) }
         }
+        if (newViewer is WebGpuViewer) {
+            runCatching { graph.achievementManager.tryUnlockDirect("webgpu") }
+        }
         // KMK <--
         updateViewerInset(readerPreferences.fullscreen().get(), readerPreferences.drawUnderCutout().get())
         binding.viewerContainer.addView(newViewer.getView())

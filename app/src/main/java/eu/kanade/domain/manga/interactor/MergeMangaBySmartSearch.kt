@@ -6,6 +6,7 @@ import eu.kanade.domain.manga.model.copyFrom
 import eu.kanade.domain.manga.model.toSManga
 import exh.source.MERGED_SOURCE_ID
 import exh.source.isMergedSourceId
+import mihon.app.di.globalAppGraph
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.core.common.util.lang.withNonCancellableContext
 import tachiyomi.domain.category.interactor.GetCategories
@@ -36,6 +37,14 @@ class MergeMangaBySmartSearch(
      * @param originalMangaId ID of the existed merged entry or the original manga which will be used to create the new merged entry
      * @param manga The manga which will be merged into existed merged entry or the new merged entry (newly created by using [originalMangaId])
      */
+    // KMK --> After the references are persisted, so an abandoned merge does not count.
+    private fun unlockMerge() {
+        runCatching {
+            globalAppGraph.achievementManager.tryUnlockDirect("merge_fan")
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_extra_2")
+        }
+    }
+
     suspend fun smartSearchMerge(manga: Manga, originalMangaId: Long): Manga {
         val originalManga = getManga.await(originalMangaId)
             ?: throw IllegalArgumentException(context.stringResource(SYMR.strings.merge_unknown_entry, originalMangaId))
@@ -80,6 +89,7 @@ class MergeMangaBySmartSearch(
 
             // todo
             insertMergedReference.awaitAll(mangaReferences)
+            unlockMerge()
 
             return originalManga
         } else {
@@ -170,6 +180,7 @@ class MergeMangaBySmartSearch(
             )
 
             insertMergedReference.awaitAll(listOf(originalMangaReference, newMangaReference, mergedMangaReference))
+            unlockMerge()
 
             return mergedManga
         }

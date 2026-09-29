@@ -105,6 +105,10 @@ class WebhookNotifier(
         }
         if (!enabledForEvent.get()) return
 
+        runCatching {
+            globalAppGraph.rotatingAchievementPool.markProgress("rotating_daily_extra_8")
+        }
+
         notifyScope.launch {
             if (isSuppressed(sourceId, mangaId)) return@launch
             val coverUrl = mangaId?.let { resolveCoverUrl(it) }

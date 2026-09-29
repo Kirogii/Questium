@@ -976,7 +976,7 @@ class ReaderViewModel(
                 val chapterIdValue = readerChapter.chapter.id
                 if (chapterIdValue != null && achievementCountedChapterIds.add(chapterIdValue)) {
                     viewModelScope.launchNonCancellable {
-                        readerAchievementHandler.onChapterRead(getMangaReadingMode())
+                        readerAchievementHandler.onChapterRead(getMangaReadingMode(), incognitoMode)
                     }
                 }
             }

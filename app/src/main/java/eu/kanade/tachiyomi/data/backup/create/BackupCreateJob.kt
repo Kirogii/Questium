@@ -77,6 +77,9 @@ class BackupCreateJob(private val context: Context, workerParams: WorkerParamete
             runCatching {
                 globalAppGraph.achievementManager.tryUnlockDirect("backup_created")
                 globalAppGraph.rotatingAchievementPool.markProgress("rotating_weekly_backup")
+                if (options.libraryEntries) {
+                    globalAppGraph.achievementManager.tryUnlockDirect("full_library_backup")
+                }
             }
             // KMK <--
             Result.success()
