@@ -417,6 +417,7 @@ class MangaScreen(
             onMultiDeleteClicked = screenModel::showDeleteChapterDialog,
             // KMK -->
             onBlacklistClicked = screenModel::blacklistChapters,
+            onSetBookmarkColor = screenModel::setBookmarkColor,
             // KMK <--
             onChapterSwipe = screenModel::chapterSwipe,
             onChapterSelected = screenModel::toggleSelection,

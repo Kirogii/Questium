@@ -86,6 +86,7 @@ import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.browse.RelatedMangaTitle
 import eu.kanade.presentation.components.relativeDateText
+import eu.kanade.presentation.manga.components.BookmarkColorPickerDialog
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.manga.components.ChapterHeader
 import eu.kanade.presentation.manga.components.ExpandableMangaDescription
@@ -134,6 +135,7 @@ import exh.ui.metadata.adapters.NHentaiDescription
 import exh.ui.metadata.adapters.PururinDescription
 import exh.util.isLewd
 import mihon.app.di.globalAppGraph
+import tachiyomi.domain.chapter.model.BookmarkColor
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.missingChaptersCount
 import tachiyomi.domain.library.service.LibraryPreferences
@@ -213,6 +215,7 @@ fun MangaScreen(
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
     // KMK -->
     onBlacklistClicked: (List<Chapter>) -> Unit,
+    onSetBookmarkColor: (List<Chapter>, BookmarkColor) -> Unit,
     // KMK <--
 
     // For chapter swipe
@@ -253,6 +256,11 @@ fun MangaScreen(
         if (it.isNotEmpty()) {
             context.copyToClipboard(it, it)
         }
+    }
+
+    // KMK -->
+    var pendingBookmarkColorTargets by remember { mutableStateOf<List<Chapter>?>(null) }
+    // KMK <--
     }
 
     if (!isTabletUi) {
@@ -322,6 +330,7 @@ fun MangaScreen(
             onStopRereadingClick = onStopRereadingClick,
             hazeState = hazeState,
             onBlacklistClicked = onBlacklistClicked,
+            onBookmarkColorClicked = { pendingBookmarkColorTargets = it },
             onMangaInfoEnabledChange = onMangaInfoEnabledChange,
             onMangaInfoShowTranslatedChange = onMangaInfoShowTranslatedChange,
             onMangaInfoRefresh = onMangaInfoRefresh,
@@ -396,6 +405,7 @@ fun MangaScreen(
             onStopRereadingClick = onStopRereadingClick,
             hazeState = hazeState,
             onBlacklistClicked = onBlacklistClicked,
+            onBookmarkColorClicked = { pendingBookmarkColorTargets = it },
             onMangaInfoEnabledChange = onMangaInfoEnabledChange,
             onMangaInfoShowTranslatedChange = onMangaInfoShowTranslatedChange,
             onMangaInfoRefresh = onMangaInfoRefresh,
@@ -404,6 +414,19 @@ fun MangaScreen(
             // KMK <--
         )
     }
+
+    // KMK -->
+    pendingBookmarkColorTargets?.let { targets ->
+        BookmarkColorPickerDialog(
+            current = targets.first().bookmarkColor,
+            onSelect = { color ->
+                onSetBookmarkColor(targets, color)
+                pendingBookmarkColorTargets = null
+            },
+            onDismiss = { pendingBookmarkColorTargets = null },
+        )
+    }
+    // KMK <--
 }
 
 @Composable
@@ -462,6 +485,7 @@ private fun MangaScreenSmallImpl(
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
     // KMK -->
     onBlacklistClicked: (List<Chapter>) -> Unit,
+    onBookmarkColorClicked: (List<Chapter>) -> Unit,
     // KMK <--
 
     // For chapter swipe
@@ -608,6 +632,7 @@ private fun MangaScreenSmallImpl(
                 onDownloadChapter = onDownloadChapter,
                 onMultiDeleteClicked = onMultiDeleteClicked,
                 onBlacklistClicked = onBlacklistClicked,
+                onBookmarkColorClicked = onBookmarkColorClicked,
                 fillFraction = 1f,
             )
         },
@@ -1050,6 +1075,7 @@ private fun MangaScreenLargeImpl(
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
     // KMK -->
     onBlacklistClicked: (List<Chapter>) -> Unit,
+    onBookmarkColorClicked: (List<Chapter>) -> Unit,
     // KMK <--
 
     // For swipe actions
@@ -1191,6 +1217,7 @@ private fun MangaScreenLargeImpl(
                     onDownloadChapter = onDownloadChapter,
                     onMultiDeleteClicked = onMultiDeleteClicked,
                     onBlacklistClicked = onBlacklistClicked,
+                    onBookmarkColorClicked = onBookmarkColorClicked,
                     fillFraction = 0.5f,
                 )
             }
