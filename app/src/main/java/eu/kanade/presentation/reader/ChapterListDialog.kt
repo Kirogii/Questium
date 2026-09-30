@@ -109,6 +109,9 @@ fun ChapterListDialog(
                     sourceName = null,
                     read = chapterItem.chapter.read,
                     bookmark = chapterItem.chapter.bookmark,
+                    // KMK -->
+                    bookmarkColor = chapterItem.chapter.bookmarkColor,
+                    // KMK <--
                     selected = false,
                     // KMK -->
                     downloadIndicatorEnabled = onDownloadAction != null,

@@ -1655,6 +1655,9 @@ private fun LazyListScope.sharedChapterItems(
                     // SY <--
                     read = item.chapter.read,
                     bookmark = item.chapter.bookmark,
+                    // KMK -->
+                    bookmarkColor = item.chapter.bookmarkColor,
+                    // KMK <--
                     selected = item.selected,
                     downloadIndicatorEnabled =
                     !isAnyChapterSelected && !(mergedData?.manga?.get(item.chapter.mangaId) ?: manga).isLocal(),

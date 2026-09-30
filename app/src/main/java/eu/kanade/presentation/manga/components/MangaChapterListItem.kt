@@ -48,6 +48,7 @@ import eu.kanade.tachiyomi.data.download.model.Download
 import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.domain.chapter.model.BookmarkColor
 import tachiyomi.i18n.kmk.KMR
 import tachiyomi.presentation.core.components.material.DISABLED_ALPHA
 import tachiyomi.presentation.core.components.material.IconButtonTokens
@@ -66,6 +67,9 @@ fun MangaChapterListItem(
     // SY <--
     read: Boolean,
     bookmark: Boolean,
+    // KMK -->
+    bookmarkColor: BookmarkColor = BookmarkColor.NONE,
+    // KMK <--
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
     downloadStateProvider: () -> Download.State,
@@ -148,7 +152,10 @@ fun MangaChapterListItem(
                             contentDescription = stringResource(MR.strings.action_filter_bookmarked),
                             modifier = Modifier
                                 .sizeIn(maxHeight = with(LocalDensity.current) { textHeight.toDp() - 2.dp }),
-                            tint = MaterialTheme.colorScheme.primary,
+                            // KMK --> a colour is only a reason tag; uncoloured keeps the
+                            // existing primary tint so nothing changes for existing bookmarks
+                            tint = bookmarkColor.composeColor() ?: MaterialTheme.colorScheme.primary,
+                            // KMK <--
                         )
                     }
                     Text(
