@@ -108,7 +108,7 @@ class GetNextChaptersTest {
 
     @Test
     fun `stops at the scan limit rather than reading all of history`() = runTest {
-        every { historyRepository.getRecentHistory(3) } returns emptyList()
+        coEvery { historyRepository.getRecentHistory(3) } returns emptyList()
 
         interactor.awaitFirstReadable(scanLimit = 3) shouldBe null
     }
