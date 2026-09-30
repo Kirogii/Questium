@@ -261,7 +261,6 @@ fun MangaScreen(
     // KMK -->
     var pendingBookmarkColorTargets by remember { mutableStateOf<List<Chapter>?>(null) }
     // KMK <--
-    }
 
     if (!isTabletUi) {
         MangaScreenSmallImpl(
