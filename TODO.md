@@ -190,6 +190,16 @@
     - These are essentially transparent animated gifs overlaid on top of the reader
     - Allows more immersion, for example sakura petals falling when reading a manga
     - Also has presets and custom user-uploaded gifs
+- [ ] **Library**: Per-category update scheduling intervals
+  - Each category gets its own library-update interval, instead of one global setting
+  - A manga's interval should resolve from its category, with the global setting as the fallback for uncategorised manga
+  - Subcategories should inherit from their parent unless given their own interval
+  - See [#25](https://github.com/PineappleTwilight/houri/issues/25)
+  - NOT STARTED as of 2026-09-30. Notes for whoever picks it up:
+    - The scheduling itself lives in `LibraryUpdateJob`; a wrong interval means manga silently stops updating, so this is the highest-risk item of the current batch
+    - Needs somewhere to store a per-category interval before the job logic can be touched
+    - Verify any SQL directly (build a schema in `sqlite3`, apply the migration, exercise the query) the way migrations 56 and 57 were checked — it catches things a read-through does not
+    - Consider what happens to a category that is deleted while holding an interval, and to a manga that moves between categories
 
 
 ## Bugfixes
