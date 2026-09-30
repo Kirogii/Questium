@@ -32,6 +32,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.RemoveDone
 import androidx.compose.material.icons.outlined.SwapCalls
@@ -86,6 +87,7 @@ fun MangaBottomActionMenu(
     onDeleteClicked: (() -> Unit)? = null,
     // KMK -->
     onBlacklistClicked: (() -> Unit)? = null,
+    onBookmarkColorClicked: (() -> Unit)? = null,
     // KMK <--
 ) {
     AnimatedVisibility(
@@ -100,7 +102,8 @@ fun MangaBottomActionMenu(
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
             val haptic = LocalHapticFeedback.current
-            val confirm = remember { mutableStateListOf(false, false, false, false, false, false, false, false) }
+            // KMK --> 9th slot is the bookmark colour button
+            val confirm = remember { mutableStateListOf(false, false, false, false, false, false, false, false, false) }
             var resetJob by remember { mutableStateOf<Job?>(null) }
             val onLongClickItem: (Int) -> Unit = { toConfirmIndex ->
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -137,6 +140,15 @@ fun MangaBottomActionMenu(
                         toConfirm = confirm[7],
                         onLongClick = { onLongClickItem(7) },
                         onClick = onBlacklistClicked,
+                    )
+                }
+                if (onBookmarkColorClicked != null) {
+                    Button(
+                        title = stringResource(KMR.strings.action_bookmark_color),
+                        icon = Icons.Outlined.Palette,
+                        toConfirm = confirm[8],
+                        onLongClick = { onLongClickItem(8) },
+                        onClick = onBookmarkColorClicked,
                     )
                 }
                 // KMK <--

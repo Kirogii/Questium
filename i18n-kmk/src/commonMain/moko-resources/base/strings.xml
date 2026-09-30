@@ -325,6 +325,9 @@
     <string name="action_exclude_scanlator">Exclude scanlator</string>
     <string name="blacklist_empty">No blacklisted chapters</string>
     <string name="action_blacklist_chapter">Blacklist chapter</string>
+    <string name="action_bookmark_color">Bookmark color</string>
+    <string name="bookmark_color_dialog_title">Why did you bookmark this?</string>
+    <string name="bookmark_color_none">No color</string>
     <string name="scanlator_ranges">Chapter ranges</string>
     <string name="scanlator_ranges_empty">No chapter ranges. A range pins one scanlator over a span of chapters during smart merge.</string>
     <string name="scanlator_range_add">Add range</string>

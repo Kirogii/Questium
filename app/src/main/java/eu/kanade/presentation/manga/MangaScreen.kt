@@ -1544,6 +1544,7 @@ private fun SharedMangaBottomActionMenu(
     onMultiDeleteClicked: (List<Chapter>) -> Unit,
     // KMK -->
     onBlacklistClicked: (List<Chapter>) -> Unit,
+    onBookmarkColorClicked: ((List<Chapter>) -> Unit)? = null,
     // KMK <--
     fillFraction: Float,
     modifier: Modifier = Modifier,
@@ -1580,6 +1581,9 @@ private fun SharedMangaBottomActionMenu(
         onBlacklistClicked = {
             onBlacklistClicked(selected.fastMap { it.chapter })
         },
+        onBookmarkColorClicked = onBookmarkColorClicked?.let { handler ->
+            { handler(selected.fastMap { it.chapter }) }
+        }.takeIf { onBookmarkColorClicked != null && selected.fastAll { it.chapter.bookmark } },
         // KMK <--
     )
 }
