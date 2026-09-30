@@ -50,6 +50,10 @@ abstract class SearchScreenModel(
     private val enabledLanguages = sourcePreferences.enabledLanguages().get()
     private val disabledSources = sourcePreferences.disabledSources().get()
     protected val pinnedSources = sourcePreferences.pinnedSources().get()
+    // KMK --> "sourceId|category" entries backing the source category filter.
+    // Source carries no categories property, so membership has to be matched here.
+    protected val sourcesInCategories = sourcePreferences.sourcesTabSourcesInCategories().get()
+    // KMK <--
 
     private var lastQuery: String? = null
     private var lastSourceFilter: SourceFilter? = null

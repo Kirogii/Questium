@@ -54,6 +54,9 @@ val backupChapterMapper = {
         scanlator: String?,
         read: Boolean,
         bookmark: Boolean,
+        // KMK --> bookmark_color, selected but not part of the backup format
+        _: Long,
+        // KMK <--
         lastPageRead: Long,
         chapterNumber: Double,
         sourceOrder: Long,

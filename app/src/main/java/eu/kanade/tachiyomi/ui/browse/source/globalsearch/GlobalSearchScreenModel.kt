@@ -25,9 +25,23 @@ class GlobalSearchScreenModel(
     override fun getEnabledSources(): List<Source> {
         // KMK -->
         val category = state.value.sourceCategory
+        // null means "no category chosen", which must not skip the pinned filter
+        val memberIds = if (category.isBlank()) {
+            null
+        } else {
+            // Membership lives in the "sourceId|category" pref set; Source has no
+            // categories property, so match the id half.
+            sourcesInCategories
+                .mapNotNull { entry ->
+                    entry.substringBefore('|')
+                        .takeIf { entry.substringAfter('|') == category }
+                        ?.toLongOrNull()
+                }
+                .toSet()
+        }
         return super.getEnabledSources()
             .filter { state.value.sourceFilter != SourceFilter.PinnedOnly || "${it.id}" in pinnedSources }
-            .filter { category.isBlank() || category in it.categories }
+            .filter { memberIds == null || it.id in memberIds }
         // KMK <--
     }
 }
