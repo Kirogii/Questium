@@ -34,6 +34,7 @@ import eu.kanade.presentation.components.TabbedDialogPaddings
 import kotlinx.collections.immutable.persistentListOf
 import mihon.app.di.globalAppGraph
 import tachiyomi.core.common.preference.TriState
+import tachiyomi.domain.chapter.model.BookmarkColor
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.LabeledCheckbox
@@ -50,6 +51,10 @@ fun ChapterSettingsDialog(
     onDownloadFilterChanged: (TriState) -> Unit,
     onUnreadFilterChanged: (TriState) -> Unit,
     onBookmarkedFilterChanged: (TriState) -> Unit,
+    // KMK -->
+    bookmarkColorFilter: Set<BookmarkColor> = emptySet(),
+    onBookmarkColorFilterChanged: (Set<BookmarkColor>) -> Unit = {},
+    // KMK <--
     scanlatorFilterActive: Boolean,
     onScanlatorFilterClicked: () -> Unit,
     onSortModeChanged: (Long) -> Unit,
@@ -106,6 +111,10 @@ fun ChapterSettingsDialog(
                         onUnreadFilterChanged = onUnreadFilterChanged,
                         bookmarkedFilter = manga?.bookmarkedFilter ?: TriState.DISABLED,
                         onBookmarkedFilterChanged = onBookmarkedFilterChanged,
+                        // KMK -->
+                        bookmarkColorFilter = bookmarkColorFilter,
+                        onBookmarkColorFilterChanged = onBookmarkColorFilterChanged,
+                        // KMK <--
                         scanlatorFilterActive = scanlatorFilterActive,
                         onScanlatorFilterClicked = onScanlatorFilterClicked,
                     )
@@ -136,6 +145,10 @@ private fun ColumnScope.FilterPage(
     onUnreadFilterChanged: (TriState) -> Unit,
     bookmarkedFilter: TriState,
     onBookmarkedFilterChanged: (TriState) -> Unit,
+    // KMK -->
+    bookmarkColorFilter: Set<BookmarkColor> = emptySet(),
+    onBookmarkColorFilterChanged: (Set<BookmarkColor>) -> Unit = {},
+    // KMK <--
     scanlatorFilterActive: Boolean,
     onScanlatorFilterClicked: () -> Unit,
 ) {
@@ -154,6 +167,12 @@ private fun ColumnScope.FilterPage(
         state = bookmarkedFilter,
         onClick = onBookmarkedFilterChanged,
     )
+    // KMK -->
+    BookmarkColorFilterItem(
+        selected = bookmarkColorFilter,
+        onChanged = onBookmarkColorFilterChanged,
+    )
+    // KMK <--
     ScanlatorFilterItem(
         active = scanlatorFilterActive,
         onClick = onScanlatorFilterClicked,

@@ -1986,6 +1986,15 @@ class MangaScreenModel(
     }
 
     // KMK -->
+    fun setBookmarkColorFilter(colors: Set<BookmarkColor>) {
+        mutableState.update { state ->
+            when (state) {
+                State.Loading -> state
+                is State.Success -> state.copy(bookmarkColorFilter = colors)
+            }
+        }
+    }
+
     fun setBookmarkColor(chapters: List<Chapter>, color: BookmarkColor) {
         if (chapters.isEmpty()) return
         screenModelScope.launchIO {
@@ -2098,6 +2107,10 @@ class MangaScreenModel(
             val seedColor: Color? = manga.asMangaCover().vibrantCoverColor?.let { Color(it) },
             // KMK --> Manga-details metadata translation state (spec 2026-09-23).
             val mangaInfoUiState: MangaInfoUiState = MangaInfoUiState.Unresolved,
+            // KMK --> Empty means "no colour filter". Deliberately local state rather
+            // than chapter_flags bits: that column is synced, and the colour itself
+            // is not, so filtering there would leak the choice to other devices.
+            val bookmarkColorFilter: Set<BookmarkColor> = emptySet(),
             // KMK <--
         ) : State {
             // KMK -->
@@ -2114,7 +2127,7 @@ class MangaScreenModel(
             // KMK <--
 
             val processedChapters by lazy {
-                chapters.applyFilters(manga).toList()
+                chapters.applyFilters(manga, bookmarkColorFilter).toList()
                     // KMK -->
                     // safe-guard some edge-cases where chapters are duplicated some how on a merged entry
                     .distinctBy { it.id }

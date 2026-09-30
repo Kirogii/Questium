@@ -576,6 +576,10 @@ class MangaScreen(
                 onDownloadFilterChanged = screenModel::setDownloadedFilter,
                 onUnreadFilterChanged = screenModel::setUnreadFilter,
                 onBookmarkedFilterChanged = screenModel::setBookmarkedFilter,
+                // KMK -->
+                bookmarkColorFilter = successState.bookmarkColorFilter,
+                onBookmarkColorFilterChanged = screenModel::setBookmarkColorFilter,
+                // KMK <--
                 onSortModeChanged = screenModel::setSorting,
                 onDisplayModeChanged = screenModel::setDisplayMode,
                 onSetAsDefault = screenModel::setCurrentSettingsAsDefault,

@@ -3,6 +3,7 @@ package eu.kanade.domain.chapter.model
 import eu.kanade.domain.manga.model.downloadedFilter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.ui.manga.ChapterList
+import tachiyomi.domain.chapter.model.BookmarkColor
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.manga.model.Manga
@@ -52,7 +53,13 @@ fun List<Chapter>.applyFilters(
  * Applies the view filters to the list of chapters obtained from the database.
  * @return an observable of the list of chapters filtered and sorted.
  */
-fun List<ChapterList.Item>.applyFilters(manga: Manga): Sequence<ChapterList.Item> {
+fun List<ChapterList.Item>.applyFilters(
+    manga: Manga,
+    // KMK --> empty means "no colour filtering"; the other overload is used to find
+    // the next unread chapter, which is reading state rather than a view, so the
+    // colour filter deliberately does not apply there.
+    bookmarkColorFilter: Set<BookmarkColor> = emptySet(),
+): Sequence<ChapterList.Item> {
     val isLocalManga = manga.isLocal()
     val unreadFilter = manga.unreadFilter
     val downloadedFilter = manga.downloadedFilter
@@ -60,6 +67,11 @@ fun List<ChapterList.Item>.applyFilters(manga: Manga): Sequence<ChapterList.Item
     return asSequence()
         .filter { (chapter) -> applyFilter(unreadFilter) { !chapter.read } }
         .filter { (chapter) -> applyFilter(bookmarkedFilter) { chapter.bookmark } }
+        // KMK --> a colour is only ever set on a bookmark, so this also implies bookmarked
+        .filter { chapter ->
+            bookmarkColorFilter.isEmpty() || chapter.chapter.bookmarkColor in bookmarkColorFilter
+        }
+        // KMK <--
         .filter { applyFilter(downloadedFilter) { it.isDownloaded || isLocalManga } }
         .sortedWith { (chapter1), (chapter2) -> getChapterSort(manga).invoke(chapter1, chapter2) }
 }
