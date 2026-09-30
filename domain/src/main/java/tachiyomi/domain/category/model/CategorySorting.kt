@@ -31,22 +31,32 @@ enum class CategorySortOrder {
  */
 fun List<Category>.sortedForDisplay(sortOrder: CategorySortOrder): List<Category> {
     if (sortOrder == CategorySortOrder.MANUAL) return sortedBy { it.order }
+
+    val byName = when (sortOrder) {
+        CategorySortOrder.NAME_DESC -> compareBy(String.CASE_INSENSITIVE_ORDER, Category::name).reversed()
+        else -> compareBy(String.CASE_INSENSITIVE_ORDER, Category::name)
+    }
+    if (sortOrder == CategorySortOrder.NAME_ASC || sortOrder == CategorySortOrder.NAME_DESC) {
+        return sortedWith(byName)
+    }
+
     val dateOf: (Category) -> Long = when (sortOrder) {
         CategorySortOrder.DATE_ADDED_NEWEST, CategorySortOrder.DATE_ADDED_OLDEST -> Category::dateAdded
         else -> Category::dateModified
     }
-    val comparator: Comparator<Category> = when (sortOrder) {
-        CategorySortOrder.NAME_ASC -> compareBy(String.CASE_INSENSITIVE_ORDER, Category::name)
-        CategorySortOrder.NAME_DESC -> compareBy(String.CASE_INSENSITIVE_ORDER, Category::name).reversed()
-        CategorySortOrder.DATE_ADDED_NEWEST, CategorySortOrder.DATE_MODIFIED_NEWEST ->
+    val byDate: Comparator<Category> =
+        if (sortOrder == CategorySortOrder.DATE_ADDED_NEWEST ||
+            sortOrder == CategorySortOrder.DATE_MODIFIED_NEWEST
+        ) {
             compareByDescending(dateOf)
-        else -> compareBy(dateOf)
-    }
+        } else {
+            compareBy(dateOf)
+        }
 
     val dated = mutableListOf<Category>()
     val undated = mutableListOf<Category>()
     for (category in this) {
         if (dateOf(category) == Category.DATE_UNKNOWN) undated += category else dated += category
     }
-    return dated.sortedWith(comparator) + undated.sortedBy { it.order }
+    return dated.sortedWith(byDate) + undated.sortedBy { it.order }
 }
