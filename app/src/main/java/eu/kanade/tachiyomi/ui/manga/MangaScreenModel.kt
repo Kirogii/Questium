@@ -27,6 +27,7 @@ import eu.kanade.core.preference.asState
 import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
 import eu.kanade.domain.chapter.interactor.SetReadStatus
+import eu.kanade.domain.chapter.model.applyFilters
 import eu.kanade.domain.manga.interactor.GetExcludedScanlators
 import eu.kanade.domain.manga.interactor.GetPagePreviews
 import eu.kanade.domain.manga.interactor.MergeMangaBySmartSearch
@@ -140,7 +141,6 @@ import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.model.NoChaptersException
 import tachiyomi.domain.chapter.model.toChapterUpdate
 import tachiyomi.domain.chapter.service.calculateChapterGap
-import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.history.interactor.GetReadDurationForManga
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.libraryUpdateError.interactor.DeleteLibraryUpdateErrors
@@ -169,7 +169,6 @@ import tachiyomi.domain.manga.model.MergeMangaSettingsUpdate
 import tachiyomi.domain.manga.model.MergedMangaReference
 import tachiyomi.domain.manga.model.SEQUEL_PREQUEL_STUB_MEMO_KEY
 import tachiyomi.domain.manga.model.SequelPrequelEntry
-import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.domain.manga.model.isSequelPrequelStub
 import tachiyomi.domain.manga.repository.MangaRepository
@@ -2174,22 +2173,6 @@ class MangaScreenModel(
 
             val filterActive: Boolean
                 get() = scanlatorFilterActive || manga.chaptersFiltered()
-
-            /**
-             * Applies the view filters to the list of chapters obtained from the database.
-             * @return an observable of the list of chapters filtered and sorted.
-             */
-            private fun List<ChapterList.Item>.applyFilters(manga: Manga): Sequence<ChapterList.Item> {
-                val isLocalManga = manga.isLocal()
-                val unreadFilter = manga.unreadFilter
-                val downloadedFilter = manga.downloadedFilter
-                val bookmarkedFilter = manga.bookmarkedFilter
-                return asSequence()
-                    .filter { (chapter) -> applyFilter(unreadFilter) { !chapter.read } }
-                    .filter { (chapter) -> applyFilter(bookmarkedFilter) { chapter.bookmark } }
-                    .filter { applyFilter(downloadedFilter) { it.isDownloaded || isLocalManga } }
-                    .sortedWith { (chapter1), (chapter2) -> getChapterSort(manga).invoke(chapter1, chapter2) }
-            }
         }
     }
 }
