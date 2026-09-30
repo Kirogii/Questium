@@ -134,9 +134,11 @@ import tachiyomi.domain.chapter.interactor.DeleteChapters
 import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.SetMangaDefaultChapterFlags
 import tachiyomi.domain.chapter.interactor.UpdateChapter
+import tachiyomi.domain.chapter.model.BookmarkColor
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.model.ChapterUpdate
 import tachiyomi.domain.chapter.model.NoChaptersException
+import tachiyomi.domain.chapter.model.toChapterUpdate
 import tachiyomi.domain.chapter.service.calculateChapterGap
 import tachiyomi.domain.chapter.service.getChapterSort
 import tachiyomi.domain.history.interactor.GetReadDurationForManga
@@ -1982,6 +1984,17 @@ class MangaScreenModel(
             )
         }
     }
+
+    // KMK -->
+    fun setBookmarkColor(chapters: List<Chapter>, color: BookmarkColor) {
+        if (chapters.isEmpty()) return
+        screenModelScope.launchIO {
+            updateChapter.awaitAll(
+                chapters.map { it.toChapterUpdate().copy(bookmarkColor = color) },
+            )
+        }
+    }
+    // KMK <--
 
     fun removeBlacklistedChapters(keys: List<String>) {
         if (keys.isEmpty()) return
