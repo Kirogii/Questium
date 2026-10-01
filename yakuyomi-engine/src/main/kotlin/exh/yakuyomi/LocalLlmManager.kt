@@ -180,37 +180,35 @@ class LocalLlmManager(
                     if (isSame) return@runCatching GgufImportResult(customModelFor(target), duplicate = true)
                 }
                 val tmp = File(dir, "$name.tmp")
-                var totalCopied = 0L
-                context.contentResolver.openInputStream(uri)?.use { input ->
-                    tmp.outputStream().use { out ->
-                        val buf = ByteArray(64 * 1024)
-                        while (true) {
-                            val r = input.read(buf)
-                            if (r == -1) break
-                            out.write(buf, 0, r)
-                            totalCopied += r
-                            if (totalCopied > 20L * 1024 * 1024 * 1024) throw IllegalStateException("File too large (>20GB)")
+                try {
+                    var totalCopied = 0L
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        tmp.outputStream().use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            while (true) {
+                                val r = input.read(buf)
+                                if (r == -1) break
+                                out.write(buf, 0, r)
+                                totalCopied += r
+                                if (totalCopied > 20L * 1024 * 1024 * 1024) throw IllegalStateException("File too large (>20GB)")
+                            }
                         }
-                    }
-                } ?: throw IllegalStateException("Cannot open the selected file")
-                if (tmp.length() < 1_000_000L) {
-                    tmp.delete()
-                    throw IllegalStateException("Not a valid GGUF (file too small)")
-                }
-                if (!tmp.name.lowercase().endsWith(".gguf") && tmp.length() > 1_000_000L) {
-                    // Basic GGUF magic check: first 4 bytes should be "GGUF"
+                    } ?: throw IllegalStateException("Cannot open the selected file")
+                    if (tmp.length() < 1_000_000L) throw IllegalStateException("Not a valid GGUF (file too small)")
+                    // tmp never carries the .gguf extension, so this always runs: the first 4 bytes must be "GGUF".
                     val magic = tmp.inputStream().use { it.readNBytes(4) }
-                    if (magic.size == 4 && String(magic) != "GGUF") {
+                    if (magic.size == 4 && String(magic) != "GGUF") throw IllegalStateException("Not a GGUF file (bad magic)")
+                    val final = if (target.exists()) uniquifyGgufName(dir, name) else target
+                    if (!tmp.renameTo(final)) {
+                        tmp.copyTo(final, overwrite = true)
                         tmp.delete()
-                        throw IllegalStateException("Not a GGUF file (bad magic)")
                     }
+                    GgufImportResult(customModelFor(final), duplicate = false)
+                } finally {
+                    // A partial copy must not survive: it is invisible to importedModels(), which only
+                    // lists .gguf, yet it still counts against the 500MB import gate above.
+                    if (tmp.exists()) tmp.delete()
                 }
-                val final = if (target.exists()) uniquifyGgufName(dir, name) else target
-                if (!tmp.renameTo(final)) {
-                    tmp.copyTo(final, overwrite = true)
-                    tmp.delete()
-                }
-                GgufImportResult(customModelFor(final), duplicate = false)
             }.onFailure { e ->
                 logcat { "GGUF import failed: ${e.message}" }
             }
