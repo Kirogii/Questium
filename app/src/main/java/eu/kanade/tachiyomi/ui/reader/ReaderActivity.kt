@@ -981,7 +981,11 @@ class ReaderActivity : BaseActivity() {
 
     private fun setDoublePageMode(viewer: PagerViewer) {
         val currentOrientation = resources.configuration.orientation
-        viewer.config.doublePages = currentOrientation == Configuration.ORIENTATION_LANDSCAPE
+        // Split-wide-pages and double-page pairing are mutually exclusive: PagerConfig applies this
+        // guard on all three of its own assignment sites. Without it both run on the same page, the
+        // split lands against the wrong joined item, and the first half is cut off by the page before it.
+        viewer.config.doublePages = viewer.config.dualPageSplit.not() &&
+            currentOrientation == Configuration.ORIENTATION_LANDSCAPE
         viewModel.setDoublePages(viewer.config.doublePages)
     }
 

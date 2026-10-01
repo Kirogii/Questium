@@ -194,7 +194,10 @@ class PagerViewerAdapter(
     fun onPageSplit(currentPage: Any?, newPage: InsertPage) {
         if (currentPage !is ReaderPage) return
 
-        val currentIndex = joinedItems.indexOfFirst { it.first == currentPage }
+        // A page sitting as the second half of a joined pair has no .first match, so searching
+        // .first alone yields -1 and the half gets spliced in at the head of the list.
+        val currentIndex = joinedItems.indexOfFirst { it.first == currentPage || it.second == currentPage }
+        if (currentIndex < 0) return
 
         // Put aside preprocessed pages for next chapter so they don't get removed when changing chapter
         if (currentPage.chapter.chapter.id != currentChapter?.chapter?.id) {
@@ -207,7 +210,7 @@ class PagerViewerAdapter(
             is VerticalPagerViewer,
             -> currentIndex + 1
             else -> currentIndex
-        }
+        }.coerceIn(0, joinedItems.size)
 
         // It will enter a endless cycle of insert pages
         if (viewer is R2LPagerViewer && placeAtIndex - 1 >= 0 && joinedItems[placeAtIndex - 1].first is InsertPage) {
@@ -215,7 +218,7 @@ class PagerViewerAdapter(
         }
 
         // Same here it will enter a endless cycle of insert pages
-        if (joinedItems[placeAtIndex].first is InsertPage) {
+        if (placeAtIndex < joinedItems.size && joinedItems[placeAtIndex].first is InsertPage) {
             return
         }
 
