@@ -803,7 +803,13 @@ class MangaTranslatorService(
                 var startY = centerY - totalH / 2f + textH / 2f
                 if (lines.size == 1) startY = centerY - (fm.ascent + fm.descent) / 2f
                 for (line in lines) {
-                    canvas.drawText(line, centerX, startY.coerceIn(top + textH, bottom - 4f), textPaint)
+                    // top + textH exceeds bottom - 4 whenever the box is shorter than one line of text,
+                    // and coerceIn throws on an inverted range, which would discard every translation
+                    // on the page rather than just this box.
+                    val lo = top + textH
+                    val hi = bottom - 4f
+                    val y = if (lo <= hi) startY.coerceIn(lo, hi) else startY.coerceIn(top, bottom)
+                    canvas.drawText(line, centerX, y, textPaint)
                     startY += lineH
                     if (startY > bottom - 2f) break
                 }

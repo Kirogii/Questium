@@ -21,6 +21,7 @@ files moved. See .github/scripts/release_notes.py.
 - Achievements use noticeably less battery while you read. Checking whether you'd already earned something no longer rescans the whole achievement list for every single check, so finishing a chapter does far less work than before
 
 ### Fix
+- Fix all translations on a page disappearing when one text region was too short. A short line of translated text - a sound effect, a single character - made the image service throw while drawing, which discarded every other translation on that page
 - Fix a crash when the on-device model failed to swap over. Unloading the previous model while loading a new one was not guarded like every other unload, so a failure there could escape the local translation path instead of falling back like other local model errors do
 - Fix a failed model import being able to block all future model imports. An interrupted copy of a GGUF file could leave a partial file behind that the model list never showed, while it still counted against the storage needed to import anything else
 - Fix translated text disappearing from pages sent to the image translation service. When a single word was too wide to fit a line, the wrapping code replaced the line it had just finished instead of starting a new one, so everything before that word was dropped from the page
