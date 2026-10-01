@@ -140,6 +140,15 @@
     <string name="crop_ratio_portrait">Portrait</string>
     <string name="crop_ratio_square">Square</string>
     <string name="crop_ratio_wide">Wide</string>
+    <!-- KMK --> Cover crop nudge controls: precise framing without relying on a drag gesture,
+         which is hard to do accurately on a small screen or a digitiser that drifts.
+    <string name="crop_move_up">Move image up</string>
+    <string name="crop_move_down">Move image down</string>
+    <string name="crop_move_left">Move image left</string>
+    <string name="crop_move_right">Move image right</string>
+    <string name="crop_zoom_in">Zoom in</string>
+    <string name="crop_zoom_out">Zoom out</string>
+    <!-- KMK <-->
     <!-- Extension section -->
     <string name="extensions_page_need_refresh">Refresh extension page to update list.</string>
     <string name="extensions_page_more">More extensions...</string>
