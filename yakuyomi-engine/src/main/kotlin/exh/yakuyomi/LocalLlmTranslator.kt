@@ -38,7 +38,8 @@ class LocalLlmTranslator(
         TextTranslationProtocol.run(
             request = request,
             offlineFallback = offlineFallback,
-            failureMessage = "Local LLM translation failed (is the model downloaded?)",
+            failureMessage = "Local LLM translation failed",
+            emptyMessage = "Local LLM returned no usable translation (is the model downloaded?)",
         ) { prompt ->
             manager.generate(prompt, imageBytes)
         }

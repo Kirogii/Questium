@@ -186,7 +186,8 @@ class GeminiNanoTranslator(
         TextTranslationProtocol.run(
             request = request,
             offlineFallback = offlineFallback,
-            failureMessage = "Gemini Nano returned no usable translation",
+            failureMessage = "Gemini Nano request failed",
+            emptyMessage = "Gemini Nano returned no usable translation",
         ) { prompt -> generateRaw(model!!, prompt, pageBitmap) }
     }
 

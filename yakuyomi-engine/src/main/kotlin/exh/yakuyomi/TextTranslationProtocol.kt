@@ -20,6 +20,11 @@ object TextTranslationProtocol {
      * Runs a provider's raw-text generation through the full protocol.
      *
      * @param generate raw completion text, or null/blank when the provider produced nothing.
+     * @param failureMessage reported when generation threw. Kept distinct from [emptyMessage]
+     *   because the two mean different things to the user: a thrown generation is usually a crash
+     *   or a transport problem, while empty output usually means the model is missing or produced
+     *   nothing usable.
+     * @param emptyMessage reported when generation succeeded but returned nothing usable.
      * @throws TranslationException when generation fails and [offlineFallback] is off, so the
      *   page is marked FAILED (retryable) instead of silently SKIPPED.
      */
@@ -27,6 +32,7 @@ object TextTranslationProtocol {
         request: TranslationRequest,
         offlineFallback: Boolean,
         failureMessage: String,
+        emptyMessage: String,
         generate: suspend (prompt: String) -> String?,
     ): List<String> {
         if (request.isEmpty) return emptyList()
@@ -41,7 +47,7 @@ object TextTranslationProtocol {
             if (offlineFallback) return request.originalLines()
             throw TranslationException("$failureMessage: ${e.message}", e)
         }
-        return fromRawText(raw, request, offlineFallback, failureMessage)
+        return fromRawText(raw, request, offlineFallback, emptyMessage)
     }
 
     /** Parses and aligns a raw completion, honouring [offlineFallback] on empty output. */
@@ -49,15 +55,15 @@ object TextTranslationProtocol {
         raw: String?,
         request: TranslationRequest,
         offlineFallback: Boolean,
-        failureMessage: String,
+        emptyMessage: String,
     ): List<String> {
         if (raw.isNullOrBlank()) {
             if (offlineFallback) return request.originalLines()
-            throw TranslationException(failureMessage)
+            throw TranslationException(emptyMessage)
         }
         val parsed = parseTranslationLines(raw)
             ?: raw.lines().map { it.trim() }.filter { it.isNotBlank() }
-        return fromParsedLines(parsed, request, offlineFallback, failureMessage)
+        return fromParsedLines(parsed, request, offlineFallback, emptyMessage)
     }
 
     /**
@@ -68,11 +74,11 @@ object TextTranslationProtocol {
         parsed: List<String>?,
         request: TranslationRequest,
         offlineFallback: Boolean,
-        failureMessage: String,
+        emptyMessage: String,
     ): List<String> {
         if (parsed.isNullOrEmpty()) {
             if (offlineFallback) return request.originalLines()
-            throw TranslationException(failureMessage)
+            throw TranslationException(emptyMessage)
         }
         return alignTranslationLines(parsed, request.lines)
     }

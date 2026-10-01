@@ -135,7 +135,7 @@ class TranslationManager(
                     raw = localLlm.generate(request.buildPrompt()),
                     request = request,
                     offlineFallback = false,
-                    failureMessage = "Local LLM returned no usable metadata translation",
+                    emptyMessage = "Local LLM returned no usable metadata translation",
                 )
             } else {
                 if (prefs.effectiveApiKey().isBlank()) return null
