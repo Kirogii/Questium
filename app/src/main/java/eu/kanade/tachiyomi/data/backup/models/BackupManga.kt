@@ -58,6 +58,14 @@ class BackupManga(
     // ambiguous (a root and its first child are both sort 0), so the original category is
     // unrecoverable from it. These ids are the real link; `categories` stays for old readers.
     @ProtoNumber(613) var categoryIds: List<Long> = emptyList(),
+    // The scanlator controls lived only on the manga row, so a backup silently dropped them and
+    // a restore handed back a series with the user's scanlator priority, range rules and chapter
+    // blacklist all reset. Restoring needs the full picture, and the restore path already read
+    // these - it just never received them.
+    @ProtoNumber(614) var scanlatorPriority: List<String> = emptyList(),
+    @ProtoNumber(615) var blacklistedChapters: List<String> = emptyList(),
+    @ProtoNumber(616) var scanlatorRangeRules: List<String> = emptyList(),
+    @ProtoNumber(617) var isLightNovel: Boolean = false,
     // KMK <--
 
     // SY specific values
@@ -104,6 +112,12 @@ class BackupManga(
             memo = MemoColumnAdapter.decode(this@BackupManga.memo),
             // KMK -->
             rereadCount = this@BackupManga.rereadCount,
+            // Without these the restore wrote defaults, discarding the user's scanlator
+            // priority, range rules and chapter blacklist.
+            scanlatorPriority = this@BackupManga.scanlatorPriority,
+            blacklistedChapters = this@BackupManga.blacklistedChapters,
+            scanlatorRangeRules = this@BackupManga.scanlatorRangeRules,
+            isLightNovel = this@BackupManga.isLightNovel,
             rereading = this@BackupManga.rereading,
             rereadStartedAt = this@BackupManga.rereadStartedAt,
             // KMK <--

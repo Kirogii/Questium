@@ -167,6 +167,11 @@ private fun Manga.toBackupManga(/* SY --> */customMangaInfo: CustomMangaInfo?/* 
         memo = MemoColumnAdapter.encode(this.memo),
         // KMK -->
         rereadCount = this.rereadCount,
+        // The scanlator controls and chapter blacklist are part of a restored series.
+        scanlatorPriority = this.scanlatorPriority,
+        blacklistedChapters = this.blacklistedChapters,
+        scanlatorRangeRules = this.scanlatorRangeRules,
+        isLightNovel = this.isLightNovel,
         rereading = this.rereading,
         rereadStartedAt = this.rereadStartedAt,
         // KMK <--
