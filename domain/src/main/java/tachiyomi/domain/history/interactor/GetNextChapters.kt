@@ -37,12 +37,19 @@ class GetNextChapters(
      * something left. [await] only considers the single newest entry, so a fully caught-up
      * most-recent series would otherwise report no chapter.
      *
+     * Only an unread chapter counts as having something left. The per-entry lookup drops just the
+     * chapter its entry points at and keeps every chapter after it, read or not, and History holds
+     * one row per chapter rather than per series - so a series you finished contributes a row per
+     * chapter. Its second row down would hand back the final chapter you had already read and the
+     * walk would stop there, instead of moving on to the next series.
+     *
      * [scanLimit] bounds the walk so a long, fully-read History cannot turn one resume tap
      * into a full-table scan.
      */
     suspend fun awaitFirstReadable(scanLimit: Long = DEFAULT_HISTORY_SCAN_LIMIT): Chapter? {
         historyRepository.getRecentHistory(scanLimit).forEach { history ->
-            val next = await(history.mangaId, history.chapterId, onlyUnread = false).firstOrNull()
+            val next = await(history.mangaId, history.chapterId, onlyUnread = false)
+                .firstOrNull { !it.read }
             if (next != null) return next
         }
         return null

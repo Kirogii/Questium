@@ -112,5 +112,47 @@ class GetNextChaptersTest {
 
         interactor.awaitFirstReadable(scanLimit = 3) shouldBe null
     }
+
+    // KMK --> Regression: History holds one row per chapter, not per series, so a finished series
+    // contributes a row per chapter. The second row down used to resolve to the final chapter
+    // already read, which ended the walk and reopened the series the user had just finished
+    // instead of moving to the next one with chapters left.
+    @Test
+    fun `skips an already-read chapter reached through an older history row of the same series`() = runTest {
+        val startedIrregulars = chapter(5L, 20L, read = false, number = 5.0)
+        givenManga(10L)
+        givenManga(20L)
+        // Moriarty: every chapter read, and History has a row for each of them, newest first.
+        coEvery { getChaptersByMangaId.await(10L, applyFilter = true) } returns listOf(
+            chapter(1L, 10L, read = true, number = 1.0),
+            chapter(2L, 10L, read = true, number = 1.1),
+            chapter(3L, 10L, read = true, number = 1.2),
+        )
+        // Irregulars: next chapter started but not finished, so it is what should be resumed.
+        coEvery { getChaptersByMangaId.await(20L, applyFilter = true) } returns listOf(
+            chapter(4L, 20L, read = true, number = 4.0),
+            startedIrregulars,
+        )
+        coEvery { historyRepository.getRecentHistory(25) } returns listOf(
+            history(10L, 3L),
+            history(10L, 2L),
+            history(20L, 4L),
+        )
+
+        interactor.awaitFirstReadable() shouldBe startedIrregulars
+    }
+
+    @Test
+    fun `still resumes a started chapter of the newest series`() = runTest {
+        val started = chapter(2L, 10L, read = false, number = 2.0)
+        givenManga(10L)
+        coEvery { getChaptersByMangaId.await(10L, applyFilter = true) } returns listOf(
+            chapter(1L, 10L, read = true, number = 1.0),
+            started,
+        )
+        coEvery { historyRepository.getRecentHistory(25) } returns listOf(history(10L, 2L))
+
+        interactor.awaitFirstReadable() shouldBe started
+    }
     // KMK <--
 }
