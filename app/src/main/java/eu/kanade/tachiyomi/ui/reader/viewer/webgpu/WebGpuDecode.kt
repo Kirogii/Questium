@@ -34,6 +34,13 @@ import java.util.WeakHashMap
 private val pageExifOrientations: MutableMap<ViewerReaderPage, Int> =
     Collections.synchronizedMap(WeakHashMap())
 
+/**
+ * Orientation tags are SHORT values, but readMetadata hands back the raw text; matching digits
+ * keeps a stray-space or prefixed value from failing toIntOrNull. Compiled once - this sits on the
+ * per-page decode path.
+ */
+private val exifOrientationDigits = Regex("\\d+")
+
 internal fun noteExifOrientation(page: ViewerReaderPage, orientation: Int) {
     synchronized(pageExifOrientations) {
         if (orientation in 2..8) {
@@ -651,7 +658,7 @@ internal suspend fun WebGpuViewer.decodeReaderPage(page: ViewerReaderPage) {
             val metadata = Kim.readMetadata(decodeBytes.inputStream(), decodeBytes.size.toLong())
             if (metadata != null) {
                 exifOrientation = metadata.findStringValue(TiffTag.TIFF_TAG_ORIENTATION)
-                    ?.let { raw -> Regex("\\d+").find(raw)?.value?.toIntOrNull() }
+                    ?.let { raw -> exifOrientationDigits.find(raw)?.value?.toIntOrNull() }
                     ?.takeIf { it in 1..8 } ?: 1
             }
             if (dualModeForTags) {

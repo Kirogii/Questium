@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer
 
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.setting.UpscaleReaderHook
 import kotlinx.coroutines.CoroutineScope
 import mihon.app.di.globalAppGraph
 import tachiyomi.core.common.util.lang.launchIO
@@ -27,7 +28,7 @@ object ReaderTranslation : PageTranslator {
         val manager = globalAppGraph.translationManager
         val mangaId = page.chapter.chapter.manga_id ?: 0L
         if (manager.isEnabled() && !manager.isGated() && manager.isPerMangaEnabled(mangaId)) return true
-        return globalAppGraph.upscaleEngine.isEnabledForManga(mangaId)
+        return UpscaleReaderHook.isUpscaleActive(mangaId)
     }
 
     /**
