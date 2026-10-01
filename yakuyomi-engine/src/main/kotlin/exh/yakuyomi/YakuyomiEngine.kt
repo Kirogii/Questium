@@ -9,7 +9,6 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -65,21 +64,10 @@ class YakuyomiEngine(
                 }
             }
             .launchIn(scope)
-        // Tuning changes require rebuilding native sessions that were constructed with the old config.
+        // Tuning changes require rebuilding native sessions constructed with the old config. The
+        // list of knobs that require it lives with the config mapping, not here.
         scope.launch {
-            merge(
-                prefs.detectorInputSize().changes(),
-                prefs.detectorBoxThreshold().changes(),
-                prefs.detectorSegThreshold().changes(),
-                prefs.ocrMinProb().changes(),
-                prefs.ocrBicubic().changes(),
-                prefs.ocrUnsharp().changes(),
-                prefs.inpainterMethod().changes(),
-                prefs.inpainterTileSize().changes(),
-                prefs.inpainterMaskDilate().changes(),
-                prefs.inpainterBboxPad().changes(),
-                prefs.inpainterUniformFastPath().changes(),
-            ).collect { invalidateComponents() }
+            configFactory.configChanges().collect { invalidateComponents() }
         }
     }
 

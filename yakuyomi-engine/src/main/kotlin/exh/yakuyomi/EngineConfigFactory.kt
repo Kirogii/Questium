@@ -1,6 +1,9 @@
 package exh.yakuyomi
 
 import android.graphics.Typeface
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import li.joye.yakuyomi.engine.EngineConfig
 import li.joye.yakuyomi.engine.RenderConfig
 import li.joye.yakuyomi.engine.TextOrientation
@@ -17,6 +20,34 @@ import li.joye.yakuyomi.engine.TextOrientation
 class EngineConfigFactory(
     private val prefs: TranslationPreferences,
 ) {
+
+    /**
+     * The preferences that are baked into the native detector/OCR/inpainter sessions when they are
+     * constructed. Changing any of them requires those sessions to be rebuilt.
+     *
+     * This list lives beside the mapping that reads them rather than in the engine that consumes the
+     * result, so a knob added to [defaultConfig] is registered here in the same edit. Previously the
+     * engine merged these by hand, and a new tuning value could be added to the config and silently
+     * ignored at runtime because the session was never rebuilt.
+     *
+     * Render settings are deliberately absent: [renderConfig] is read per page, so they take effect
+     * without a rebuild.
+     */
+    fun configChanges(): Flow<Unit> = merge(
+        *listOf(
+            prefs.detectorInputSize().changes().map { Unit },
+            prefs.detectorBoxThreshold().changes().map { Unit },
+            prefs.detectorSegThreshold().changes().map { Unit },
+            prefs.ocrMinProb().changes().map { Unit },
+            prefs.ocrBicubic().changes().map { Unit },
+            prefs.ocrUnsharp().changes().map { Unit },
+            prefs.inpainterMethod().changes().map { Unit },
+            prefs.inpainterTileSize().changes().map { Unit },
+            prefs.inpainterMaskDilate().changes().map { Unit },
+            prefs.inpainterBboxPad().changes().map { Unit },
+            prefs.inpainterUniformFastPath().changes().map { Unit },
+        ).toTypedArray(),
+    )
 
     fun renderConfig(): RenderConfig {
         val defaults = EngineConfig().render
