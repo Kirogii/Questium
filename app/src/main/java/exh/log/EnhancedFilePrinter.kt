@@ -8,8 +8,8 @@ import com.hippo.unifile.UniFile
 import exh.log.EnhancedFilePrinter.Builder
 import java.io.BufferedWriter
 import java.io.IOException
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.BlockingQueue
-import java.util.concurrent.LinkedBlockingQueue
 import kotlin.time.Duration.Companion.days
 import com.elvishew.xlog.flattener.Flattener2 as Flattener
 
@@ -185,10 +185,14 @@ class EnhancedFilePrinter internal constructor(
      * Work in background, we can enqueue the logs, and the worker will dispatch them.
      */
     private inner class Worker : Runnable {
-        private val logs: BlockingQueue<LogItem> = LinkedBlockingQueue()
+        private val logs: BlockingQueue<LogItem> = ArrayBlockingQueue(MAX_PENDING_LOGS)
 
         @Volatile
         private var started = false
+
+        @Volatile
+        var dropped = 0
+            private set
 
         /**
          * Enqueue the log.
@@ -197,7 +201,8 @@ class EnhancedFilePrinter internal constructor(
          */
         fun enqueue(log: LogItem) {
             try {
-                logs.put(log)
+                // Never block the caller: losing a log line beats stalling whichever thread logged it.
+                if (!logs.offer(log)) logs.poll()?.let { dropped++ }
             } catch (e: InterruptedException) {
                 e.printStackTrace()
             }
@@ -217,6 +222,7 @@ class EnhancedFilePrinter internal constructor(
          */
         fun start() {
             synchronized(this) {
+                if (started) return
                 Thread(this).start()
                 started = true
             }
@@ -224,12 +230,18 @@ class EnhancedFilePrinter internal constructor(
 
         override fun run() {
             try {
-                var log: LogItem
-                while (logs.take().also { log = it } != null) {
+                while (true) {
+                    val log = logs.take()
                     doPrintln(log.timeMillis, log.level, log.tag, log.msg)
                 }
             } catch (e: InterruptedException) {
                 e.printStackTrace()
+            } catch (e: Throwable) {
+                // A failed write must not take the worker down for good: run() is only ever
+                // re-entered via isStarted(), so dying here would silently funnel every later log
+                // line into a queue nobody drains, growing until the process runs out of memory.
+                e.printStackTrace()
+            } finally {
                 synchronized(this) { started = false }
             }
         }
@@ -325,6 +337,12 @@ class EnhancedFilePrinter internal constructor(
          * Use worker, write logs asynchronously.
          */
         private const val USE_WORKER = true
+
+        /**
+         * Cap on queued log lines. Bounds the damage if the writer stalls or dies: without it a
+         * body-level log flood (e.g. E-Hentai's request interceptor) grows the queue without limit.
+         */
+        private const val MAX_PENDING_LOGS = 4096
     }
 
     init {
