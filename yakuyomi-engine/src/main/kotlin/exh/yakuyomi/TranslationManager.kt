@@ -42,6 +42,7 @@ class TranslationManager(
     private val localLlm: LocalLlmManager,
     private val infoStore: MangaInfoTranslationStore,
     private val mangaTranslator: MangaTranslatorService,
+    private val resolver: TranslationProviderResolver,
     private val mangaContextProvider: suspend (Long) -> String? = { null },
     // KMK <--
 ) {
@@ -189,7 +190,7 @@ class TranslationManager(
         if (!shouldTranslateMangaInfo()) return null
         if (mangaInfoProviderState() != MangaInfoProviderState.READY) return null
         val sourceLang = resolveMangaInfoSourceLang(sourceLangHint)
-        val targetLang = prefs.targetLang().get().ifBlank { "en" }
+        val targetLang = resolver.targetLanguage()
         val identity = mangaInfoIdentity()
         val promptPolicy = prefs.promptPolicy()
         val promptFingerprint = promptPolicy.fingerprint()
@@ -198,21 +199,21 @@ class TranslationManager(
         val glossary = prefs.glossaryMap()
         val translated = try {
             if (localLlm.isLocalProvider()) {
-                val isEnFix = sourceLang.equals("EN", true) && targetLang.equals("EN", true)
-                val prompt = buildTranslationPrompt(
-                    texts = lines,
+                val request = TranslationRequest(
+                    lines = lines,
                     sourceLang = sourceLang,
                     targetLang = targetLang,
-                    breadcrumb = "",
-                    isEnFix = isEnFix,
-                    mangaContext = "",
                     glossary = glossary,
                     policy = promptPolicy,
                 )
-                val result = localLlm.generate(prompt) ?: return null
-                // KMK --> Stable-ID alignment: strip <|n|> prefixes before field mapping.
-                alignTranslationLines(parseTranslationLines(result) ?: return null, lines)
-                // KMK <--
+                // Metadata is strict: a missing or unparseable reply is a failure, never a padded
+                // result, so offline fallback stays off here regardless of the page setting.
+                TextTranslationProtocol.fromRawText(
+                    raw = localLlm.generate(request.buildPrompt()),
+                    request = request,
+                    offlineFallback = false,
+                    failureMessage = "Local LLM returned no usable metadata translation",
+                )
             } else {
                 if (prefs.effectiveApiKey().isBlank()) return null
                 YakuyomiTranslator(
@@ -263,26 +264,10 @@ class TranslationManager(
      * image service and is reported as unsupported; local LLM and cloud text providers
      * follow the same readiness rules as the page pipeline.
      */
-    fun mangaInfoProviderState(): MangaInfoProviderState {
-        if (prefs.mangaTranslatorEnabled().get() || prefs.provider().get().equals("mangatranslator", ignoreCase = true)) {
-            return MangaInfoProviderState.MANGA_TRANSLATOR_UNSUPPORTED
-        }
-        if (localLlm.isLocalProvider()) return MangaInfoProviderState.READY
-        return if (prefs.effectiveApiKey().isNotBlank()) {
-            MangaInfoProviderState.READY
-        } else {
-            MangaInfoProviderState.NOT_CONFIGURED
-        }
-    }
+    fun mangaInfoProviderState(): MangaInfoProviderState = resolver.metadataState()
 
     /** Provider/model identity stamped on metadata cache entries. Mirrors the page pipeline. */
-    fun mangaInfoIdentity(): MangaInfoIdentity {
-        return if (localLlm.isLocalProvider()) {
-            MangaInfoIdentity(provider = "local", model = "local:${localLlm.resolveModel()?.id ?: "auto"}")
-        } else {
-            MangaInfoIdentity(provider = prefs.provider().get().lowercase(), model = prefs.effectiveModel())
-        }
-    }
+    fun mangaInfoIdentity(): MangaInfoIdentity = resolver.metadataIdentity()
 
     /**
      * Validated metadata cache read: returns the entry only when its fingerprint,
@@ -296,7 +281,7 @@ class TranslationManager(
         sourceLangHint: String = "JA",
     ): MangaInfoTranslation? {
         val sourceLang = resolveMangaInfoSourceLang(sourceLangHint)
-        val targetLang = prefs.targetLang().get().ifBlank { "en" }
+        val targetLang = resolver.targetLanguage()
         val identity = mangaInfoIdentity()
         return infoStore.getValidated(
             mangaId,
@@ -315,23 +300,8 @@ class TranslationManager(
 
     fun friendlyError(raw: String?): String = TranslationErrorMapper.toUserMessage(raw)
 
-    /**
-     * Resolves the cache key for the LLM that would translate a page. When Gemini Nano is
-     * active the key is the on-device model; otherwise the configured cloud model. Keeps
-     * cache entries from mixing providers when the user toggles Gemini Nano on/off.
-     */
-    private suspend fun effectiveModel(): String {
-        if (prefs.mangaTranslatorEnabled().get() || prefs.provider().get().equals("mangatranslator", ignoreCase = true)) {
-            return "mangatranslator"
-        }
-        if (prefs.geminiNanoEnabled().get() && geminiNano.isAvailable()) {
-            return "gemini-nano"
-        }
-        if (localLlm.isLocalProvider()) {
-            return "local:${localLlm.resolveModel()?.id ?: "auto"}"
-        }
-        return prefs.effectiveModel().ifBlank { "google/gemma-2-9b-it:free" }
-    }
+    /** Cache identity for the provider that would translate a page. See [TranslationProviderResolver]. */
+    private suspend fun effectiveModel(): String = resolver.resolve().modelName
 
     /**
      * Fast path for pages already translated in this session/on disk: serves the saved page or the
@@ -345,7 +315,7 @@ class TranslationManager(
         pageIndex: Int,
     ): ByteArray? = withContext(AppDispatchersHolder.get().io) {
         if (!prefs.enabled().get() || isGated() || !perMangaStore.isEnabled(mangaId)) return@withContext null
-        val targetLang = prefs.targetLang().get().ifBlank { "en" }
+        val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
         val promptFingerprint = prefs.promptFingerprint()
         if (prefs.saveTranslatedPages().get() || prefs.mangaTranslatorCachePermanent().get()) {
@@ -380,7 +350,7 @@ class TranslationManager(
         sourceLangHint: String = "JA",
     ): ByteArray? = withContext(AppDispatchersHolder.get().io) {
         if (!prefs.enabled().get() || isGated() || !perMangaStore.isEnabled(mangaId)) return@withContext null
-        val targetLang = prefs.targetLang().get().ifBlank { "en" }
+        val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
         val promptFingerprint = prefs.promptFingerprint()
         val cacheEnabled = prefs.cacheEnabled().get()
@@ -457,7 +427,7 @@ class TranslationManager(
         imageBytes: ByteArray,
         sourceLangHint: String,
     ): ByteArray? {
-        val targetLang = prefs.targetLang().get().ifBlank { "en" }
+        val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
         val cacheEnabled = prefs.cacheEnabled().get()
         val pageHash = cache.pageHash(imageBytes)
@@ -575,10 +545,10 @@ class TranslationManager(
             // Built as a factory over the slice bitmap: the engine may split a tall page into
             // overlapping slices, and each provider must see its own slice (vision context and
             // JPEG bytes are generated per slice, never from the whole page).
-            val useGeminiNano = prefs.geminiNanoEnabled().get() && geminiNano.isAvailable()
+            val active = resolver.resolve()
             val translatorFactory: suspend (Bitmap) -> Translator = { sliceBitmap ->
-                when {
-                    useGeminiNano -> {
+                when (active.kind) {
+                    TranslationProviderKind.GEMINI_NANO -> {
                         object : Translator {
                             override suspend fun translate(queries: List<String>): List<String> =
                                 geminiNano.translate(
@@ -589,7 +559,7 @@ class TranslationManager(
                                 )
                         }
                     }
-                    localLlm.isLocalProvider() -> {
+                    TranslationProviderKind.LOCAL_GGUF -> {
                         LocalLlmTranslator(
                             manager = localLlm,
                             sourceLang = sourceLangHint,
@@ -602,7 +572,7 @@ class TranslationManager(
                             policy = promptPolicy,
                         )
                     }
-                    else -> {
+                    TranslationProviderKind.CLOUD -> {
                         val jpegBytes = runCatching { PageImageEncoder.toJpeg(sliceBitmap) }
                             .getOrNull()
                             ?.takeIf { it.size in 1..3_000_000 }
@@ -612,8 +582,8 @@ class TranslationManager(
                             targetLang = targetLang,
                             breadcrumb = breadcrumb,
                             mangaContext = mangaContext,
-                            provider = prefs.provider().get().lowercase(),
-                            model = model,
+                            provider = active.providerName,
+                            model = active.modelName,
                             offlineFallback = prefs.offlineFallback().get(),
                             client = client,
                             customBaseUrl = prefs.customBaseUrl().get(),
@@ -623,6 +593,10 @@ class TranslationManager(
                             policy = promptPolicy,
                         )
                     }
+                    // Unreachable: an image service returns from the branch above before the page
+                    // is decoded. Present so the `when` stays exhaustive as providers are added.
+                    TranslationProviderKind.IMAGE_SERVICE ->
+                        throw TranslationException("Image service handled before page decode")
                 }
             }
             // KMK <--
