@@ -176,24 +176,18 @@ class GeminiNanoTranslator(
             },
         )
 
-        val outcome: List<String>? = if (unavailable) {
-            null
-        } else {
-            TextTranslationProtocol.run(
-                request = request,
-                offlineFallback = true,
-                failureMessage = "Gemini Nano returned no usable translation",
-            ) { prompt -> generateRaw(model!!, prompt, pageBitmap) }
-        }
-
-        when {
-            outcome != null -> outcome
-            offlineFallback -> request.originalLines()
-            unavailable -> throw TranslationException(
+        if (unavailable) {
+            if (offlineFallback) return@withContext request.originalLines()
+            throw TranslationException(
                 "Gemini Nano is unavailable on this device — enable a cloud provider in Settings → Translation",
             )
-            else -> throw TranslationException("Gemini Nano returned no usable translation")
         }
+
+        TextTranslationProtocol.run(
+            request = request,
+            offlineFallback = offlineFallback,
+            failureMessage = "Gemini Nano returned no usable translation",
+        ) { prompt -> generateRaw(model!!, prompt, pageBitmap) }
     }
 
     /** Issues the ML Kit request and returns the candidate text, or null on failure. */
