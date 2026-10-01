@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.service.isChapterBlacklisted
+import tachiyomi.domain.chapter.service.scanlatorBlacklistKey
 
 @Execution(ExecutionMode.CONCURRENT)
 class ChapterSmartMergeTest {

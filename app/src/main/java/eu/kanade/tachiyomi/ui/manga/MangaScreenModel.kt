@@ -75,8 +75,8 @@ import eu.kanade.tachiyomi.ui.manga.RelatedManga.Companion.sorted
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.applyScanlatorPriority
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
-import eu.kanade.tachiyomi.util.chapter.isChapterBlacklisted
-import eu.kanade.tachiyomi.util.chapter.scanlatorBlacklistKey
+import tachiyomi.domain.chapter.service.isChapterBlacklisted
+import tachiyomi.domain.chapter.service.scanlatorBlacklistKey
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.toast
