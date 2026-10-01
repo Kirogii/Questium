@@ -2,25 +2,13 @@ package exh.yakuyomi
 
 import android.content.Context
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
-import android.provider.OpenableColumns
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.builtins.MapSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
 import mihon.core.concurrency.AppDispatchersHolder
-import tachiyomi.core.common.util.system.logcat
 import java.io.File
 
 /** Result of importing a custom GGUF: the model to select and whether it already existed. */
@@ -33,6 +21,11 @@ data class GgufImportResult(
  * Owns the lifecycle of the on-device ("local") LLM provider: resolves the selected model from
  * [LocalLlmCatalog] (best-fit presented, only RAM enforced) or a user-supplied custom GGUF,
  * lazily builds and caches the llama.cpp backend for that model, and runs generations.
+ *
+ * This class is the facade. The work is split three ways and each part has one owner:
+ * [ImportedGgufModels] for user-imported GGUFs, [LocalLlmSampling] for per-model sampling
+ * overrides, and [LocalLlmSession] for the loaded backend and running/loading state. Model
+ * *selection* stays here, because it is the one decision all three read from.
  */
 @SingleIn(AppScope::class)
 @Inject
@@ -42,234 +35,75 @@ class LocalLlmManager(
     private val downloadManager: LocalLlmDownloadManager,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchersHolder.get().default)
-    private val backendMutex = Mutex()
 
-    private val _running = MutableStateFlow(false)
-    val running: StateFlow<Boolean> = _running.asStateFlow()
-
-    private val _loading = MutableStateFlow(false)
-    val loading: StateFlow<Boolean> = _loading.asStateFlow()
-
-    @Volatile
-    private var current: Pair<LocalLlmModel, LocalLlmBackend>? = null
+    private val imports = ImportedGgufModels(context, scope) { prefs.localModel().set(it.id) }
+    private val sampling = LocalLlmSampling(prefs)
+    private val session = LocalLlmSession(
+        context = context,
+        prefs = prefs,
+        downloadManager = downloadManager,
+        scope = scope,
+        sampling = sampling,
+        resolveModel = { resolveModel() },
+    )
 
     fun isLocalProvider(): Boolean = prefs.provider().get().equals("local", ignoreCase = true)
 
-    /** Whether a model is loaded in memory (the engine is warm). */
-    fun isRunning(): Boolean = _running.value
+    // ------------------------------------------------------------------ session
+
+    val running: StateFlow<Boolean> get() = session.running
+
+    val loading: StateFlow<Boolean> get() = session.loading
+
+    fun isRunning(): Boolean = session.isRunning()
+
+    fun start() = session.start()
+
+    fun stop() = session.stop()
+
+    fun clearModel() = session.clearModel()
+
+    fun activeBackendType(): LocalLlmBackendType? = session.activeBackendType()
+
+    fun isRuntimeAvailable(): Boolean = session.isRuntimeAvailable()
+
+    fun accelerator(): LocalLlmAcceleratorInfo = session.accelerator()
+
+    suspend fun generate(prompt: String, imageBytes: ByteArray? = null): String? =
+        session.generate(prompt, imageBytes)
+
+    fun closeAll() = session.closeAll()
 
     // ------------------------------------------------------------------ custom GGUF imports
-    private val customDir = File(context.filesDir, "local_llm_models/custom")
 
-    private val _importing = MutableStateFlow(false)
-    val importing: StateFlow<Boolean> = _importing.asStateFlow()
+    val importing: StateFlow<Boolean> get() = imports.importing
 
-    /** Imported custom GGUFs (one [LocalLlmModel] per file in the custom dir). */
-    fun importedModels(): List<LocalLlmModel> {
-        val dir = customDir
-        if (!dir.exists()) return emptyList()
-        return dir.listFiles().orEmpty()
-            .filter { it.isFile && it.length() > 1_000_000L && it.extension.equals("gguf", ignoreCase = true) }
-            .sortedBy { it.name.lowercase() }
-            .map { customModelFor(it) }
-    }
+    fun importedModels(): List<LocalLlmModel> = imports.importedModels()
 
-    private fun customModelFor(file: File): LocalLlmModel {
-        val mmprojCandidate = File(file.parentFile, "${file.nameWithoutExtension}.mmproj")
-            .takeIf { it.exists() && it.length() > 1_000_000L }
-            ?: File(file.parentFile, "${file.nameWithoutExtension}_mmproj.gguf")
-                .takeIf { it.exists() && it.length() > 1_000_000L }
-        return LocalLlmModel(
-            id = "custom:${file.name}",
-            displayName = file.nameWithoutExtension,
-            description = "User-imported GGUF" + if (mmprojCandidate != null) " + vision" else "",
-            paramsB = "?",
-            qualityTier = 3,
-            isTranslationFinetune = false,
-            supportsVision = mmprojCandidate != null,
-            sizeBytes = file.length() + (mmprojCandidate?.length() ?: 0L),
-            minRamBytes = 3L * 1024 * 1024 * 1024,
-            ggufFile = file.absolutePath,
-            mmprojFile = mmprojCandidate?.absolutePath,
-            mmprojRepo = if (mmprojCandidate != null) "custom" else null,
-            isCustom = true,
-        )
-    }
+    fun importGguf(uri: Uri, onResult: (GgufImportResult?, error: String?) -> Unit) =
+        imports.importGguf(uri, onResult)
 
-    private fun sanitizeGgufName(name: String): String {
-        val base = name.substringAfterLast('/').substringAfterLast('\\').trim().ifBlank { "model.gguf" }
-        val withoutTraversal = base.replace("..", "_")
-        val cleaned = withoutTraversal.replace(Regex("[^A-Za-z0-9._-]"), "_").take(128)
-        val withExt = if (cleaned.lowercase().endsWith(".gguf")) cleaned else "$cleaned.gguf"
-        return withExt.ifBlank { "model.gguf" }
-    }
+    // ------------------------------------------------------------------ sampling
 
-    private fun fileHashPrefix(file: File, maxBytes: Long = 4 * 1024 * 1024): String = runCatching {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buf = ByteArray(64 * 1024)
-            var remaining = maxBytes
-            while (remaining > 0) {
-                val read = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
-                if (read == -1) break
-                digest.update(buf, 0, read)
-                remaining -= read
-            }
-        }
-        digest.digest().joinToString("") { "%02x".format(it) }.take(16)
-    }.getOrDefault("unknown")
+    fun samplingFor(model: LocalLlmModel): LocalLlmSamplingConfig = sampling.samplingFor(model)
 
-    private fun uniquifyGgufName(dir: File, name: String): File {
-        val stem = name.replace(Regex("\\.gguf$"), "")
-        var i = 2
-        while (true) {
-            val candidate = File(dir, "$stem-$i.gguf")
-            if (!candidate.exists()) return candidate
-            i++
-        }
-    }
+    fun setSampling(modelId: String, config: LocalLlmSamplingConfig) = sampling.setSampling(modelId, config)
 
-    private fun displayName(uri: Uri): String = runCatching {
-        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-            if (c.moveToFirst()) c.getString(0) else null
-        }
-    }.getOrNull() ?: "model.gguf"
-
-    fun importGguf(uri: Uri, onResult: (GgufImportResult?, error: String?) -> Unit) {
-        if (_importing.value) {
-            Handler(Looper.getMainLooper()).post { onResult(null, "Import already in progress") }
-            return
-        }
-        _importing.value = true
-        scope.launch {
-            val result = runCatching {
-                val name = sanitizeGgufName(displayName(uri))
-                val dir = customDir.apply { mkdirs() }
-                if (dir.usableSpace < 500 * 1024 * 1024) throw IllegalStateException("Not enough storage for import")
-                val target = File(dir, name)
-                if (target.exists() && target.length() > 1_000_000L) {
-                    val targetHash = fileHashPrefix(target)
-                    // Verify it's really the same file by comparing size + hash prefix before reusing.
-                    val probeTmp = File(dir, "$name.probe.tmp")
-                    var isSame = false
-                    try {
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            probeTmp.outputStream().use { out ->
-                                val buf = ByteArray(64 * 1024)
-                                var copied = 0L
-                                while (copied < 4 * 1024 * 1024) {
-                                    val r = input.read(buf)
-                                    if (r == -1) break
-                                    out.write(buf, 0, r)
-                                    copied += r
-                                }
-                            }
-                        }
-                        if (probeTmp.exists() && probeTmp.length() > 0) {
-                            val probeHash = fileHashPrefix(probeTmp)
-                            val targetSize = target.length()
-                            // Also check total size via openAssetFileDescriptor when available.
-                            val totalSize = runCatching {
-                                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length }
-                            }.getOrNull() ?: -1L
-                            isSame = probeHash == targetHash && (totalSize == -1L || totalSize == targetSize)
-                        }
-                    } finally {
-                        probeTmp.delete()
-                    }
-                    if (isSame) return@runCatching GgufImportResult(customModelFor(target), duplicate = true)
-                }
-                val tmp = File(dir, "$name.tmp")
-                try {
-                    var totalCopied = 0L
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        tmp.outputStream().use { out ->
-                            val buf = ByteArray(64 * 1024)
-                            while (true) {
-                                val r = input.read(buf)
-                                if (r == -1) break
-                                out.write(buf, 0, r)
-                                totalCopied += r
-                                if (totalCopied > 20L * 1024 * 1024 * 1024) throw IllegalStateException("File too large (>20GB)")
-                            }
-                        }
-                    } ?: throw IllegalStateException("Cannot open the selected file")
-                    if (tmp.length() < 1_000_000L) throw IllegalStateException("Not a valid GGUF (file too small)")
-                    // tmp never carries the .gguf extension, so this always runs: the first 4 bytes must be "GGUF".
-                    val magic = tmp.inputStream().use { it.readNBytes(4) }
-                    if (magic.size == 4 && String(magic) != "GGUF") throw IllegalStateException("Not a GGUF file (bad magic)")
-                    val final = if (target.exists()) uniquifyGgufName(dir, name) else target
-                    if (!tmp.renameTo(final)) {
-                        tmp.copyTo(final, overwrite = true)
-                        tmp.delete()
-                    }
-                    GgufImportResult(customModelFor(final), duplicate = false)
-                } finally {
-                    // A partial copy must not survive: it is invisible to importedModels(), which only
-                    // lists .gguf, yet it still counts against the 500MB import gate above.
-                    if (tmp.exists()) tmp.delete()
-                }
-            }.onFailure { e ->
-                logcat { "GGUF import failed: ${e.message}" }
-            }
-            _importing.value = false
-            val ok = result.getOrNull()
-            ok?.let { prefs.localModel().set(it.model.id) }
-            Handler(Looper.getMainLooper()).post {
-                onResult(ok, result.exceptionOrNull()?.message)
-            }
-        }
-    }
+    fun resetSampling(modelId: String) = sampling.resetSampling(modelId)
     // ------------------------------------------------------------------
-    private val samplingJson = Json { ignoreUnknownKeys = true }
-    private val samplingMapSerializer = MapSerializer(String.serializer(), LocalLlmSamplingConfig.serializer())
-
-    private fun samplingOverrides(): Map<String, LocalLlmSamplingConfig> {
-        val raw = prefs.localLlmSamplingOverrides().get()
-        if (raw.isBlank()) return emptyMap()
-        return runCatching { samplingJson.decodeFromString(samplingMapSerializer, raw) }.getOrDefault(emptyMap())
-    }
-
-    private fun persistSampling(overrides: Map<String, LocalLlmSamplingConfig>) {
-        prefs.localLlmSamplingOverrides().set(
-            if (overrides.isEmpty()) "" else samplingJson.encodeToString(samplingMapSerializer, overrides),
-        )
-    }
-
-    /** Effective llama.cpp sampling config for [model]: stored override, else the model's own
-     *  recommended defaults, else sensible generics. */
-    fun samplingFor(model: LocalLlmModel): LocalLlmSamplingConfig {
-        samplingOverrides()[model.id]?.let { return it }
-        model.defaultSampling?.let { return it }
-        return LocalLlmSamplingConfig(
-            temperature = if (model.isTranslationFinetune) 0.0f else 0.3f,
-            contextLength = model.contextLength,
-        )
-    }
-
-    /** Persist a per-model sampling override (all fields; [LocalLlmSamplingConfig] is a value object). */
-    fun setSampling(modelId: String, config: LocalLlmSamplingConfig) {
-        persistSampling(samplingOverrides() + (modelId to config))
-    }
-
-    /** Drop the per-model override so the model falls back to defaults. */
-    fun resetSampling(modelId: String) {
-        persistSampling(samplingOverrides() - modelId)
-    }
 
     /** Look up any selectable model: catalog first, then imported custom GGUFs. */
     fun modelById(id: String): LocalLlmModel? {
         LocalLlmCatalog.byId(id)?.let { return it }
         return importedModels().find { it.id == id }
     }
-    // ------------------------------------------------------------------
 
     /** Resolves the selected model; custom imports win, then the catalog preference, then best-fit. */
     fun resolveModel(): LocalLlmModel? {
         val selected = prefs.localModel().get()
         if (selected.startsWith("custom:")) {
-            val file = File(customDir, selected.removePrefix("custom:"))
-            if (file.exists() && file.length() > 1_000_000L) return customModelFor(file)
+            val file = File(imports.customDir, selected.removePrefix("custom:"))
+            if (file.exists() && file.length() > 1_000_000L) return imports.customModelFor(file)
             // The imported file is gone; clear the selection and fall through.
             prefs.localModel().set("")
         }
@@ -280,7 +114,7 @@ class LocalLlmManager(
             if (legacy.isNotBlank()) {
                 val file = File(legacy)
                 if (file.exists() && file.length() > 1_000_000L) {
-                    val model = customModelFor(file)
+                    val model = imports.customModelFor(file)
                     prefs.localModelFile().set("")
                     prefs.localModel().set(model.id)
                     return model
@@ -304,141 +138,4 @@ class LocalLlmManager(
     }
 
     fun cancelDownload() = downloadManager.cancelDownload()
-
-    /** Warms the engine: eagerly loads the resolved model. No-op when it is already loaded. */
-    fun start() {
-        val model = resolveModel() ?: return
-        if (!downloadManager.isDownloaded(model)) return
-        _loading.value = true
-        scope.launch {
-            backendFor(model)
-            _loading.value = false
-        }
-    }
-
-    /** Unloads the model and frees the native memory. */
-    fun stop() {
-        _loading.value = false
-        scope.launch {
-            val toClose = backendMutex.withLock {
-                val c = current
-                current = null
-                _running.value = false
-                c
-            }
-            toClose?.second?.let { backend ->
-                runCatching { backend.close() }.onFailure { logcat { "LocalLlm stop failed: ${it.message}" } }
-            }
-        }
-    }
-
-    fun clearModel() {
-        val model = resolveModel() ?: return
-        scope.launch {
-            val toClose = backendMutex.withLock {
-                val c = current
-                current = null
-                _running.value = false
-                c
-            }
-            toClose?.second?.let { backend ->
-                runCatching { backend.close() }.onFailure { logcat { "LocalLlm clear close failed: ${it.message}" } }
-            }
-        }
-        if (model.isCustom) {
-            model.ggufFile?.let { File(it).delete() }
-            prefs.localModel().set("")
-        } else {
-            downloadManager.clearModel(model)
-        }
-    }
-
-    /** Backend type actually in use for the resolved model (or null when unavailable). */
-    fun activeBackendType(): LocalLlmBackendType? =
-        if (resolveModel() != null) LocalLlmBackendType.LLAMACPP else null
-
-    /** Whether the llama.cpp runtime is bundled in this build. */
-    fun isRuntimeAvailable(): Boolean = LlamaCppLlmBackend.isAvailable()
-
-    @Volatile
-    private var acceleratorInfo: LocalLlmAcceleratorInfo? = null
-
-    /** What the runtime can offload to. Probed once; the answer cannot change at runtime. */
-    fun accelerator(): LocalLlmAcceleratorInfo =
-        acceleratorInfo ?: synchronized(this) {
-            acceleratorInfo ?: LocalLlmAccelerator.probe(context).also { acceleratorInfo = it }
-        }
-
-    suspend fun generate(prompt: String, imageBytes: ByteArray? = null): String? {
-        val model = resolveModel() ?: return null
-        if (!downloadManager.isDownloaded(model)) {
-            logcat { "Local LLM ${model.id} not downloaded yet" }
-            return null
-        }
-        if (prompt.isBlank() || prompt.length > 20000) {
-            logcat { "Local LLM prompt invalid length ${prompt.length}" }
-            return null
-        }
-        if (imageBytes != null && imageBytes.size > 8 * 1024 * 1024) {
-            logcat { "Local LLM image too large ${imageBytes.size}" }
-            return null
-        }
-        val backend = try {
-            backendFor(model)
-        } catch (e: Exception) {
-            logcat { "Local LLM backend setup failed: ${e.message}" }
-            null
-        } ?: return null
-        val sampling = samplingFor(model)
-        val maxTokens = sampling.maxTokens.coerceIn(64, 4096)
-        val contextLen = sampling.contextLength.coerceAtLeast(512)
-        var safePrompt = prompt
-        val estTokens = safePrompt.length / 3 + maxTokens + 256
-        if (estTokens > contextLen) {
-            val keepChars = (contextLen - maxTokens - 256).coerceAtLeast(512) * 3
-            val cutAt = safePrompt.length - keepChars
-            val newlineIdx = safePrompt.indexOf('\n', cutAt).takeIf { it >= 0 } ?: cutAt
-            safePrompt = safePrompt.substring(newlineIdx.coerceIn(0, safePrompt.length))
-            logcat { "Local LLM prompt truncated ${prompt.length} -> ${safePrompt.length} to fit $contextLen" }
-        }
-        return try {
-            kotlinx.coroutines.withTimeout(90_000) {
-                backend.generate(LocalGenerateRequest(prompt = safePrompt, maxTokens = maxTokens, temperature = sampling.temperature, imageBytes = imageBytes))
-            }
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            logcat { "Local LLM timeout for ${model.id}" }
-            null
-        } catch (e: Exception) {
-            logcat { "Local LLM generate failed: ${e.message}" }
-            null
-        }
-    }
-
-    private suspend fun backendFor(model: LocalLlmModel): LocalLlmBackend? = backendMutex.withLock {
-        current?.let { (m, b) -> if (m.id == model.id) return b }
-        current?.second?.let { stale -> runCatching { stale.close() }.onFailure { logcat { "Local LLM backend swap close failed: ${it.message}" } } }
-        current = null
-        _running.value = false
-        val dir = downloadManager.modelDir(model)
-        val backend = LlamaCppLlmBackend.create(model, dir, samplingFor(model), accelerator()) { msg -> logcat { "llama.cpp: $msg" } }
-        if (backend != null) {
-            current = model to backend
-            _running.value = true
-        }
-        backend
-    }
-
-    fun closeAll() {
-        scope.launch {
-            val toClose = backendMutex.withLock {
-                val c = current
-                current = null
-                _running.value = false
-                c
-            }
-            toClose?.second?.let { backend ->
-                runCatching { backend.close() }.onFailure { logcat { "LocalLlm closeAll failed: ${it.message}" } }
-            }
-        }
-    }
 }
