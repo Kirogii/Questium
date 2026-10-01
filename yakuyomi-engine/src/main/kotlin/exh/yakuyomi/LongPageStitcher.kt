@@ -39,7 +39,7 @@ class LongPageStitcher(
     suspend fun translate(
         page: Bitmap,
         cfg: EngineConfig,
-        translatorFactory: suspend (Bitmap) -> Translator,
+        translatorFactory: suspend (Bitmap) -> Translator?,
     ): PageResult {
         val width = page.width
         val height = page.height
@@ -63,6 +63,10 @@ class LongPageStitcher(
                     translatorFactory(input)
                 } catch (t: Throwable) {
                     failure = PageResult.Failed("slice translator failed: ${t.message}", PipelineErrorCode.TRANSLATE_FAILED)
+                    break
+                }
+                if (translator == null) {
+                    failure = PageResult.Failed("no translator for slice", PipelineErrorCode.TRANSLATE_FAILED)
                     break
                 }
                 runSlice(input, cfg, translator)
@@ -108,7 +112,7 @@ class LongPageStitcher(
     private suspend fun runWholePage(
         page: Bitmap,
         cfg: EngineConfig,
-        translatorFactory: suspend (Bitmap) -> Translator,
+        translatorFactory: suspend (Bitmap) -> Translator?,
     ): PageResult = Pipeline(
         components.detector,
         components.ocr,
@@ -118,7 +122,7 @@ class LongPageStitcher(
         configFactory.resolveTypeface(),
     ).translatePage(page)
 
-    private fun runSlice(bitmap: Bitmap, cfg: EngineConfig, translator: Translator): PageResult = Pipeline(
+    private suspend fun runSlice(bitmap: Bitmap, cfg: EngineConfig, translator: Translator): PageResult = Pipeline(
         components.detector,
         components.ocr,
         translator,

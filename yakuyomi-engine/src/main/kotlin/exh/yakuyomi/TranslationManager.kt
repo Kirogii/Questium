@@ -41,9 +41,11 @@ class TranslationManager(
     // KMK -->
     // Ordered, capped per-chapter work queue. The per-page pipeline is passed in as a lambda so the
     // queue stays free of translation concerns; it owns ordering, lifecycle and the pending cap only.
-    private val pageQueue = PageQueue { mangaId, chapterId, pageIndex, imageBytes, sourceLangHint ->
-        translatePageInternal(mangaId, chapterId, pageIndex, imageBytes, sourceLangHint)
-    }
+    private val pageQueue = PageQueue(
+        worker = { mangaId, chapterId, pageIndex, imageBytes, sourceLangHint ->
+            translatePageInternal(mangaId, chapterId, pageIndex, imageBytes, sourceLangHint)
+        },
+    )
     // KMK <--
 
     fun isEnabled(): Boolean = prefs.enabled().get()
@@ -366,13 +368,15 @@ class TranslationManager(
 
         var bitmap: Bitmap? = null
         return try {
-            val imageCheck = PageImageValidator.check(imageBytes, prefs.longPageSlicingEnabled().get())
-            if (imageCheck is PageImageCheck.Rejected) {
-                status.pageError(mangaId, chapterId, pageIndex, friendlyError(imageCheck.reason))
-                return null
+            val sampleSize = when (val check = PageImageValidator.check(imageBytes, prefs.longPageSlicingEnabled().get())) {
+                is PageImageCheck.Rejected -> {
+                    status.pageError(mangaId, chapterId, pageIndex, friendlyError(check.reason))
+                    return null
+                }
+                is PageImageCheck.Ok -> check.sampleSize
             }
-            val sampleOpts = if (imageCheck.sampleSize > 1) {
-                BitmapFactory.Options().apply { inSampleSize = imageCheck.sampleSize }
+            val sampleOpts = if (sampleSize > 1) {
+                BitmapFactory.Options().apply { inSampleSize = sampleSize }
             } else {
                 null
             }
