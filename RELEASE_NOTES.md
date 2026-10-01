@@ -21,6 +21,7 @@ files moved. See .github/scripts/release_notes.py.
 - Achievements use noticeably less battery while you read. Checking whether you'd already earned something no longer rescans the whole achievement list for every single check, so finishing a chapter does far less work than before
 
 ### Fix
+- Fix translated text disappearing from pages sent to the image translation service. When a single word was too wide to fit a line, the wrapping code replaced the line it had just finished instead of starting a new one, so everything before that word was dropped from the page
 - Fix AI translation quietly giving up on a page. When the on-device Gemini model returned nothing and offline fallback was turned off, the untranslated page was displayed and counted as done instead of being marked as failed, so it could never be retried. A provider that crashed also reported itself as an un-downloaded model, sending you to download something you already had. Pages that are too large or malformed to process now say so plainly
 - Fix a page being dropped at the moment it is submitted for AI translation, which could happen when a chapter was translating faster than it was being read. A page rejected for being unreadable no longer leaves a stalled entry behind that held up the rest of the chapter
 - Fix translated title and description being cached against the wrong provider when Gemini Nano was in use, so they were thrown away and re-translated on every visit

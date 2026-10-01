@@ -831,12 +831,15 @@ class MangaTranslatorService(
             } else {
                 if (cur.isNotEmpty()) {
                     lines.add(cur.toString())
-                    cur = StringBuilder(w)
                     if (paint.measureText(w) > maxW) {
+                        // Too long for a line of its own: give it a truncated line rather than
+                        // overwriting the one just emitted, which would drop that text entirely.
                         var truncated = w
                         while (paint.measureText(truncated + "…") > maxW && truncated.length > 2) truncated = truncated.dropLast(1)
-                        lines[lines.size - 1] = truncated + "…"
+                        lines.add(truncated + "…")
                         cur = StringBuilder()
+                    } else {
+                        cur = StringBuilder(w)
                     }
                 } else {
                     var truncated = w
