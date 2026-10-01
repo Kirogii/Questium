@@ -7,15 +7,8 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import exh.log.xLogD
 import exh.log.xLogE
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentSkipListMap
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import li.joye.yakuyomi.engine.PageResult
@@ -46,67 +39,10 @@ class TranslationManager(
     // KMK <--
 ) {
     // KMK -->
-    // On-the-fly translation is submitted per page from multiple coroutines (decode workers,
-    // retries, download worker). Without ordering, page 5 can be sent to the LLM and swap in
-    // before page 2, scrambling the breadcrumb context and the reading experience. Each chapter
-    // gets a skip-list keyed by page index; a single worker drains it strictly in page order.
-    private data class PendingTranslation(
-        val imageBytes: ByteArray,
-        val sourceLangHint: String,
-        val deferred: CompletableDeferred<ByteArray?>,
-    )
-
-    private val workerScope = CoroutineScope(SupervisorJob() + AppDispatchersHolder.get().io)
-    private val pending = ConcurrentHashMap<Pair<Long, Long>, ConcurrentSkipListMap<Int, PendingTranslation>>()
-    private val workers = ConcurrentHashMap<Pair<Long, Long>, Job>()
-
-    private companion object {
-        const val MAX_PENDING_PER_CHAPTER = 64
-        const val TRANSLATE_TIMEOUT_MS = 120_000L
-    }
-
-    private fun ensureTranslationWorker(key: Pair<Long, Long>) {
-        workers.computeIfAbsent(key) {
-            workerScope.launch {
-                try {
-                    while (true) {
-                        val queue = pending[key] ?: break
-                        val first = queue.firstEntry() ?: break
-                        val pageIndex = first.key
-                        val job = first.value
-                        val result = runCatching {
-                            translatePageInternal(
-                                mangaId = key.first,
-                                chapterId = key.second,
-                                pageIndex = pageIndex,
-                                imageBytes = job.imageBytes,
-                                sourceLangHint = job.sourceLangHint,
-                            )
-                        }.getOrElse { e ->
-                            xLogE("translate worker failed page $pageIndex", e)
-                            null
-                        }
-                        if (!job.deferred.isCompleted) job.deferred.complete(result)
-                        queue.remove(pageIndex)
-                        if (queue.isEmpty()) {
-                            pending.remove(key)
-                            break
-                        }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    xLogE("translation worker crashed", e)
-                    pending[key]?.values?.forEach { p ->
-                        if (!p.deferred.isCompleted) p.deferred.complete(null)
-                    }
-                    pending.remove(key)
-                } finally {
-                    workers.remove(key)
-                    if (pending[key]?.isNotEmpty() == true) ensureTranslationWorker(key)
-                }
-            }
-        }
+    // Ordered, capped per-chapter work queue. The per-page pipeline is passed in as a lambda so the
+    // queue stays free of translation concerns; it owns ordering, lifecycle and the pending cap only.
+    private val pageQueue = PageQueue { mangaId, chapterId, pageIndex, imageBytes, sourceLangHint ->
+        translatePageInternal(mangaId, chapterId, pageIndex, imageBytes, sourceLangHint)
     }
     // KMK <--
 
@@ -136,24 +72,13 @@ class TranslationManager(
     fun setPerMangaEnabled(mangaId: Long, enabled: Boolean) = perMangaStore.setEnabled(mangaId, enabled)
 
     fun cancelChapter(mangaId: Long, chapterId: Long) {
-        val key = mangaId to chapterId
-        pending[key]?.values?.forEach { runCatching { it.deferred.cancel() } }
-        pending.remove(key)
-        workers[key]?.cancel()
-        workers.remove(key)
+        pageQueue.cancel(mangaId, chapterId)
         status.resetChapter(mangaId, chapterId)
     }
 
-    fun pauseChapter(mangaId: Long, chapterId: Long) {
-        val key = mangaId to chapterId
-        workers[key]?.cancel()
-        workers.remove(key)
-    }
+    fun pauseChapter(mangaId: Long, chapterId: Long) = pageQueue.pause(mangaId, chapterId)
 
-    fun resumeChapter(mangaId: Long, chapterId: Long) {
-        val key = mangaId to chapterId
-        if (pending[key]?.isNotEmpty() == true) ensureTranslationWorker(key)
-    }
+    fun resumeChapter(mangaId: Long, chapterId: Long) = pageQueue.resume(mangaId, chapterId)
 
     fun retryChapter(mangaId: Long, chapterId: Long) {
         val st = status.chapterStatus(mangaId, chapterId) ?: return
@@ -163,8 +88,7 @@ class TranslationManager(
     }
 
     fun clearAllChapters() {
-        val keys = pending.keys.toList()
-        keys.forEach { (m, c) -> cancelChapter(m, c) }
+        pageQueue.cancelAll().forEach { (mangaId, chapterId) -> status.resetChapter(mangaId, chapterId) }
         status.clearAll()
     }
 
@@ -371,35 +295,17 @@ class TranslationManager(
             return@withContext hit.bytes
         }
 
-        val key = mangaId to chapterId
-        val queue = pending.computeIfAbsent(key) { ConcurrentSkipListMap() }
-        if (queue.size >= MAX_PENDING_PER_CHAPTER) {
-            val oldest = queue.firstKey()
-            queue.remove(oldest)?.deferred?.complete(null)
-            xLogE("MTL queue overflow: dropped page $oldest for chapter ${key.second} (queue size ${queue.size})")
-        }
+        // Validated before enqueueing: the queue's overflow cap drops the oldest pending page, which
+        // is no reason to throw away the page being submitted.
         PageImageValidator.sizeRejection(imageBytes)?.let { reason ->
             status.pageError(mangaId, chapterId, pageIndex, friendlyError(reason))
             return@withContext null
         }
-        val deferred = CompletableDeferred<ByteArray?>()
-        val prev = queue.put(
-            pageIndex,
-            PendingTranslation(imageBytes = imageBytes, sourceLangHint = sourceLangHint, deferred = deferred),
-        )
-        prev?.let { if (!it.deferred.isCompleted) it.deferred.cancel() }
-        ensureTranslationWorker(key)
-        try {
-            withTimeout(TRANSLATE_TIMEOUT_MS) { deferred.await() }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            xLogE("translatePage await failed", e)
-            null
-        }
+
+        pageQueue.submit(mangaId, chapterId, pageIndex, imageBytes, sourceLangHint)
     }
 
-    /** The actual pipeline for one page - only ever called in page order by [ensureTranslationWorker]. */
+    /** The actual pipeline for one page - only ever called in page order by [PageQueue]. */
     private suspend fun translatePageInternal(
         mangaId: Long,
         chapterId: Long,
