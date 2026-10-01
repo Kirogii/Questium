@@ -21,6 +21,8 @@ files moved. See .github/scripts/release_notes.py.
 - Achievements use noticeably less battery while you read. Checking whether you'd already earned something no longer rescans the whole achievement list for every single check, so finishing a chapter does far less work than before
 
 ### Fix
+- Blacklisted chapters now stay blacklisted everywhere. They were already hidden in a series' chapter list and in the reader, but they could still turn up among your page previews, could still be queued for a download, and both the library's next-unread pick and the History tab's Resume button could still land on one
+- Fix a restored backup resetting your per-series scanlator setup. Your scanlator priority, range rules, blacklisted chapters and light-novel flag were never written into the backup file, so restoring one handed every series back with those choices cleared and every chapter you had blacklisted visible again. Backups taken before now still restore - those series simply come back with no scanlator setup, the same as a fresh install
 - Fix crash when tapping selected text in a manga description with a mouse after selecting it by touch
 - Fix the cover crop preview starting too small and overshooting when zooming to fit, so the exported crop matches what you see
 - Fix the library chapter badge counting blacklisted chapters that the details screen already hides
