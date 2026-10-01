@@ -383,7 +383,12 @@ class LocalLlmManager(
             logcat { "Local LLM image too large ${imageBytes.size}" }
             return null
         }
-        val backend = backendFor(model) ?: return null
+        val backend = try {
+            backendFor(model)
+        } catch (e: Exception) {
+            logcat { "Local LLM backend setup failed: ${e.message}" }
+            null
+        } ?: return null
         val sampling = samplingFor(model)
         val maxTokens = sampling.maxTokens.coerceIn(64, 4096)
         val contextLen = sampling.contextLength.coerceAtLeast(512)
@@ -411,7 +416,7 @@ class LocalLlmManager(
 
     private suspend fun backendFor(model: LocalLlmModel): LocalLlmBackend? = backendMutex.withLock {
         current?.let { (m, b) -> if (m.id == model.id) return b }
-        current?.second?.close()
+        current?.second?.let { stale -> runCatching { stale.close() }.onFailure { logcat { "Local LLM backend swap close failed: ${it.message}" } } }
         current = null
         _running.value = false
         val dir = downloadManager.modelDir(model)
