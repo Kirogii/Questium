@@ -15,6 +15,7 @@ class BackupMangaScanlatorTest {
     @Test
     fun `scanlator controls and chapter blacklist survive a backup round trip`() {
         val original = BackupManga(
+            source = 1L,
             url = "/manga/1",
             title = "Moriarty",
             scanlatorPriority = listOf("Scans", "Alternative"),
@@ -33,7 +34,7 @@ class BackupMangaScanlatorTest {
 
     @Test
     fun `an older backup without these fields restores as empty rather than failing`() {
-        val restored = BackupManga(url = "/manga/1", title = "Irregulars").getMangaImpl()
+        val restored = BackupManga(source = 1L, url = "/manga/1", title = "Irregulars").getMangaImpl()
 
         restored.scanlatorPriority shouldBe emptyList()
         restored.blacklistedChapters shouldBe emptyList()
