@@ -61,7 +61,6 @@ import tachiyomi.domain.category.interactor.SetMangaCategories
 import tachiyomi.domain.category.interactor.SetSortModeForCategory
 import tachiyomi.domain.category.interactor.UpdateCategory
 import tachiyomi.domain.category.repository.CategoryRepository
-import tachiyomi.domain.chapter.interactor.FilterBlacklistedChapters
 import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetChapter
 import tachiyomi.domain.chapter.interactor.GetChapterByUrlAndMangaId
@@ -177,8 +176,6 @@ class DomainModule : InjektModule {
         addSingletonFactory<ChapterRepository> { ChapterRepositoryImpl(get()) }
         addFactory { GetChapter(get()) }
         addFactory { GetChaptersByMangaId(get()) }
-        // KMK --> Blacklist gate for chapter surfaces that only hold a manga id.
-        addFactory { FilterBlacklistedChapters(get()) }
         addFactory { GetBookmarkedChaptersByMangaId(get(), get(), get()) }
         addFactory { GetChapterByUrlAndMangaId(get()) }
         addFactory { UpdateChapter(get()) }
