@@ -64,36 +64,39 @@ compile error rather than a stale cache key.
 **A new page-level rule** (limit, sample size, encoding) belongs in `PageImageValidator` or
 `PageImageEncoder`, not inline in the manager.
 
-## Known remaining structural work
+## Facades and their collaborators
 
-Two classes are still multi-concern. Both were analysed against their actual members; the split
-below is the plan, not an aspiration. **Their public API must not change** — `app/` reaches them
+Two former god classes are now facades. **Their public API did not change** — `app/` reaches them
 through `globalAppGraph`, and `yakuyomi-stub/` mirrors the same surface for the `nomtl` flavor, so
-every current public member has to stay reachable from the original class (delegate to the new one).
+every public member stays on the original class and delegates. The collaborators are `internal` and
+held `private`, so nothing outside the module can see them; a split must not widen an API.
 
-`MangaTranslatorService` (851 lines, 10 public / 18 private)
-- `MangaTranslatorFingerprint` — `clientUuid`, `buildFingerprint`, `deviceMemoryBucket`,
-  `screenInfo`, `canvasHash`, `hashString`, and the public `fingerprint()`. Depends only on
-  `prefs` + `context`. Note this fabricates a fixed web-client profile (WebGL, connection, browser
-  capability, touch, orientation, perf strings) so the service sees a browser; it is worth keeping
-  in one obvious place rather than spread through the request path.
-- `MangaTranslatorAuth` — `accessToken`, `refreshToken`, `storeTokens`, `refreshAccessToken`,
-  `browserAuthHeaders`, `ichigoHeaders`, `login`, `signup`, `logout`, `clearAuth`, `isLoggedIn`,
-  `getCurrentUser`.
-- `MangaTranslatorService` keeps `baseUrl`, `isPrivateHost`, the `allowedTargetLangs` /
-  `allowedModels` allowlists with their sanitisers, and the translation path (`translateImage`,
-  `sanitizeTranslations`, `translateImageToWebP`, `renderTranslationsToWebP`, `splitToLines`).
+`MangaTranslatorService` (466 lines, 10 public) — Ichigo image translation
+- `MangaTranslatorFingerprint` — `clientUuid`, `fingerprint`, `buildFingerprint`,
+  `deviceMemoryBucket`, `screenInfo`, `canvasHash`, `hashString`. Depends on `prefs` + `context`.
+  It fabricates a **fixed** web-client profile (WebGL, connection, browser capability, touch,
+  orientation, perf) so the service sees a browser. The strings are fixed on purpose — consistency
+  matters more than describing the real device — so a partial edit here changes the identity the
+  account was registered with.
+- `MangaTranslatorAuth` — token storage, `refreshAccessToken`, `login`, `signup`, `logout`,
+  `clearAuth`, `isLoggedIn`, `getCurrentUser`, and the two header builders. Takes `baseUrl` and the
+  retry helper as lambdas: it posts to `baseUrl()/auth/*`, and the retry helper must reach the
+  stored token, which is the whole point of retrying with a refreshed one.
+- The service keeps `baseUrl` / `isPrivateHost`, the `allowedTargetLangs` / `allowedModels`
+  allowlists and their sanitisers, the translation path, and `executeWithAuthRetry`.
 
-`LocalLlmManager` (441 lines, 21 public / 8 private)
-- `ImportedGgufModels` — `importedModels`, `customModelFor`, `sanitizeGgufName`, `fileHashPrefix`,
-  `uniquifyGgufName`, `displayName`, `importGguf`.
-- `LocalLlmSampling` — `samplingOverrides`, `persistSampling`, `samplingFor`, `setSampling`,
-  `resetSampling`.
-- `LocalLlmSession` — `start`, `stop`, `backendFor`, `activeBackendType`, `isRunning`, `closeAll`,
-  `generate`.
-- `LocalLlmManager` stays the facade over the above, keeping `isLocalProvider`, `modelById`,
-  `resolveModel`, `isModelReady`, `status`, `startDownload`, `cancelDownload`, `clearModel`,
-  `isRuntimeAvailable`, `accelerator`.
+`LocalLlmManager` (141 lines, 24 public) — on-device GGUF provider
+- `ImportedGgufModels` — the custom-model directory, `importGguf`, and its file mechanics. An
+  import stages into a `.tmp` and drops it on **any** failure: a partial file is invisible to
+  `importedModels` (which lists only `.gguf`) yet still counts against the storage check that gates
+  the next import, so a leak strands the user with no way to see or clear it.
+- `LocalLlmSampling` — the per-model override map, stored as one JSON blob under a single pref.
+- `LocalLlmSession` — the llama.cpp backend, its mutex, and running/loading state. Takes
+  `resolveModel` as a lambda rather than resolving for itself.
+- The manager keeps model *selection* (`resolveModel`, `modelById`, `isModelReady`,
+  `isLocalProvider`) because it is the one decision all three read from, plus the download
+  passthroughs. The public `running` / `loading` / `importing` are typed `StateFlow<Boolean>`, not the
+  collaborators' own types.
 
 `OrtUpscaleSession` (301), `ModelManager` (405) and `LocalLlmDownloadManager` (333) were checked and
 are each already single-concern; do not split them for line count alone.
@@ -116,6 +119,7 @@ are each already single-concern; do not split them for line count alone.
 | `YakuyomiTranslator` | Cloud LLM (openrouter/gemini/opencode_zen/nvidia_nim/custom_openai) |
 | `GeminiNanoTranslator` | On-device ML Kit GenAI (`genai-prompt:1.0.0-beta4`); priority LLM when AVAILABLE |
 | `LocalLlmManager` / `LocalLlmTranslator` / `LlamaCppLlmBackend` | Local GGUF via llama.cpp; per-model sampling overrides |
+| `MangaTranslatorService` / `MangaTranslatorAuth` / `MangaTranslatorFingerprint` | Ichigo image translation; facade over session + device identity |
 | `LocalLlmAccelerator` | Probes whether `gpuLayers` can actually offload (GPU backend built in? Vulkan compute?) |
 | `LocalLlmDownloadManager` | Resumable GGUF+mmproj downloads (Range resume, throttled emits) |
 | `ModelManager` | Downloads detector/OCR/inpainter models |
