@@ -49,6 +49,12 @@ object TranslationErrorMapper {
                 "Too many pages queued — retry the chapter"
             "image too large" in lower ->
                 "Page image too large (>30MB) — compressed or skipped"
+            "too small" in lower || "corrupted" in lower ->
+                "Page image is too small or corrupted — skipping page"
+            "invalid image dimensions" in lower ->
+                "Page image dimensions are not supported — skipping page"
+            "decode image" in lower ->
+                "Page image could not be decoded — skipping page"
             else -> "Translation failed: $raw"
         }
     }

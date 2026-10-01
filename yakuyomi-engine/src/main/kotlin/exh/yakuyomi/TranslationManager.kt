@@ -29,14 +29,13 @@ import tachiyomi.core.common.preference.PreferenceStore
 @Inject
 class TranslationManager(
     private val prefs: TranslationPreferences,
-    private val cache: TranslationCache,
+    private val pageCache: PageResultCache,
     private val engine: YakuyomiEngine,
     private val notes: BreadcrumbNotes,
     private val client: OkHttpClient,
     private val perMangaStore: TranslateMangaStore,
     private val preferenceStore: PreferenceStore,
     private val status: TranslationStatus,
-    private val pageStore: TranslatedPageStore,
     // KMK -->
     private val geminiNano: GeminiNanoTranslator,
     private val localLlm: LocalLlmManager,
@@ -318,20 +317,15 @@ class TranslationManager(
         val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
         val promptFingerprint = prefs.promptFingerprint()
-        if (prefs.saveTranslatedPages().get() || prefs.mangaTranslatorCachePermanent().get()) {
-            pageStore.loadIfExists(mangaId, chapterId, pageIndex, promptFingerprint)?.let { bytes ->
-                if (bytes.isNotEmpty()) return@withContext bytes
-            }
-        }
-        if (prefs.cacheEnabled().get()) {
-            val pageHash = cache.pageHash(imageBytes)
-            cache.getIfExists(pageHash, targetLang, model, promptFingerprint)?.let { f ->
-                try {
-                    val bytes = f.readBytes()
-                    if (bytes.isNotEmpty()) return@withContext bytes
-                } catch (_: Exception) {}
-            }
-        }
+        pageCache.lookup(
+            mangaId = mangaId,
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            imageBytes = imageBytes,
+            targetLang = targetLang,
+            model = model,
+            promptFingerprint = promptFingerprint,
+        )?.let { return@withContext it.bytes }
         null
     }
 
@@ -353,38 +347,28 @@ class TranslationManager(
         val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
         val promptFingerprint = prefs.promptFingerprint()
-        val cacheEnabled = prefs.cacheEnabled().get()
-
-        if (prefs.saveTranslatedPages().get() || prefs.mangaTranslatorCachePermanent().get()) {
-            pageStore.loadIfExists(mangaId, chapterId, pageIndex, promptFingerprint)?.let { bytes ->
-                if (bytes.isNotEmpty()) {
-                    status.pageCached(mangaId, chapterId, pageIndex)
-                    return@withContext bytes
-                }
+        pageCache.lookup(
+            mangaId = mangaId,
+            chapterId = chapterId,
+            pageIndex = pageIndex,
+            imageBytes = imageBytes,
+            targetLang = targetLang,
+            model = model,
+            promptFingerprint = promptFingerprint,
+        )?.let { hit ->
+            // A content-hash hit is copied into the saved-page store so the next visit finds it there.
+            if (hit.source == PageCacheSource.CONTENT_HASH && pageCache.autoPersistEnabled) {
+                pageCache.storePage(
+                    mangaId = mangaId,
+                    chapterId = chapterId,
+                    pageIndex = pageIndex,
+                    webp = hit.bytes,
+                    mangaTitle = mangaTitleFor(mangaId),
+                    promptFingerprint = promptFingerprint,
+                )
             }
-        }
-
-        val pageHash = cache.pageHash(imageBytes)
-        if (cacheEnabled) {
-            cache.getIfExists(pageHash, targetLang, model, promptFingerprint)?.let { f ->
-                try {
-                    val bytes = f.readBytes()
-                    if (bytes.isNotEmpty()) {
-                        if ((prefs.saveTranslatedPages().get() && prefs.autoSaveWhileReading().get()) || prefs.mangaTranslatorCachePermanent().get()) {
-                            pageStore.save(
-                                mangaId,
-                                chapterId,
-                                pageIndex,
-                                bytes,
-                                mangaTitleFor(mangaId),
-                                promptFingerprint,
-                            )
-                        }
-                        status.pageCached(mangaId, chapterId, pageIndex)
-                        return@withContext bytes
-                    }
-                } catch (_: Exception) {}
-            }
+            status.pageCached(mangaId, chapterId, pageIndex)
+            return@withContext hit.bytes
         }
 
         val key = mangaId to chapterId
@@ -394,12 +378,8 @@ class TranslationManager(
             queue.remove(oldest)?.deferred?.complete(null)
             xLogE("MTL queue overflow: dropped page $oldest for chapter ${key.second} (queue size ${queue.size})")
         }
-        if (imageBytes.size > 30 * 1024 * 1024) {
-            status.pageError(mangaId, chapterId, pageIndex, friendlyError("Image too large"))
-            return@withContext null
-        }
-        if (imageBytes.size < 1024) {
-            status.pageError(mangaId, chapterId, pageIndex, friendlyError("Image too small or corrupted"))
+        PageImageValidator.sizeRejection(imageBytes)?.let { reason ->
+            status.pageError(mangaId, chapterId, pageIndex, friendlyError(reason))
             return@withContext null
         }
         val deferred = CompletableDeferred<ByteArray?>()
@@ -429,8 +409,6 @@ class TranslationManager(
     ): ByteArray? {
         val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
-        val cacheEnabled = prefs.cacheEnabled().get()
-        val pageHash = cache.pageHash(imageBytes)
         val promptPolicy = prefs.promptPolicy()
         val promptFingerprint = promptPolicy.fingerprint()
         val glossary = promptPolicy.glossary
@@ -456,16 +434,10 @@ class TranslationManager(
             try {
                 val webp = mangaTranslator.translateImageToWebP(imageBytes, targetLang, prefs.effectiveModel().takeIf { it.isNotBlank() })
                 if (webp != null && webp.isNotEmpty()) {
-                    if (cacheEnabled) {
-                        try {
-                            cache.put(pageHash, targetLang, model, webp, promptFingerprint)
-                        } catch (_: Exception) {}
+                    pageCache.store(imageBytes, targetLang, model, webp, promptFingerprint)
+                    if (pageCache.persistEnabled) {
+                        pageCache.storePage(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint)
                     }
-                    try {
-                        if (prefs.mangaTranslatorCachePermanent().get() || prefs.saveTranslatedPages().get()) {
-                            pageStore.save(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint)
-                        }
-                    } catch (_: Exception) {}
                     try {
                         notes.appendFromTranslation(mangaId, chapterId, listOf("[mangatranslator]"))
                     } catch (_: Exception) {}
@@ -488,41 +460,16 @@ class TranslationManager(
 
         var bitmap: Bitmap? = null
         return try {
-            if (imageBytes.size < 1024 || imageBytes.size > 30 * 1024 * 1024) {
-                status.pageError(mangaId, chapterId, pageIndex, "Invalid image size ${imageBytes.size}")
+            val imageCheck = PageImageValidator.check(imageBytes, prefs.longPageSlicingEnabled().get())
+            if (imageCheck is PageImageCheck.Rejected) {
+                status.pageError(mangaId, chapterId, pageIndex, friendlyError(imageCheck.reason))
                 return null
             }
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            try {
-                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, bounds)
-            } catch (e: Exception) {
-                status.pageError(mangaId, chapterId, pageIndex, "Unable to decode image bounds")
-                return null
+            val sampleOpts = if (imageCheck.sampleSize > 1) {
+                BitmapFactory.Options().apply { inSampleSize = imageCheck.sampleSize }
+            } else {
+                null
             }
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                status.pageError(mangaId, chapterId, pageIndex, "Invalid image dimensions ${bounds.outWidth}x${bounds.outHeight}")
-                return null
-            }
-            val pixelCount = bounds.outWidth.toLong() * bounds.outHeight.toLong()
-            // KMK -->
-            val tallFullRes = prefs.longPageSlicingEnabled().get() &&
-                LongPageSlicer.shouldSlice(bounds.outWidth, bounds.outHeight) &&
-                pixelCount in 1..36_000_000L
-            // KMK <--
-            val widthOk = bounds.outWidth in 1..10000
-            val heightOk = bounds.outHeight in 1..if (tallFullRes) 30000 else 10000
-            if (!widthOk || !heightOk) {
-                status.pageError(mangaId, chapterId, pageIndex, "Invalid image dimensions ${bounds.outWidth}x${bounds.outHeight}")
-                return null
-            }
-            val maxDim = maxOf(bounds.outWidth, bounds.outHeight)
-            val sampleSize = when {
-                tallFullRes -> 1
-                maxDim > 6000 -> 4
-                maxDim > 4096 -> 2
-                else -> 1
-            }
-            val sampleOpts = if (sampleSize > 1) BitmapFactory.Options().apply { inSampleSize = sampleSize } else null
             val decoded = try {
                 BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, sampleOpts)
             } catch (e: OutOfMemoryError) {
@@ -530,11 +477,11 @@ class TranslationManager(
                 status.pageError(mangaId, chapterId, pageIndex, friendlyError("not enough memory"))
                 return null
             } catch (e: Exception) {
-                status.pageError(mangaId, chapterId, pageIndex, "Unable to decode image")
+                status.pageError(mangaId, chapterId, pageIndex, friendlyError("Unable to decode image"))
                 return null
             }
             if (decoded == null || decoded.isRecycled) {
-                status.pageError(mangaId, chapterId, pageIndex, "Unable to decode image")
+                status.pageError(mangaId, chapterId, pageIndex, friendlyError("Unable to decode image"))
                 return null
             }
             bitmap = decoded
@@ -625,11 +572,9 @@ class TranslationManager(
                 is PageResult.Translated -> {
                     val webp = PageImageEncoder.toWebp(result.page, quality = 85)
                     runCatching { result.page.recycle() }
-                    if (cacheEnabled) {
-                        cache.put(pageHash, targetLang, model, webp, promptFingerprint)
-                    }
-                    if (prefs.saveTranslatedPages().get() && prefs.autoSaveWhileReading().get()) {
-                        pageStore.save(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint)
+                    pageCache.store(imageBytes, targetLang, model, webp, promptFingerprint)
+                    if (pageCache.persistWhileReadingEnabled) {
+                        pageCache.storePage(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint)
                     }
                     val translatedTexts = result.analysis?.regions?.map { it.translatedText } ?: emptyList()
                     try {
