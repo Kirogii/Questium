@@ -104,6 +104,7 @@ import tachiyomi.domain.chapter.interactor.GetBookmarkedChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.service.isChapterBlacklisted
 import tachiyomi.domain.history.interactor.GetNextChapters
 import tachiyomi.domain.library.model.LibraryDisplayMode
 import tachiyomi.domain.library.model.LibraryGroup
@@ -959,6 +960,11 @@ class LibraryScreenModel(
         }
             // KMK -->
             .let { chapters ->
+                // KMK --> Blacklisting is a reading preference, not part of smart merge. It used to
+                // be applied only inside applyScanlatorPriority, so turning that setting off
+                // silently un-hid every blacklisted chapter here.
+                // KMK <--
+                val visible = chapters.filterNot { isChapterBlacklisted(it, manga.blacklistedChapters) }
                 if (
                     libraryPreferences.smartScanlatorMerge().get() &&
                     (
@@ -967,13 +973,13 @@ class LibraryScreenModel(
                             manga.scanlatorRangeRules.isNotEmpty()
                         )
                 ) {
-                    chapters.applyScanlatorPriority(
+                    visible.applyScanlatorPriority(
                         manga.scanlatorPriority,
                         manga.blacklistedChapters.toSet(),
                         manga.scanlatorRangeRules,
                     )
                 } else {
-                    chapters
+                    visible
                 }
             }
             // KMK <--
