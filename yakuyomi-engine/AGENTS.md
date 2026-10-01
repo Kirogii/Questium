@@ -64,6 +64,40 @@ compile error rather than a stale cache key.
 **A new page-level rule** (limit, sample size, encoding) belongs in `PageImageValidator` or
 `PageImageEncoder`, not inline in the manager.
 
+## Known remaining structural work
+
+Two classes are still multi-concern. Both were analysed against their actual members; the split
+below is the plan, not an aspiration. **Their public API must not change** — `app/` reaches them
+through `globalAppGraph`, and `yakuyomi-stub/` mirrors the same surface for the `nomtl` flavor, so
+every current public member has to stay reachable from the original class (delegate to the new one).
+
+`MangaTranslatorService` (851 lines, 10 public / 18 private)
+- `MangaTranslatorFingerprint` — `clientUuid`, `buildFingerprint`, `deviceMemoryBucket`,
+  `screenInfo`, `canvasHash`, `hashString`, and the public `fingerprint()`. Depends only on
+  `prefs` + `context`. Note this fabricates a fixed web-client profile (WebGL, connection, browser
+  capability, touch, orientation, perf strings) so the service sees a browser; it is worth keeping
+  in one obvious place rather than spread through the request path.
+- `MangaTranslatorAuth` — `accessToken`, `refreshToken`, `storeTokens`, `refreshAccessToken`,
+  `browserAuthHeaders`, `ichigoHeaders`, `login`, `signup`, `logout`, `clearAuth`, `isLoggedIn`,
+  `getCurrentUser`.
+- `MangaTranslatorService` keeps `baseUrl`, `isPrivateHost`, the `allowedTargetLangs` /
+  `allowedModels` allowlists with their sanitisers, and the translation path (`translateImage`,
+  `sanitizeTranslations`, `translateImageToWebP`, `renderTranslationsToWebP`, `splitToLines`).
+
+`LocalLlmManager` (441 lines, 21 public / 8 private)
+- `ImportedGgufModels` — `importedModels`, `customModelFor`, `sanitizeGgufName`, `fileHashPrefix`,
+  `uniquifyGgufName`, `displayName`, `importGguf`.
+- `LocalLlmSampling` — `samplingOverrides`, `persistSampling`, `samplingFor`, `setSampling`,
+  `resetSampling`.
+- `LocalLlmSession` — `start`, `stop`, `backendFor`, `activeBackendType`, `isRunning`, `closeAll`,
+  `generate`.
+- `LocalLlmManager` stays the facade over the above, keeping `isLocalProvider`, `modelById`,
+  `resolveModel`, `isModelReady`, `status`, `startDownload`, `cancelDownload`, `clearModel`,
+  `isRuntimeAvailable`, `accelerator`.
+
+`OrtUpscaleSession` (301), `ModelManager` (405) and `LocalLlmDownloadManager` (333) were checked and
+are each already single-concern; do not split them for line count alone.
+
 ## Key classes
 
 | Class | Role |
