@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
-import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.launchIn
@@ -25,6 +24,7 @@ import li.joye.yakuyomi.engine.PipelineErrorCode
 import li.joye.yakuyomi.engine.Translator
 import mihon.core.concurrency.AppDispatchersHolder
 import tachiyomi.core.common.util.system.logcat
+import java.io.File
 
 /**
  * Owns the native detector / OCR / inpainter sessions and runs the library pipeline per page.

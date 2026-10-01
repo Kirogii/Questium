@@ -69,7 +69,7 @@ object PageImageValidator {
         val width = bounds.outWidth
         val height = bounds.outHeight
         if (width <= 0 || height <= 0) {
-            return PageImageCheck.Rejected("Invalid image dimensions ${width}x${height}")
+            return PageImageCheck.Rejected("Invalid image dimensions ${width}x$height")
         }
 
         val pixelCount = width.toLong() * height.toLong()
