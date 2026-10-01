@@ -7,20 +7,23 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import exh.log.xLogD
 import exh.log.xLogE
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentSkipListMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import li.joye.yakuyomi.engine.PageResult
+import li.joye.yakuyomi.engine.Translator
 import mihon.core.concurrency.AppDispatchersHolder
 import okhttp3.OkHttpClient
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.core.common.preference.PreferenceStore
-import java.io.ByteArrayOutputStream
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ConcurrentSkipListMap
 
 @SingleIn(AppScope::class)
 @Inject
@@ -55,7 +58,7 @@ class TranslationManager(
 
     private val workerScope = CoroutineScope(SupervisorJob() + AppDispatchersHolder.get().io)
     private val pending = ConcurrentHashMap<Pair<Long, Long>, ConcurrentSkipListMap<Int, PendingTranslation>>()
-    private val workers = ConcurrentHashMap<Pair<Long, Long>, kotlinx.coroutines.Job>()
+    private val workers = ConcurrentHashMap<Pair<Long, Long>, Job>()
 
     private companion object {
         const val MAX_PENDING_PER_CHAPTER = 64
@@ -418,15 +421,15 @@ class TranslationManager(
         val queue = pending.computeIfAbsent(key) { ConcurrentSkipListMap() }
         if (queue.size >= MAX_PENDING_PER_CHAPTER) {
             val oldest = queue.firstKey()
-            queue.remove(oldest)?.deferred?.completeExceptionally(CancellationException("queue overflow"))
-            xLogE("queue overflowevicted $oldest for $key size=${queue.size}")
+            queue.remove(oldest)?.deferred?.complete(null)
+            xLogE("MTL queue overflow: dropped page $oldest for chapter ${key.second} (queue size ${queue.size})")
         }
         if (imageBytes.size > 30 * 1024 * 1024) {
             status.pageError(mangaId, chapterId, pageIndex, friendlyError("Image too large"))
             return@withContext null
         }
         if (imageBytes.size < 1024) {
-            status.pageError(mangaId, chapterId, pageIndex, friendlyError("Image too small/c Corrupted"))
+            status.pageError(mangaId, chapterId, pageIndex, friendlyError("Image too small or corrupted"))
             return@withContext null
         }
         val deferred = CompletableDeferred<ByteArray?>()
@@ -437,7 +440,7 @@ class TranslationManager(
         prev?.let { if (!it.deferred.isCompleted) it.deferred.cancel() }
         ensureTranslationWorker(key)
         try {
-            kotlinx.coroutines.withTimeout(TRANSLATE_TIMEOUT_MS) { deferred.await() }
+            withTimeout(TRANSLATE_TIMEOUT_MS) { deferred.await() }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -513,7 +516,7 @@ class TranslationManager(
             }
         }
 
-        var bitmap: android.graphics.Bitmap? = null
+        var bitmap: Bitmap? = null
         return try {
             if (imageBytes.size < 1024 || imageBytes.size > 30 * 1024 * 1024) {
                 status.pageError(mangaId, chapterId, pageIndex, "Invalid image size ${imageBytes.size}")
@@ -573,16 +576,17 @@ class TranslationManager(
             // overlapping slices, and each provider must see its own slice (vision context and
             // JPEG bytes are generated per slice, never from the whole page).
             val useGeminiNano = prefs.geminiNanoEnabled().get() && geminiNano.isAvailable()
-            val translatorFactory: suspend (Bitmap) -> li.joye.yakuyomi.engine.Translator = { sliceBitmap ->
+            val translatorFactory: suspend (Bitmap) -> Translator = { sliceBitmap ->
                 when {
                     useGeminiNano -> {
-                        object : li.joye.yakuyomi.engine.Translator {
-                            override suspend fun translate(queries: List<String>): List<String> {
-                                val result = geminiNano.translate(queries, sliceBitmap, sourceLangHint)
-                                if (result != null) return result
-                                if (prefs.offlineFallback().get()) return queries.map { it.trim() }
-                                throw TranslationException("Gemini Nano unavailable on this device — enable a cloud provider in Settings → Translation")
-                            }
+                        object : Translator {
+                            override suspend fun translate(queries: List<String>): List<String> =
+                                geminiNano.translate(
+                                    queries = queries,
+                                    pageBitmap = sliceBitmap,
+                                    sourceLang = sourceLangHint,
+                                    offlineFallback = prefs.offlineFallback().get(),
+                                )
                         }
                     }
                     localLlm.isLocalProvider() -> {
@@ -599,22 +603,9 @@ class TranslationManager(
                         )
                     }
                     else -> {
-                        val jpegBytes = runCatching {
-                            if (sliceBitmap.width * sliceBitmap.height > 2_000_000) {
-                                val scale = kotlin.math.sqrt(2_000_000.0 / (sliceBitmap.width * sliceBitmap.height)).toFloat()
-                                val nw = (sliceBitmap.width * scale).toInt().coerceAtLeast(512)
-                                val nh = (sliceBitmap.height * scale).toInt().coerceAtLeast(512)
-                                val scaled = android.graphics.Bitmap.createScaledBitmap(sliceBitmap, nw, nh, true)
-                                val out = java.io.ByteArrayOutputStream()
-                                scaled.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                                scaled.recycle()
-                                out.toByteArray()
-                            } else {
-                                val out = java.io.ByteArrayOutputStream()
-                                sliceBitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
-                                out.toByteArray()
-                            }
-                        }.getOrNull()?.takeIf { it.size in 1..3_000_000 }
+                        val jpegBytes = runCatching { PageImageEncoder.toJpeg(sliceBitmap) }
+                            .getOrNull()
+                            ?.takeIf { it.size in 1..3_000_000 }
                         YakuyomiTranslator(
                             apiKey = prefs.effectiveApiKey(),
                             sourceLang = sourceLangHint,
@@ -647,8 +638,8 @@ class TranslationManager(
             }
             // KMK <--
             val result = try {
-                kotlinx.coroutines.withTimeout(pageTimeoutMs) { engine.translatePage(currentBitmap, translatorFactory, targetLang) }
-            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                withTimeout(pageTimeoutMs) { engine.translatePage(currentBitmap, translatorFactory, targetLang) }
+            } catch (e: TimeoutCancellationException) {
                 status.pageError(mangaId, chapterId, pageIndex, friendlyError("Translation timed out"))
                 runCatching { currentBitmap.recycle() }
                 bitmap = null
@@ -658,7 +649,7 @@ class TranslationManager(
             bitmap = null
             when (result) {
                 is PageResult.Translated -> {
-                    val webp = engine.bitmapToWebP(result.page, quality = 85)
+                    val webp = PageImageEncoder.toWebp(result.page, quality = 85)
                     runCatching { result.page.recycle() }
                     if (cacheEnabled) {
                         cache.put(pageHash, targetLang, model, webp, promptFingerprint)
@@ -689,11 +680,5 @@ class TranslationManager(
             status.pageError(mangaId, chapterId, pageIndex, friendlyError(e.message ?: "Unknown translation error"))
             null
         }
-    }
-
-    fun bitmapToWebP(bitmap: Bitmap): ByteArray {
-        val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 85, out)
-        return out.toByteArray()
     }
 }

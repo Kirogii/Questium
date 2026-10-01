@@ -11,6 +11,7 @@ import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.generateContentRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -137,70 +138,85 @@ class GeminiNanoTranslator(
         }
     }
 
-    suspend fun translate(queries: List<String>, pageBitmap: Bitmap?, sourceLang: String): List<String>? =
-        withContext(AppDispatchersHolder.get().default) {
-            if (queries.isEmpty()) return@withContext emptyList()
-            if (refreshStatus() != FeatureStatus.AVAILABLE) return@withContext null
-            val m = model ?: return@withContext null
-            try {
-                val capped = queries.map { it.take(500) }.take(30)
-                if (pageBitmap != null && (pageBitmap.isRecycled || pageBitmap.width < 16 || pageBitmap.height < 16)) {
-                    logcat { "Gemini Nano: invalid bitmap passed" }
-                    return@withContext null
-                }
-                val imagePrompt = if (pageBitmap != null) {
-                    "The attached image is the manga page being processed. Use it for context (speakers, layout, onomatopoeia) but do not invent text. "
-                } else {
-                    ""
-                }
-                val prompt = buildPrompt(capped, imagePrompt, sourceLang)
-                val request = if (pageBitmap != null) {
-                    generateContentRequest(ImagePart(pageBitmap), TextPart(prompt)) {
-                        temperature = 0.3f
-                        maxOutputTokens = 2048
-                    }
-                } else {
-                    generateContentRequest(TextPart(prompt)) {
-                        temperature = 0.3f
-                        maxOutputTokens = 2048
-                    }
-                }
-                val text = m.generateContent(request)
-                    .candidates.firstOrNull()?.text?.takeIf { it.isNotBlank() }
-                if (text == null) return@withContext null
-                val parsed = parseTranslationLines(text) ?: return@withContext null
-                alignTranslationLines(parsed, capped)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: GenAiException) {
-                logcat { "Gemini Nano generate failed: ${e.message}" }
-                null
-            } catch (e: Exception) {
-                logcat { "Gemini Nano translate failed: ${e.message}" }
-                null
-            }
+    /**
+     * Translates [queries] with Gemini Nano, applying the shared line protocol.
+     *
+     * Throws [TranslationException] when the device cannot serve the request and
+     * [offlineFallback] is off, so the page is marked FAILED (retryable) rather than silently
+     * skipped — the same contract the cloud and local backends honour.
+     */
+    suspend fun translate(
+        queries: List<String>,
+        pageBitmap: Bitmap?,
+        sourceLang: String,
+        offlineFallback: Boolean,
+    ): List<String> = withContext(AppDispatchersHolder.get().default) {
+        if (queries.isEmpty()) return@withContext emptyList()
+
+        val capped = queries.map { it.take(500) }.take(30)
+        val invalidBitmap = pageBitmap != null &&
+            (pageBitmap.isRecycled || pageBitmap.width < 16 || pageBitmap.height < 16)
+        if (invalidBitmap) {
+            logcat { "Gemini Nano: invalid bitmap passed" }
+            if (offlineFallback) return@withContext capped.map { it.trim() }
+            throw TranslationException("Gemini Nano was given an unusable page image")
+        }
+        val unavailable = refreshStatus() != FeatureStatus.AVAILABLE || model == null
+
+        val request = TranslationRequest(
+            lines = capped,
+            sourceLang = sourceLang,
+            targetLang = prefs.targetLang().get().ifBlank { "en" },
+            policy = prefs.promptPolicy(),
+            imageContext = if (pageBitmap != null) {
+                "The attached image is the manga page being processed. Use it for context " +
+                    "(speakers, layout, onomatopoeia) but do not invent text. "
+            } else {
+                ""
+            },
+        )
+
+        val outcome: List<String>? = if (unavailable) {
+            null
+        } else {
+            TextTranslationProtocol.run(
+                request = request,
+                offlineFallback = true,
+                failureMessage = "Gemini Nano returned no usable translation",
+            ) { prompt -> generateRaw(model!!, prompt, pageBitmap) }
         }
 
-    private fun buildPrompt(queries: List<String>, imageContext: String, sourceLang: String): String {
-        val targetLang = prefs.targetLang().get().ifBlank { "en" }.take(20)
-        val isEnFix = sourceLang.equals("EN", true) && targetLang.equals("EN", true)
-        val policy = prefs.promptPolicy()
-        return buildTranslationPrompt(
-            texts = queries,
-            sourceLang = sourceLang,
-            targetLang = targetLang,
-            breadcrumb = "",
-            isEnFix = isEnFix,
-            mangaContext = "",
-            glossary = policy.glossary,
-            policy = policy,
-            imageContext = imageContext,
-        )
+        when {
+            outcome != null -> outcome
+            offlineFallback -> request.originalLines()
+            unavailable -> throw TranslationException(
+                "Gemini Nano is unavailable on this device — enable a cloud provider in Settings → Translation",
+            )
+            else -> throw TranslationException("Gemini Nano returned no usable translation")
+        }
+    }
+
+    /** Issues the ML Kit request and returns the candidate text, or null on failure. */
+    private suspend fun generateRaw(
+        m: GenerativeModel,
+        prompt: String,
+        pageBitmap: Bitmap?,
+    ): String? {
+        val request = if (pageBitmap != null) {
+            generateContentRequest(ImagePart(pageBitmap), TextPart(prompt)) {
+                temperature = 0.3f
+                maxOutputTokens = 2048
+            }
+        } else {
+            generateContentRequest(TextPart(prompt)) {
+                temperature = 0.3f
+                maxOutputTokens = 2048
+            }
+        }
+        return m.generateContent(request).candidates.firstOrNull()?.text?.takeIf { it.isNotBlank() }
     }
 
     fun close() {
-        try {
-            scope.launch { }
-        } catch (_: Exception) {}
+        scope.cancel()
     }
 }

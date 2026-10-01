@@ -402,10 +402,3 @@ class YakuyomiTranslator(
         }
     }
 }
-
-/**
- * Raised when the LLM provider cannot complete a translation request (missing API key, HTTP
- * error, unparseable/empty response). The library pipeline converts this into a FAILED page
- * so it can be retried instead of being permanently marked SKIPPED.
- */
-class TranslationException(message: String, cause: Throwable? = null) : Exception(message, cause)
