@@ -75,6 +75,7 @@ import eu.kanade.tachiyomi.ui.manga.RelatedManga.Companion.sorted
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.applyScanlatorPriority
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
+import eu.kanade.tachiyomi.util.chapter.isChapterBlacklisted
 import eu.kanade.tachiyomi.util.chapter.scanlatorBlacklistKey
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.getBitmapOrNull
@@ -429,7 +430,7 @@ class MangaScreenModel(
                             // Blacklisted chapters never appear, regardless of the smart-merge toggle.
                             if (manga.blacklistedChapters.isNotEmpty()) {
                                 val blacklist = manga.blacklistedChapters.toSet()
-                                list.filter { scanlatorBlacklistKey(it.chapterNumber, it.scanlator) !in blacklist }
+                                list.filterNot { isChapterBlacklisted(it, blacklist) }
                             } else {
                                 list
                             }

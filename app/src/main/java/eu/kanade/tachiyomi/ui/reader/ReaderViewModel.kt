@@ -61,8 +61,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.tachiyomi.util.chapter.filterDownloaded
+import eu.kanade.tachiyomi.util.chapter.isChapterBlacklisted
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
-import eu.kanade.tachiyomi.util.chapter.scanlatorBlacklistKey
 import eu.kanade.tachiyomi.util.editCover
 import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.storage.DiskUtil
@@ -347,7 +347,7 @@ class ReaderViewModel(
         // Keep the currently opened chapter so an in-progress read never crashes.
         val blacklist = manga.blacklistedChapters.toSet()
         val visibleChapters = if (blacklist.isNotEmpty()) {
-            chapters.filter { scanlatorBlacklistKey(it.chapterNumber, it.scanlator) !in blacklist || it.id == chapterId }
+            chapters.filter { !isChapterBlacklisted(it, blacklist) || it.id == chapterId }
         } else {
             chapters
         }

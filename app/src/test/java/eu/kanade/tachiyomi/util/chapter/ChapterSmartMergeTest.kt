@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.util.chapter
 
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
@@ -127,5 +128,35 @@ class ChapterSmartMergeTest {
         parseScanlatorRangeRule("nonsense") shouldBe null
         parseScanlatorRangeRule("a:b:c") shouldBe null
         parseScanlatorRangeRule("10:5:GroupA") shouldBe null
+    }
+
+    @Test
+    fun `blacklist key ignores surrounding whitespace in the scanlator name`() {
+        scanlatorBlacklistKey(1.0, "  Scans  ") shouldBe scanlatorBlacklistKey(1.0, "Scans")
+    }
+
+    @Test
+    fun `blacklist key caps an unbounded scanlator name`() {
+        val key = scanlatorBlacklistKey(1.0, "x".repeat(5_000))
+        key.length shouldBe ("1.0@" + "x".repeat(64)).length
+    }
+
+    @Test
+    fun `blacklist key is case sensitive so stored entries keep matching`() {
+        scanlatorBlacklistKey(1.0, "Group") shouldNotBe scanlatorBlacklistKey(1.0, "group")
+    }
+
+    @Test
+    fun `isChapterBlacklisted matches on the generated key`() {
+        val ch = Chapter.create().copy(id = 1, mangaId = 1, chapterNumber = 3.0, scanlator = "Scans")
+        isChapterBlacklisted(ch, listOf(scanlatorBlacklistKey(3.0, "Scans"))) shouldBe true
+        isChapterBlacklisted(ch, listOf(scanlatorBlacklistKey(3.0, "Other"))) shouldBe false
+        isChapterBlacklisted(ch, emptyList()) shouldBe false
+    }
+
+    @Test
+    fun `isChapterBlacklisted tolerates stray whitespace from the source`() {
+        val ch = Chapter.create().copy(id = 1, mangaId = 1, chapterNumber = 3.0, scanlator = " Scans ")
+        isChapterBlacklisted(ch, listOf(scanlatorBlacklistKey(3.0, "Scans"))) shouldBe true
     }
 }
