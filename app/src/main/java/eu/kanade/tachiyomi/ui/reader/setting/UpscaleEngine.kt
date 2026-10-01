@@ -71,6 +71,14 @@ class UpscaleEngine(
 
     fun isAvailable(): Boolean = if (prefs.isSimpleMode()) true else backendDetector.isAvailable()
 
+    /**
+     * Whether [mangaId] would actually be upscaled. Cheap pref reads only - no byte
+     * inspection, no session setup - so the reader can use it to skip capturing a
+     * page's encoded bytes when upscaling cannot apply.
+     */
+    fun isEnabledForManga(mangaId: Long): Boolean =
+        mangaId > 0 && prefs.isEnabledForManga(mangaId)
+
     fun effectiveBackend(): UpscalePreferences.Backend = backendDetector.effectiveBackend(prefs.effectiveBackend())
 
     fun effectiveBackendFor(family: String, factor: Float): UpscalePreferences.Backend =

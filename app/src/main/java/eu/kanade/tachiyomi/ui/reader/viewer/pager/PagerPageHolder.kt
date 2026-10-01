@@ -179,35 +179,35 @@ class PagerPageHolder(
         val streamFn2 = extraPage?.stream
 
         // KMK -->
-        // Capture the original encoded bytes (single page only) for MTL translation,
-        // reusing the same factory the decode path calls below.
-        val translationBytes: ByteArray? = if (extraPage == null) {
-            try {
-                streamFn().use { it.readBytes() }
-            } catch (_: Exception) {
-                null
-            }
-        } else {
-            null
-        }
-        // KMK <--
-
-        // KMK -->
-        // Display-time upscale of the original bytes (translation below keeps the
-        // originals). Null falls back to the untouched stream.
-        val displayBytes: ByteArray? = translationBytes?.let { bytes ->
-            UpscaleReaderHook.upscaleDisplayBytes(page.chapter.chapter.manga_id, bytes)
-        }
+        // Materialise the encoded page only when MTL or upscaling will consume it. Reading it
+        // copies the whole file, so with both off this stays a single streamed read like upstream
+        // instead of one full-page copy per page scrolled past. The read is also moved inside
+        // withIOContext, since this runs on the holder's MainScope.
+        val mangaId = page.chapter.chapter.manga_id
+        val needsOriginalBytes = extraPage == null && ReaderTranslation.needsOriginalBytes(page)
+        var translationBytes: ByteArray? = null
         // KMK <--
 
         try {
             val (source, isAnimated, background) = withIOContext {
-                val byteSource: okio.BufferedSource =
-                    if (displayBytes != null) {
-                        Buffer().write(displayBytes)
-                    } else {
-                        streamFn().source().buffer()
+                if (needsOriginalBytes) {
+                    translationBytes = try {
+                        streamFn().use { it.readBytes() }
+                    } catch (_: Exception) {
+                        null
                     }
+                }
+                // Display-time upscale of the original bytes (translation below keeps the
+                // originals). Null falls back to the untouched stream.
+                val displayBytes: ByteArray? = translationBytes?.let { bytes ->
+                    UpscaleReaderHook.upscaleDisplayBytes(mangaId, bytes)
+                }
+                // Reuse the captured bytes when we have them, so the source is never read twice.
+                val byteSource: okio.BufferedSource = when {
+                    displayBytes != null -> Buffer().write(displayBytes)
+                    translationBytes != null -> Buffer().write(translationBytes!!)
+                    else -> streamFn().source().buffer()
+                }
                 byteSource.use { source ->
                     // SY -->
                     if (extraPage != null) {

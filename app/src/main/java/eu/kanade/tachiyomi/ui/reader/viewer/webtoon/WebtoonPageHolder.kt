@@ -194,26 +194,32 @@ class WebtoonPageHolder(
 
         val streamFn = page?.stream ?: return
 
-        // KMK -->
-        // Capture original encoded bytes for MTL translation (reused by the decode path below).
-        val translationBytes: ByteArray? = try {
-            streamFn().use { it.readBytes() }
-        } catch (_: Exception) {
-            null
-        }
-        // KMK <--
+        val mangaId = page?.chapter?.chapter?.manga_id
 
         // KMK -->
-        // Display-time upscale of the original bytes (translation below keeps the
-        // originals). Null falls back to the untouched stream.
-        val displayBytes: ByteArray? = translationBytes?.let { bytes ->
-            UpscaleReaderHook.upscaleDisplayBytes(page?.chapter?.chapter?.manga_id, bytes)
-        }
+        // Materialise the encoded page only when MTL or upscaling will consume it, and read it on
+        // IO rather than this holder's MainScope. Reading copies the whole file, so with both off
+        // this stays a single streamed read like upstream.
+        val needsOriginalBytes = page != null && mangaId != null && ReaderTranslation.needsOriginalBytes(page)
+        var translationBytes: ByteArray? = null
         // KMK <--
 
         try {
             val (source, isAnimated) = withIOContext {
-                val input = displayBytes?.inputStream() ?: streamFn()
+                if (needsOriginalBytes) {
+                    translationBytes = try {
+                        streamFn().use { it.readBytes() }
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                // Display-time upscale of the original bytes (translation below keeps the
+                // originals). Null falls back to the untouched stream.
+                val displayBytes: ByteArray? = translationBytes?.let { bytes ->
+                    UpscaleReaderHook.upscaleDisplayBytes(mangaId, bytes)
+                }
+                // Reuse the captured bytes when we have them, so the source is never read twice.
+                val input = (displayBytes ?: translationBytes)?.inputStream() ?: streamFn()
                 val source = input.use { process(Buffer().readFrom(it)) }
                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)
                 Pair(source, isAnimated)

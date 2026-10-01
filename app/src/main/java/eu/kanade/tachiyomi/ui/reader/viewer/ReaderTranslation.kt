@@ -17,6 +17,20 @@ import tachiyomi.core.common.util.lang.withUIContext
 object ReaderTranslation : PageTranslator {
 
     /**
+     * Whether anything on the display path would consume [originalBytes] for [page].
+     *
+     * Callers use this to skip materialising the encoded page when neither MTL nor upscaling
+     * can apply. Reading the page costs a full decode-size copy, so on the default path
+     * (both features off) it is pure waste multiplied by every page scrolled past.
+     */
+    suspend fun needsOriginalBytes(page: ReaderPage): Boolean {
+        val manager = globalAppGraph.translationManager
+        val mangaId = page.chapter.chapter.manga_id ?: 0L
+        if (manager.isEnabled() && !manager.isGated() && manager.isPerMangaEnabled(mangaId)) return true
+        return globalAppGraph.upscaleEngine.isEnabledForManga(mangaId)
+    }
+
+    /**
      * Kicks off translation for [page] if (and only if) translation is enabled globally,
      * not gated, enabled for this manga, and the AI models are installed. On success,
      * [onResult] is invoked on the main thread with the translated WEBP bytes.
