@@ -97,9 +97,11 @@ class MangaTranslatorService(
         "claude-3-haiku", "gemini-2.0-flash", "gemini-1.5-flash", "deepl", "google",
     )
 
-    val fingerprint = MangaTranslatorFingerprint(context, prefs)
+    // private: these expose internal collaborator types, and nothing outside this class reaches
+    // them - the split exists to give each concern one owner, not to widen the service's API.
+    private val fingerprint = MangaTranslatorFingerprint(context, prefs)
 
-    val auth = MangaTranslatorAuth(
+    private val auth = MangaTranslatorAuth(
         prefs = prefs,
         client = client,
         json = json,
