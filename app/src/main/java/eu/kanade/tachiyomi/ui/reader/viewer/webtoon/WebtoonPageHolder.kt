@@ -192,15 +192,18 @@ class WebtoonPageHolder(
     private suspend fun setImage() {
         progressIndicator.setProgress(0)
 
-        val streamFn = page?.stream ?: return
+        // Bound once: `page` is a mutable property, so it cannot be smart-cast across the && chain
+        // below and another thread may rebind the holder while the bytes are being read.
+        val current = page
+        val streamFn = current?.stream ?: return
 
-        val mangaId = page?.chapter?.chapter?.manga_id
+        val mangaId = current.chapter?.chapter?.manga_id
 
         // KMK -->
         // Materialise the encoded page only when MTL or upscaling will consume it, and read it on
         // IO rather than this holder's MainScope. Reading copies the whole file, so with both off
         // this stays a single streamed read like upstream.
-        val needsOriginalBytes = page != null && mangaId != null && ReaderTranslation.needsOriginalBytes(page)
+        val needsOriginalBytes = mangaId != null && ReaderTranslation.needsOriginalBytes(current)
         var translationBytes: ByteArray? = null
         // KMK <--
 
