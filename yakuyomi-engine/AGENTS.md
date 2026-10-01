@@ -13,23 +13,84 @@ translate (LLM) → inpaint (AOT-GAN NCNN, overlaps translate) → typeset (Canv
 Removal covers **all** detected regions; translation only the OCR-readable ones.
 Never overwrite a good translation with a worse one (§11 rule).
 
+## Architecture
+
+Three decisions are made exactly once. Do not re-derive them at a call site.
+
+| Decision | Owner |
+|---|---|
+| Which backend translates (image service → Gemini Nano → local GGUF → cloud) | `TranslationProviderResolver` |
+| Prompt / parse / align / offline-fallback protocol | `TextTranslationProtocol` + `TranslationRequest` |
+| Which pages are translatable, and at what sample size | `PageImageValidator` |
+
+```
+TranslationManager          facade: gates, status, errors. No provider, cache or queue logic.
+├── TranslationProviderResolver   one answer for "who is translating", incl. cache identity
+├── TextTranslationProtocol       one implementation of the line protocol
+│   └── TranslationRequest        per-request inputs (langs, breadcrumb, glossary, policy)
+├── PageQueue                     per-chapter page-ordered work, pending cap, lifecycle
+├── PageResultCache               saved-page store + content-addressed cache, in one place
+├── PageImageValidator            size/dimension limits, sample size
+├── PageImageEncoder              bitmap → JPEG (vision) / WEBP (output/cache)
+└── YakuyomiEngine                native session lifetime + dispatch only
+    ├── EngineConfigFactory       prefs → EngineConfig; typeface, text colour, orientation.
+    │                             Owns the list of knobs that require a session rebuild.
+    ├── NativeComponents          the three native sessions; built all-or-nothing
+    └── LongPageStitcher          slice → per-slice pipeline → stitch, stats, regions
+```
+
+Backends are thin: each supplies only a `generate` (or parsed-lines) function and inherits the
+protocol. Adding a provider means one `TranslationProviderKind` value plus one branch in
+`TranslationProviderResolver` — the `when` over that enum is exhaustive, so a missed site is a
+compile error rather than a stale cache key.
+
+## Extending
+
+**A new text provider**
+1. Implement the stage as a `Translator` (see `LocalLlmTranslator` — ~30 lines) that hands its raw
+   output to `TextTranslationProtocol.run` / `fromParsedLines`. Do **not** re-implement prompt
+   building, `isEnglishFix`, parsing or line alignment.
+2. Add a `TranslationProviderKind` value and one branch in `TranslationProviderResolver.resolve()`.
+3. Switch on that enum where the stage is constructed. The `when` is exhaustive, so the compiler
+   points at every site that needs the new case.
+4. If the provider needs a cache identity, it comes from the resolver — never re-derive it.
+
+**A new engine tuning knob**
+1. Map it in `EngineConfigFactory.defaultConfig()`.
+2. Add it to `EngineConfigFactory.configChanges()` **in the same edit**, or the native session will
+   not rebuild and the setting will silently do nothing until the app restarts. Render settings are
+   the exception: they are read per page and need no entry.
+
+**A new page-level rule** (limit, sample size, encoding) belongs in `PageImageValidator` or
+`PageImageEncoder`, not inline in the manager.
+
 ## Key classes
 
 | Class | Role |
 |---|---|
-| `TranslationManager` | Orchestrates pages, friendly errors, per-manga gate; falls back cloud ← on-device |
-| `YakuyomiEngine` | Wraps native pipeline; resolves Typeface + text color per page |
+| `TranslationManager` | Facade: gates, per-manga toggles, status, user-facing errors |
+| `TranslationProviderResolver` | Single provider decision + the cache identity that goes with it |
+| `TextTranslationProtocol` / `TranslationRequest` | The line protocol and its per-request inputs |
+| `PageQueue` | Per-chapter page-ordered work, pending cap, cancel/pause/resume |
+| `PageResultCache` | Both page stores; exposes the three persistence policies by name |
+| `PageImageValidator` | Page size/dimension limits and the decode sample size |
+| `PageImageEncoder` | bitmap → JPEG for vision, WEBP for output and cache |
+| `YakuyomiEngine` | Native session lifetime and dispatch; nothing else |
+| `EngineConfigFactory` | prefs → config, typeface, text colour, orientation, rebuild triggers |
+| `LongPageStitcher` | Tall-page slicing, stitching, stats summing, region offsetting |
+| `NativeComponents` | The detector/OCR/inpainter sessions as one unit |
 | `YakuyomiTranslator` | Cloud LLM (openrouter/gemini/opencode_zen/nvidia_nim/custom_openai) |
 | `GeminiNanoTranslator` | On-device ML Kit GenAI (`genai-prompt:1.0.0-beta4`); priority LLM when AVAILABLE |
 | `LocalLlmManager` / `LocalLlmTranslator` / `LlamaCppLlmBackend` | Local GGUF via llama.cpp; per-model sampling overrides |
 | `LocalLlmAccelerator` | Probes whether `gpuLayers` can actually offload (GPU backend built in? Vulkan compute?) |
 | `LocalLlmDownloadManager` | Resumable GGUF+mmproj downloads (Range resume, throttled emits) |
 | `ModelManager` | Downloads detector/OCR/inpainter models |
-| `TranslationCache` / `TranslatedPageStore` | PageHash-keyed WEBP cache + translated page state |
+| `TranslationCache` / `TranslatedPageStore` | Low-level stores; go through `PageResultCache` |
 | `BreadcrumbNotes` / `MangaInfoTranslation(Store)` | Cross-page consistency notes; per-manga toggle store |
 | `TranslationPreferences` | ~54 prefs (engine tuning, per-provider keys); stub duplicate in `yakuyomi-stub/` |
-| `TranslationPrompt.kt` | Shared prompt builders / line-alignment / JSON parsing |
+| `TranslationPrompt.kt` | Prompt text, sanitisation, line alignment, JSON parsing |
 | `TranslationStatus` / `TranslationErrorMapper` / `TranslationMetrics` | Status, error mapping, metrics |
+| `TranslationException` | Provider failed and offline fallback is off (page → FAILED, retryable) |
 
 ## Gotchas
 
