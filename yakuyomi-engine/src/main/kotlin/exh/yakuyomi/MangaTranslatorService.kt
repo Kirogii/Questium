@@ -1,10 +1,7 @@
 package exh.yakuyomi
 
 import android.content.Context
-import android.os.Build
 import android.util.Base64
-import android.util.DisplayMetrics
-import android.view.WindowManager
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -20,7 +17,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.URI
-import java.util.UUID
 
 @Serializable
 private data class IchigoTranslateRequest(
@@ -33,42 +29,18 @@ private data class IchigoTranslateRequest(
 
 @Serializable
 private data class IchigoTranslateResponse(
-    val images: List<List<IchigoTranslation>> = emptyList(),
+    @SerialName("images") val images: List<List<IchigoTranslation>> = emptyList(),
 )
 
 @Serializable
 data class IchigoTranslation(
     @SerialName("originalLanguage") val originalLanguage: String = "",
-    @SerialName("translatedText") val translatedText: String = "",
+    @SerialName("translatedText") val translatedText: String,
     @SerialName("minX") val minX: Int = 0,
     @SerialName("minY") val minY: Int = 0,
     @SerialName("maxX") val maxX: Int = 0,
     @SerialName("maxY") val maxY: Int = 0,
 )
-
-@Serializable
-private data class IchigoLoginRequest(
-    val email: String,
-    val password: String,
-)
-
-@Serializable
-private data class IchigoTokens(
-    @SerialName("accessToken") val accessToken: String = "",
-    @SerialName("refreshToken") val refreshToken: String? = null,
-)
-
-@Serializable
-private data class IchigoAuthResponse(
-    val tokens: IchigoTokens? = null,
-)
-
-// KMK --> Refresh payload for POST /auth/refresh (wires the otherwise-unused refreshToken)
-@Serializable
-private data class IchigoRefreshRequest(
-    @SerialName("refreshToken") val refreshToken: String,
-)
-// KMK <--
 
 @Serializable
 data class IchigoUser(
@@ -93,6 +65,15 @@ enum class SignupResult {
     Unknown,
 }
 
+/**
+ * Client for the Ichigo image-translation service.
+ *
+ * The work is split three ways. [MangaTranslatorFingerprint] owns the fixed pseudo-browser profile
+ * that bot protection requires, [MangaTranslatorAuth] owns the session, and this class keeps the
+ * translation path along with the base-URL policy and the allowlists. The two collaborators are
+ * reached through [fingerprint] and [auth] rather than inlined, so a profile string and a token each
+ * have exactly one owner.
+ */
 @SingleIn(AppScope::class)
 @Inject
 class MangaTranslatorService(
@@ -114,6 +95,17 @@ class MangaTranslatorService(
     private val allowedModels = setOf(
         "gpt4o-mini", "gpt4o", "gpt4o-nano", "gpt-4.1", "gpt-4.1-mini", "claude-3-5-sonnet",
         "claude-3-haiku", "gemini-2.0-flash", "gemini-1.5-flash", "deepl", "google",
+    )
+
+    val fingerprint = MangaTranslatorFingerprint(context, prefs)
+
+    val auth = MangaTranslatorAuth(
+        prefs = prefs,
+        client = client,
+        json = json,
+        fingerprint = fingerprint,
+        baseUrl = { baseUrl() },
+        executeWithAuthRetry = { request, block -> executeWithAuthRetry(request, block) },
     )
 
     private fun baseUrl(): String {
@@ -155,108 +147,9 @@ class MangaTranslatorService(
                 if (parts[0] == 10) return true
                 if (parts[0] == 192 && parts[1] == 168) return true
                 if (parts[0] == 172 && parts[1] in 16..31) return true
-                if (parts[0] == 127) return true
-                if (parts[0] == 0) return true
             }
         }
         return false
-    }
-
-    private fun clientUuid(): String {
-        val store = prefs.mangaTranslatorClientUuid().get()
-        if (store.isNotBlank() && store.length >= 32) return store
-        val fresh = UUID.randomUUID().toString()
-        prefs.mangaTranslatorClientUuid().set(fresh)
-        return fresh
-    }
-
-    fun fingerprint(): String {
-        val cached = prefs.mangaTranslatorFingerprint().get()
-        if (cached.isNotBlank() && cached.length >= 16) return cached.take(128)
-        val fresh = buildFingerprint()
-        prefs.mangaTranslatorFingerprint().set(fresh)
-        return fresh
-    }
-
-    private fun buildFingerprint(): String {
-        val webGl = "android-gpu-${Build.HARDWARE}-unknown"
-        val hardware = "${Runtime.getRuntime().availableProcessors()}-${deviceMemoryBucket()}"
-        val connection = "unknown-unknown-unknown-unknown-false"
-        val timezone = java.util.TimeZone.getDefault().rawOffset / 60000
-        val screen = screenInfo()
-        val canvas = canvasHash()
-        val browser = "sw,ls,ss,idb,geo,notif,perm,cookie,online,conn"
-        val language = "${java.util.Locale.getDefault().language}-${java.util.Locale.getDefault()}"
-        val touch = "0-false-false-false"
-        val orientation = "portrait-primary-0-false"
-        val ua = "${Build.MANUFACTURER}-${Build.MODEL}-${Build.VERSION.SDK_INT}"
-        val perf = "0-0-0-0-unknown-0-0"
-        val components = listOf(webGl, hardware, connection, timezone.toString(), screen, canvas, browser, language, touch, orientation, ua, perf)
-        return hashString(components.joinToString("-"))
-    }
-
-    private fun deviceMemoryBucket(): String {
-        return try {
-            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-            val mi = android.app.ActivityManager.MemoryInfo()
-            am?.getMemoryInfo(mi)
-            val totalGb = mi.totalMem / (1024L * 1024L * 1024L)
-            when {
-                totalGb >= 8 -> "8"
-                totalGb >= 6 -> "6"
-                totalGb >= 4 -> "4"
-                else -> totalGb.toString()
-            }
-        } catch (_: Exception) {
-            "unknown"
-        }
-    }
-
-    private fun screenInfo(): String {
-        return try {
-            val wm = context.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
-            val dm = DisplayMetrics()
-            @Suppress("DEPRECATION")
-            wm?.defaultDisplay?.getMetrics(dm)
-            val w = dm.widthPixels
-            val h = dm.heightPixels
-            val d = dm.densityDpi
-            val ratio = dm.density
-            "$w×$h-$d-$d-$w×$h-$ratio"
-        } catch (_: Exception) {
-            "screen-unavailable"
-        }
-    }
-
-    private fun canvasHash(): String {
-        return try {
-            val payload = "${Build.BOARD}${Build.BRAND}${Build.DEVICE}${Build.DISPLAY}${Build.FINGERPRINT}"
-            var hash = 0
-            for (c in payload) {
-                hash = (hash shl 5) - hash + c.code
-                hash = hash and hash
-            }
-            hash.toString()
-        } catch (_: Exception) {
-            "canvas-error"
-        }
-    }
-
-    private fun hashString(input: String): String {
-        var hash = 5381
-        for (c in input) {
-            hash = (hash * 33) xor c.code
-        }
-        val hex = (hash.toLong() and 0xFFFFFFFFL).toString(16).padStart(8, '0')
-        var extended = hex
-        val chunkSize = kotlin.math.ceil(input.length / 4.0).toInt().coerceAtLeast(1)
-        for (i in 0 until 4) {
-            val chunk = input.substring((i * chunkSize).coerceAtMost(input.length), ((i + 1) * chunkSize).coerceAtMost(input.length))
-            var chunkHash = 5381
-            for (c in chunk) chunkHash = (chunkHash * 33) xor c.code
-            extended += (chunkHash.toLong() and 0xFFFFFFFFL).toString(16).padStart(8, '0')
-        }
-        return extended
     }
 
     private fun sanitizeTargetLang(raw: String): String {
@@ -278,310 +171,23 @@ class MangaTranslatorService(
         return trimmed
     }
 
-    private fun accessToken(): String = prefs.mangaTranslatorAccessToken().get().trim()
+    // --- Auth (delegated to MangaTranslatorAuth) ---
 
-    // KMK --> Session token helpers: refreshToken was parsed but never stored/used
-    private fun refreshToken(): String = prefs.mangaTranslatorRefreshToken().get().trim()
+    fun fingerprint(): String = fingerprint.fingerprint()
 
-    private fun storeTokens(access: String?, refresh: String?) {
-        val a = access?.trim().orEmpty()
-        if (a.isNotBlank() && a.length in 16..2048) {
-            prefs.mangaTranslatorAccessToken().set(a)
-        }
-        val r = refresh?.trim().orEmpty()
-        if (r.isNotBlank() && r.length in 8..4096) {
-            prefs.mangaTranslatorRefreshToken().set(r)
-        }
-    }
+    suspend fun refreshAccessToken(): Boolean = auth.refreshAccessToken()
 
-    suspend fun refreshAccessToken(): Boolean {
-        val rt = refreshToken()
-        if (rt.isBlank()) return false
-        val url = "${baseUrl()}/auth/refresh"
-        val body = try {
-            json.encodeToString(IchigoRefreshRequest.serializer(), IchigoRefreshRequest(rt))
-        } catch (_: Exception) {
-            return false
-        }
-        val authHeaders = browserAuthHeaders()
-        val req = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
-            .build()
-        // KMK --> blocking execute() must run on IO: callers invoke from the main thread
-        return withContext(Dispatchers.IO) {
-            try {
-                client.newCall(req).execute().use { resp ->
-                    if (resp.code != 200) return@withContext false
-                    val txt = resp.body.string().take(4096)
-                    val parsed = try {
-                        json.decodeFromString(IchigoAuthResponse.serializer(), txt)
-                    } catch (_: Exception) {
-                        null
-                    }
-                    val newAccess = parsed?.tokens?.accessToken?.trim()
-                    val newRefresh = parsed?.tokens?.refreshToken?.trim()
-                    if (newAccess.isNullOrBlank() || newAccess.length < 16) {
-                        val fallback = Regex(""""accessToken"\s*:\s*"([^"]+)"""").find(txt)?.groupValues?.getOrNull(1)
-                        if (fallback.isNullOrBlank()) return@withContext false
-                        storeTokens(fallback, newRefresh)
-                        return@withContext true
-                    }
-                    storeTokens(newAccess, newRefresh)
-                    true
-                }
-            } catch (_: Exception) {
-                false
-            }
-        }
-    }
-    // KMK <--
+    suspend fun login(email: String, password: String): LoginResult = auth.login(email, password)
 
-    private val spoofedUa = "Mozilla/5.0 (Linux; Android 16; SM-S928U Build/BP4A.251205.006) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.87 Mobile Safari/537.36"
+    suspend fun signup(email: String, password: String): SignupResult = auth.signup(email, password)
 
-    // KMK --> full Chrome header stack for auth endpoints: a lone User-Agent is
-    // filtered by bot protection, so mirror what the site's own login page sends.
-    private fun browserAuthHeaders(): Map<String, String> {
-        val base = baseUrl()
-        return mapOf(
-            "Accept" to "application/json, text/plain, */*",
-            "Accept-Language" to "en-US,en;q=0.9",
-            "Content-Type" to "application/json",
-            "Client-Version" to "1.0.1",
-            "X-Client-Version" to "1.0.1",
-            "Origin" to base,
-            "Referer" to "$base/",
-            "Sec-Ch-Ua" to "\"Chromium\";v=\"152\", \"Google Chrome\";v=\"152\", \"Not-A.Brand\";v=\"99\"",
-            "Sec-Ch-Ua-Mobile" to "?1",
-            "Sec-Ch-Ua-Platform" to "\"Android\"",
-            "Sec-Fetch-Dest" to "empty",
-            "Sec-Fetch-Mode" to "cors",
-            "Sec-Fetch-Site" to "same-origin",
-            "User-Agent" to spoofedUa,
-        )
-    }
-    // KMK <--
+    suspend fun logout(): Boolean = auth.logout()
 
-    private fun ichigoHeaders(): Map<String, String> {
-        val headers = mutableMapOf(
-            "Content-Type" to "application/json",
-            "Client-Version" to "1.0.1",
-            "X-Client-Version" to "1.0.1",
-            "User-Agent" to spoofedUa,
-        )
-        val token = accessToken()
-        if (token.isNotBlank() && token.length in 16..2048) {
-            headers["Authorization"] = "Bearer $token"
-        }
-        return headers
-    }
+    fun clearAuth() = auth.clearAuth()
 
-    // --- Auth: mirrors extension's ichigoApi.ts (login / signup / logout / metrics) ---
+    fun isLoggedIn(): Boolean = auth.isLoggedIn()
 
-    suspend fun login(email: String, password: String): LoginResult {
-        val e = email.trim().take(254)
-        val p = password.take(512)
-        if (e.isBlank() || !e.contains("@") || e.length < 5) return LoginResult.InvalidEmail
-        if (p.isBlank() || p.length < 6) return LoginResult.BadPassword
-        val url = "${baseUrl()}/auth/login"
-        val body = json.encodeToString(IchigoLoginRequest.serializer(), IchigoLoginRequest(e, p))
-        val authHeaders = browserAuthHeaders()
-        val req = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
-            .build()
-        // KMK --> blocking execute() must run on IO: the auth screen calls from the main thread
-        return withContext(Dispatchers.IO) {
-            try {
-                // KMK --> use injected client so fake-OkHttp tests can intercept; store access+refresh
-                client.newCall(req).execute().use { resp ->
-                    val txt = resp.body.string().take(4096)
-                    when (resp.code) {
-                        200 -> {
-                            try {
-                                val parsed = json.decodeFromString(IchigoAuthResponse.serializer(), txt)
-                                storeTokens(parsed.tokens?.accessToken, parsed.tokens?.refreshToken)
-                                if (accessToken().isNotBlank()) prefs.mangaTranslatorEmail().set(e)
-                            } catch (_: Exception) {
-                            }
-                            if (accessToken().isBlank()) {
-                                val fallback = Regex(""""accessToken"\s*:\s*"([^"]+)"""").find(txt)?.groupValues?.getOrNull(1)
-                                if (!fallback.isNullOrBlank()) {
-                                    storeTokens(fallback, null)
-                                    prefs.mangaTranslatorEmail().set(e)
-                                }
-                            }
-                            // KMK --> only report success when a session token was actually stored
-                            if (accessToken().isBlank()) LoginResult.Unknown else LoginResult.Success
-                        }
-                        // KMK <--
-                        400 -> {
-                            val lower = txt.lowercase()
-                            val detail = Regex(""""kind"\s*:\s*"([^"]+)"""").find(txt)?.groupValues?.getOrNull(1)?.lowercase()
-                            when {
-                                detail == "emptyEmail" -> LoginResult.InvalidEmail
-                                detail == "userNotFound" -> LoginResult.UnknownEmail
-                                lower.contains("invalidcredentials") || lower.contains("bad username") || lower.contains("invalid email") -> LoginResult.BadPassword
-                                else -> {
-                                    xLogW("Ichigo login 400 unhandled: $txt")
-                                    LoginResult.Unknown
-                                }
-                            }
-                        }
-                        401, 403 -> {
-                            val lower = txt.lowercase()
-                            if (lower.contains("invalidcredentials") || lower.contains("bad username") || lower.contains("bad password") || lower.contains("invalid")) {
-                                LoginResult.BadPassword
-                            } else {
-                                LoginResult.BadPassword
-                            }
-                        }
-                        429 -> LoginResult.RateLimited
-                        else -> {
-                            xLogW("Ichigo login HTTP ${resp.code}: $txt")
-                            LoginResult.Unknown
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                xLogW("Ichigo login failed: ${e.message}")
-                LoginResult.Unknown
-            }
-        }
-    }
-
-    suspend fun signup(email: String, password: String): SignupResult {
-        val e = email.trim().take(254)
-        val p = password.take(512)
-        if (e.isBlank() || !e.contains("@") || e.length < 5) return SignupResult.InvalidEmail
-        if (p.length < 6) return SignupResult.Unknown
-        val url = "${baseUrl()}/signup"
-        val body = json.encodeToString(IchigoLoginRequest.serializer(), IchigoLoginRequest(e, p))
-        val authHeaders = browserAuthHeaders()
-        val req = Request.Builder()
-            .url(url)
-            .post(body.toRequestBody("application/json".toMediaType()))
-            .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
-            .build()
-        return withContext(Dispatchers.IO) {
-            try {
-                // KMK --> use injected client so fake-OkHttp tests can intercept; store access+refresh
-                client.newCall(req).execute().use { resp ->
-                    val txt = resp.body.string().take(8192)
-                    when (resp.code) {
-                        201, 200 -> {
-                            try {
-                                val parsed = json.decodeFromString(IchigoAuthResponse.serializer(), txt)
-                                storeTokens(parsed.tokens?.accessToken, parsed.tokens?.refreshToken)
-                                if (accessToken().isNotBlank()) prefs.mangaTranslatorEmail().set(e)
-                            } catch (_: Exception) {}
-                            val fallback = Regex(""""accessToken"\s*:\s*"([^"]+)"""").find(txt)?.groupValues?.getOrNull(1)
-                            if (!fallback.isNullOrBlank() && accessToken().isBlank()) {
-                                storeTokens(fallback, null)
-                                prefs.mangaTranslatorEmail().set(e)
-                            }
-                            if (accessToken().isBlank()) SignupResult.Unknown else SignupResult.Success
-                        }
-                        // KMK <--
-                        400 -> {
-                            val lower = txt.lowercase()
-                            val detail = Regex(""""kind"\s*:\s*"([^"]+)"""").find(txt)?.groupValues?.getOrNull(1)?.lowercase()
-                            when {
-                                detail == "emptyEmail" -> SignupResult.InvalidEmail
-                                lower.contains("invalid") || lower.contains("email") -> SignupResult.InvalidEmail
-                                else -> {
-                                    xLogW("Ichigo signup 400: $txt")
-                                    SignupResult.Unknown
-                                }
-                            }
-                        }
-                        401, 403 -> {
-                            val lower = txt.lowercase()
-                            if (lower.contains("email taken") || lower.contains("already") || lower.contains("exists") || lower.contains("taken")) {
-                                SignupResult.EmailTaken
-                            } else {
-                                SignupResult.EmailTaken
-                            }
-                        }
-                        422 -> {
-                            xLogW("Ichigo signup 422: $txt")
-                            SignupResult.InvalidEmail
-                        }
-                        429 -> SignupResult.RateLimited
-                        else -> {
-                            xLogW("Ichigo signup HTTP ${resp.code}: $txt")
-                            SignupResult.Unknown
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                xLogW("Ichigo signup failed: ${e.message}")
-                SignupResult.Unknown
-            }
-        }
-    }
-
-    suspend fun logout(): Boolean {
-        val token = accessToken()
-        val url = "${baseUrl()}/auth/logout"
-        val authHeaders = browserAuthHeaders()
-        val builder = Request.Builder()
-            .url(url)
-            .post("{}".toRequestBody("application/json".toMediaType()))
-            .apply { authHeaders.forEach { (k, v) -> header(k, v) } }
-        if (token.isNotBlank()) builder.header("Authorization", "Bearer $token")
-        // KMK --> injected client for testability; clear both session tokens
-        val ok = try {
-            withContext(Dispatchers.IO) {
-                client.newCall(builder.build()).execute().use { resp ->
-                    resp.code == 204 || resp.code == 200 || resp.code == 401 || resp.code == 403
-                }
-            }
-        } catch (_: Exception) {
-            false
-        }
-        clearAuth()
-        // KMK <--
-        // Do not clear email - keep for UI convenience, matching extension's email retention
-        return ok
-    }
-
-    fun clearAuth() {
-        // KMK --> clear both session tokens (access + refresh)
-        prefs.mangaTranslatorAccessToken().set("")
-        prefs.mangaTranslatorRefreshToken().set("")
-        // KMK <--
-    }
-
-    fun isLoggedIn(): Boolean = accessToken().isNotBlank()
-
-    suspend fun getCurrentUser(): IchigoUser? {
-        val url = "${baseUrl()}/metrics?clientUuid=${clientUuid()}&fingerprint=${fingerprint()}"
-        val headers = ichigoHeaders()
-        val req = Request.Builder()
-            .url(url)
-            .get()
-            .apply { headers.forEach { (k, v) -> header(k, v) } }
-            .build()
-        return try {
-            executeWithAuthRetry(req) { r ->
-                val txt = r.body.string().take(8192)
-                if (r.code == 200) {
-                    try {
-                        json.decodeFromString(IchigoUser.serializer(), txt)
-                    } catch (_: Exception) {
-                        null
-                    }
-                } else {
-                    null
-                }
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
+    suspend fun getCurrentUser(): IchigoUser? = auth.getCurrentUser()
 
     // --- Translate ---
 
@@ -610,12 +216,12 @@ class MangaTranslatorService(
             base64Images = listOf(base64),
             targetLangCode = sanitizedLang,
             fingerprint = fingerprint().take(256),
-            clientUuid = clientUuid().take(64),
+            clientUuid = fingerprint.clientUuid().take(64),
             translationModel = sanitizedModel,
         )
         val url = "${baseUrl()}/translate"
         val reqJson = json.encodeToString(IchigoTranslateRequest.serializer(), body)
-        val headers = ichigoHeaders()
+        val headers = auth.ichigoHeaders()
         val request = Request.Builder()
             .url(url)
             .post(reqJson.toRequestBody("application/json".toMediaType()))
@@ -674,7 +280,7 @@ class MangaTranslatorService(
         // KMK --> injected client (fake-OkHttp testable); refresh once, else clear stale Bearer and retry once
         var resp = client.newCall(request).execute()
         // Mirror extension's authenticatedFetch: on 401/403 with token, clear and retry once without stale token
-        if ((resp.code == 401 || resp.code == 403) && accessToken().isNotBlank()) {
+        if ((resp.code == 401 || resp.code == 403) && auth.accessToken().isNotBlank()) {
             val staleCode = resp.code
             try {
                 resp.body.string()
@@ -690,7 +296,7 @@ class MangaTranslatorService(
                 xLogW("MangaTranslator token appears stale (HTTP $staleCode), clearing and retrying once")
                 clearAuth()
             }
-            val retryHeaders = ichigoHeaders()
+            val retryHeaders = auth.ichigoHeaders()
             val retryRequest = request.newBuilder().apply {
                 // Remove old Authorization, re-apply current headers
                 removeHeader("Authorization")
