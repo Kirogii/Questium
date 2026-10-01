@@ -139,6 +139,14 @@ def build_payload() -> dict:
     # changelog
     changes = _discord_notes(notes_raw)
     if not changes:
+        print(
+            "WARNING: RELEASE_NOTES is empty; announcing raw commit subjects "
+            "instead of RELEASE_NOTES.md. In auto_release.yml the "
+            "notify-discord job must list check-version in its needs, or "
+            "needs.check-version.outputs.RELEASE_NOTES resolves to an empty "
+            "string.",
+            file=sys.stderr,
+        )
         changes, _hidden = _truncate_changelog(changelog_raw)
 
     # embed color: green if all closed, yellow if mixed, orange if nothing closed but still open

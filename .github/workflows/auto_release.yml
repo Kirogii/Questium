@@ -453,6 +453,12 @@ jobs:
     name: Announce release on Discord
     runs-on: 'ubuntu-24.04'
     needs:
+      # check-version is a *direct* need, not just a transitive one: it owns the
+      # RELEASE_NOTES output used below. The needs context only carries direct
+      # dependencies, so omitting it silently expanded
+      # needs.check-version.outputs.RELEASE_NOTES to "" and the announcement
+      # fell back to the raw commit-subject list.
+      - check-version
       - prepare-build
       - release-app
     environment: Primary
