@@ -72,24 +72,31 @@ internal object ExtensionLoader {
 
     private const val PRIVATE_EXTENSION_EXTENSION = "ext"
 
+    /** Staging suffix; a rename onto [PRIVATE_EXTENSION_EXTENSION] is what publishes an install. */
+    private const val PRIVATE_EXTENSION_STAGING_SUFFIX = "staging"
+
     private fun getPrivateExtensionDir(context: Context) = File(context.filesDir, "exts")
 
     fun installPrivateExtensionFile(context: Context, file: File): Boolean {
         val extension = context.packageManager.getPackageArchiveInfo(file.absolutePath, PACKAGE_FLAGS)
             ?.takeIf { isPackageAnExtension(it) } ?: return false
-        val currentExtension = getExtensionPackageInfoFromPkgName(context, extension.packageName)
+        val extensionSignatures = getSignatures(extension)
 
+        // Signing is a precondition of every private install, not only of updates. The load path
+        // refuses to instantiate an unsigned extension anyway, but it used to reach that point by
+        // way of the archive being written to the extensions directory first: nothing here looked
+        // at the signature at all when there was no earlier version to compare against.
+        if (extensionSignatures.isNullOrEmpty()) {
+            logcat(LogPriority.ERROR) { "Extension to be installed is not signed." }
+            return false
+        }
+
+        val currentExtension = getExtensionPackageInfoFromPkgName(context, extension.packageName)
         if (currentExtension != null) {
             if (PackageInfoCompat.getLongVersionCode(extension) <
                 PackageInfoCompat.getLongVersionCode(currentExtension)
             ) {
                 logcat(LogPriority.ERROR) { "Installed extension version is higher. Downgrading is not allowed." }
-                return false
-            }
-
-            val extensionSignatures = getSignatures(extension)
-            if (extensionSignatures.isNullOrEmpty()) {
-                logcat(LogPriority.ERROR) { "Extension to be installed is not signed." }
                 return false
             }
 
@@ -99,10 +106,36 @@ internal object ExtensionLoader {
             }
         }
 
-        val target = File(getPrivateExtensionDir(context), "${extension.packageName}.$PRIVATE_EXTENSION_EXTENSION")
+        val dir = getPrivateExtensionDir(context).apply { if (!exists()) mkdirs() }
+        val target = File(dir, "${extension.packageName}.$PRIVATE_EXTENSION_EXTENSION")
+        val staging = File(dir, "${extension.packageName}.$PRIVATE_EXTENSION_EXTENSION.$PRIVATE_EXTENSION_STAGING_SUFFIX")
+
         return try {
-            target.delete()
-            file.copyAndSetReadOnlyTo(target, overwrite = true)
+            staging.delete()
+            file.copyAndSetReadOnlyTo(staging, overwrite = true)
+
+            // Re-read what actually landed on disk instead of trusting the copy to have delivered
+            // every byte. The archive the loader will open is this one, and a short write would
+            // otherwise surface much later as an unexplained load failure.
+            val published = context.packageManager
+                .getPackageArchiveInfo(staging.absolutePath, PACKAGE_FLAGS)
+                ?.takeIf { it.packageName == extension.packageName && isPackageAnExtension(it) }
+            if (published == null) {
+                logcat(LogPriority.ERROR) { "Copied extension did not verify: ${extension.packageName}" }
+                staging.delete()
+                return false
+            }
+
+            // Publish by rename, after the new copy is known good. Deleting the live file first and
+            // then copying left a window where a failed copy had already destroyed the working
+            // extension - which during a bulk update means a library left with no extension at all.
+            // Renaming within the directory is atomic, so the extension is never absent.
+            if (!staging.renameTo(target)) {
+                logcat(LogPriority.ERROR) { "Failed to publish extension: ${extension.packageName}" }
+                staging.delete()
+                return false
+            }
+
             if (currentExtension != null) {
                 ExtensionInstallReceiver.notifyReplaced(context, extension.packageName)
             } else {
@@ -111,7 +144,7 @@ internal object ExtensionLoader {
             true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to copy extension file." }
-            target.delete()
+            staging.delete()
             false
         }
     }
@@ -134,12 +167,58 @@ internal object ExtensionLoader {
             pkgManager.getInstalledPackages(PACKAGE_FLAGS)
         }
 
-        val sharedExtPkgs = installedPkgs
-            .asSequence()
-            .filter { isPackageAnExtension(it) }
-            .map { ExtensionInfo(packageInfo = it, isShared = true) }
+        return coroutineScope {
+            val extStores = getExtensionStores.get()
+            val extensionsDispatcher = AppDispatchersHolder.get().extensions
 
-        val privateExtPkgs = getPrivateExtensionDir(context)
+            // Both package sets are resolved concurrently. Reading a private extension is a
+            // manifest parse plus a scan of the whole APK for its signing block, so doing it inline
+            // serialised the entire cost of a private-only install onto one thread, before the
+            // parallel load below could start. Now it shares the same bounded pool.
+            val sharedExtPkgs = async(extensionsDispatcher) {
+                installedPkgs.filter { isPackageAnExtension(it) }
+                    .map { ExtensionInfo(packageInfo = it, isShared = true) }
+            }
+            val privateExtPkgs = async(extensionsDispatcher) { readPrivateExtensions(context, pkgManager) }
+
+            val privateList = privateExtPkgs.await()
+            // Indexed rather than searched. A Sequence only describes work, so the previous
+            // singleOrNull re-ran the parse chain for every private archive on every call: N
+            // extensions cost N*N archive parses, which is what made the private installer
+            // unusable on a large collection.
+            val privateByName = privateList.associateBy { it.packageInfo.packageName }
+
+            val extPkgs = (sharedExtPkgs.await() + privateList)
+                // Remove duplicates. Shared takes priority than private by default
+                .distinctBy { it.packageInfo.packageName }
+                // Compare version number
+                .mapNotNull { sharedPkg ->
+                    selectExtensionPackage(sharedPkg, privateByName[sharedPkg.packageInfo.packageName])
+                }
+
+            if (extPkgs.isEmpty()) return@coroutineScope emptyList()
+
+            extPkgs.map {
+                async(extensionsDispatcher) {
+                    try {
+                        loadExtension(context, it, extStores)
+                    } catch (e: Throwable) {
+                        logcat(LogPriority.ERROR, e) { "[ExtInstall] Unexpected error loading extension ${it.packageInfo.packageName}" }
+                        LoadResult.Error("Unexpected: ${e.message}")
+                    }
+                }
+            }.awaitAll()
+        }
+    }
+
+    /**
+     * Reads every privately installed extension archive into a [ExtensionInfo].
+     *
+     * Returns a list rather than a Sequence on purpose: callers index into the result by package
+     * name, and a lazy sequence would redo the archive parse on every one of those lookups.
+     */
+    private fun readPrivateExtensions(context: Context, pkgManager: PackageManager): List<ExtensionInfo> =
+        getPrivateExtensionDir(context)
             .listFiles()
             ?.asSequence()
             ?.filter { it.isFile && it.extension == PRIVATE_EXTENSION_EXTENSION }
@@ -155,37 +234,8 @@ internal object ExtensionLoader {
             }
             ?.filter { isPackageAnExtension(it) }
             ?.map { ExtensionInfo(packageInfo = it, isShared = false) }
-            ?: emptySequence()
-
-        val extPkgs = (sharedExtPkgs + privateExtPkgs)
-            // Remove duplicates. Shared takes priority than private by default
-            .distinctBy { it.packageInfo.packageName }
-            // Compare version number
-            .mapNotNull { sharedPkg ->
-                val privatePkg = privateExtPkgs
-                    .singleOrNull { it.packageInfo.packageName == sharedPkg.packageInfo.packageName }
-                selectExtensionPackage(sharedPkg, privatePkg)
-            }
-            .toList()
-
-        if (extPkgs.isEmpty()) return emptyList()
-
-        return coroutineScope {
-            val extStores = getExtensionStores.get()
-            val extensionsDispatcher = AppDispatchersHolder.get().extensions
-            val deferred = extPkgs.map {
-                async(extensionsDispatcher) {
-                    try {
-                        loadExtension(context, it, extStores)
-                    } catch (e: Throwable) {
-                        logcat(LogPriority.ERROR, e) { "[ExtInstall] Unexpected error loading extension ${it.packageInfo.packageName}" }
-                        LoadResult.Error("Unexpected: ${e.message}")
-                    }
-                }
-            }
-            deferred.awaitAll()
-        }
-    }
+            ?.toList()
+            ?: emptyList()
 
     /**
      * Attempts to load an extension from the given package name. It checks if the extension

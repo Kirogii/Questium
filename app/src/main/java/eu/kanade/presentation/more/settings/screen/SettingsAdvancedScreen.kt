@@ -66,7 +66,6 @@ import eu.kanade.tachiyomi.util.CrashLogUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.system.GLUtil
 import eu.kanade.tachiyomi.util.system.isDebugBuildType
-import eu.kanade.tachiyomi.util.system.isReleaseBuildType
 import eu.kanade.tachiyomi.util.system.isShizukuInstalled
 import eu.kanade.tachiyomi.util.system.powerManager
 import eu.kanade.tachiyomi.util.system.setDefaultSettings
@@ -549,15 +548,14 @@ object SettingsAdvancedScreen : SearchableSettings {
                 Preference.PreferenceItem.ListPreference(
                     preference = extensionInstallerPref,
                     entries = extensionInstallerPref.entries
-                        .filter {
-                            // The PRIVATE installer stays hidden on release builds: extension
-                            // APK URL handling is not validated enough for stable users yet.
-                            if (isReleaseBuildType) {
-                                it != BasePreferences.ExtensionInstaller.PRIVATE
-                            } else {
-                                true
-                            }
-                        }
+                        // KMK --> PRIVATE is offered on release builds too. It was hidden while it
+                        // made cold start and resume crawl on a large collection; ExtensionLoader now
+                        // reads each private archive once instead of once per installed extension
+                        // and does it on the extensions pool, so that cost is gone. It is also the
+                        // only installer that needs no install permission, which matters while
+                        // Google gates "install from unverified developers" behind a 24 hour wait
+                        // that can lapse - see pref_private_installer_warning.
+                        // KMK <--
                         .associateWith { stringResource(it.titleRes) }
                         .toImmutableMap(),
                     title = stringResource(MR.strings.ext_installer_pref),
