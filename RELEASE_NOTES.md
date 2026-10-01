@@ -21,6 +21,9 @@ files moved. See .github/scripts/release_notes.py.
 - Achievements use noticeably less battery while you read. Checking whether you'd already earned something no longer rescans the whole achievement list for every single check, so finishing a chapter does far less work than before
 
 ### Fix
+- Fix scrolling stuttering in the strip and continuous readers, especially on long manhwa pages. Every page shown was being read into memory twice over - once on the main thread, which could visibly stall the scroll - even though the only features that need a page in memory are off by default
+- Fix a wide page's first half disappearing behind the page before it when rotating the device with Split wide pages on, so the two halves could not be tapped through in order
+- Fix browsing E-Hentai getting steadily slower the longer you browsed. With detailed logging enabled the background log writer could stop and never restart, after which every log line piled up in a queue nothing was emptying
 - Blacklisted chapters now stay blacklisted everywhere. They were already hidden in a series' chapter list and in the reader, but they could still turn up among your page previews, could still be queued for a download, and both the library's next-unread pick and the History tab's Resume button could still land on one
 - Fix a restored backup resetting your per-series scanlator setup. Your scanlator priority, range rules, blacklisted chapters and light-novel flag were never written into the backup file, so restoring one handed every series back with those choices cleared and every chapter you had blacklisted visible again. Backups taken before now still restore - those series simply come back with no scanlator setup, the same as a fresh install
 - Fix crash when tapping selected text in a manga description with a mouse after selecting it by touch
