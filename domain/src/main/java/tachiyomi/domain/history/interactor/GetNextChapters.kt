@@ -7,8 +7,10 @@ import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.chapter.service.getChapterSort
+import tachiyomi.domain.chapter.service.isChapterBlacklisted
 import tachiyomi.domain.history.repository.HistoryRepository
 import tachiyomi.domain.manga.interactor.GetManga
+import tachiyomi.domain.manga.model.Manga
 import kotlin.math.max
 
 // KMK -->
@@ -58,6 +60,18 @@ class GetNextChapters(
 
     suspend fun await(mangaId: Long, onlyUnread: Boolean = true): List<Chapter> {
         val manga = getManga.await(mangaId) ?: return emptyList()
+        // KMK --> A blacklisted chapter is one the user chose not to read, so it must not come back
+        // from here whatever the source. Applied on the way out rather than inside each branch below,
+        // because the merged and E-Hentai paths return early and would otherwise skip it. It cannot
+        // live in the chapter query the way excluded scanlators can: the blacklist is per series and
+        // keyed by scanlator, so it needs the manga row.
+        // KMK <--
+        return chaptersFor(manga, onlyUnread)
+            .filterNot { isChapterBlacklisted(it, manga.blacklistedChapters) }
+    }
+
+    private suspend fun chaptersFor(manga: Manga, onlyUnread: Boolean): List<Chapter> {
+        val mangaId = manga.id
 
         // SY -->
         if (manga.source == MERGED_SOURCE_ID) {

@@ -6,6 +6,7 @@ import tachiyomi.domain.category.interactor.GetCategories
 import tachiyomi.domain.chapter.interactor.GetChaptersByMangaId
 import tachiyomi.domain.chapter.interactor.GetMergedChaptersByMangaId
 import tachiyomi.domain.chapter.model.Chapter
+import tachiyomi.domain.chapter.service.isChapterBlacklisted
 import tachiyomi.domain.download.service.DownloadPreferences
 import tachiyomi.domain.manga.model.Manga
 
@@ -41,7 +42,14 @@ class FilterChaptersForDownload(
             return emptyList()
         }
 
-        if (!downloadPreferences.downloadNewUnreadChaptersOnly().get()) return newChapters
+        // KMK --> A blacklisted chapter is one the user chose not to read, so it must not be
+        // downloaded whatever the download preferences say. Before the unread-only branch, since
+        // that branch returns the incoming list untouched.
+        // KMK <--
+        val allowed = newChapters.filterNot { isChapterBlacklisted(it, manga.blacklistedChapters) }
+        if (allowed.isEmpty()) return emptyList()
+
+        if (!downloadPreferences.downloadNewUnreadChaptersOnly().get()) return allowed
 
         // SY -->
         val existingChapters = if (manga.source == MERGED_SOURCE_ID) {
@@ -57,7 +65,7 @@ class FilterChaptersForDownload(
             .map { it.chapterNumber }
             .toSet()
 
-        return newChapters.filterNot { it.chapterNumber in readChapterNumbers }
+        return allowed.filterNot { it.chapterNumber in readChapterNumbers }
     }
 
     /**
