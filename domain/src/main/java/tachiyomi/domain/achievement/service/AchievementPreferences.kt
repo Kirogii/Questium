@@ -215,7 +215,13 @@ class AchievementPreferences(
     fun isUnlocked(id: String): Boolean {
         val current = unlockedAchievements().get()
         if (current.isBlank()) return false
-        return current.split(",").contains(id)
+        // KMK --> Membership without building the list. Every tier check calls this, and a
+        // chapter read runs ~30 of them, so each was allocating a split copy of the whole
+        // unlocked set to answer a yes/no. Suffixing both sides turns the stored CSV into an
+        // unambiguous delimited token match - no id contains a comma, and the same answer comes
+        // out for hand-edited or restored values, which split() would also have missed.
+        // KMK <--
+        return ",$current,".contains(",$id,")
     }
 
     @Synchronized

@@ -317,7 +317,17 @@ object Achievements {
         if (excludeMtlOnly) list.filterNot { it.requiresMtl } else list
     }
 
-    fun forId(id: String) = all.find { it.id == id }
+    // KMK --> Id lookup, because this sits in the reading hot path. Every chapter read resolves a
+    // few dozen ids through here, and each resolution walked all 216 catalogue entries - then
+    // walked them again for every id already unlocked, because the unlocked set is re-validated
+    // on every read. A linear scan is indistinguishable from a map when the caller asks once, so
+    // this was invisible until it ran ~10x per chapter. Derived from [all], so it inherits the
+    // same nomtl filtering and the same lazy initialisation point (App.onCreate sets
+    // excludeMtlOnly before anything reads the catalogue).
+    // KMK <--
+    private val byId: Map<String, Achievement> by lazy { all.associateBy { it.id } }
+
+    fun forId(id: String) = byId[id]
     val secrets get() = all.filter { it.isSecret }
     val visible get() = all.filter { !it.isSecret }
     val negatives get() = all.filter { it.isNegative }

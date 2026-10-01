@@ -7,6 +7,7 @@ import tachiyomi.domain.achievement.interactor.GetStaleUnstartedBacklog
 import tachiyomi.domain.achievement.model.AchievementStats
 import tachiyomi.domain.achievement.model.AchievementTier
 import tachiyomi.domain.achievement.model.Achievements
+import java.util.concurrent.atomic.AtomicBoolean
 
 @SingleIn(AppScope::class)
 @Inject
@@ -23,6 +24,9 @@ class AchievementManager(
     private val getStaleUnstartedBacklog: GetStaleUnstartedBacklog,
     // KMK <--
 ) {
+    /** Single-flight guard for the suspending backlog query; see [refreshBacklog]. */
+    private val backlogQueryInFlight = AtomicBoolean(false)
+
     @Synchronized
     fun onOrganicChapterRead(totalRead: Long): List<String> {
         if (!prefs.achievementsEnabled().get()) return emptyList()
@@ -98,10 +102,20 @@ class AchievementManager(
         if (!prefs.achievementsEnabled().get()) return emptyList()
         val now = System.currentTimeMillis()
         if (!force && now - prefs.backlogLastRefresh().get() < REFRESH_THROTTLE_MS) return emptyList()
-        val stale = getStaleUnstartedBacklog.await()
-        prefs.setStaleUnstartedCount(stale)
-        prefs.backlogLastRefresh().set(now)
-        return onBacklogChanged(stale)
+        // The throttle stamp is only written after the query returns, so without this every
+        // caller racing the same window cleared the check and queued its own full library
+        // query - a burst of reads meant a burst of identical queries. One in flight is enough:
+        // it writes the stamp, which parks the rest of the window, and its own
+        // onBacklogChanged covers the unlock evaluation the skipped callers gave up.
+        if (!backlogQueryInFlight.compareAndSet(false, true)) return emptyList()
+        try {
+            val stale = getStaleUnstartedBacklog.await()
+            prefs.setStaleUnstartedCount(stale)
+            prefs.backlogLastRefresh().set(now)
+            return onBacklogChanged(stale)
+        } finally {
+            backlogQueryInFlight.set(false)
+        }
     }
     // KMK <--
 
@@ -512,6 +526,12 @@ class AchievementManager(
     }
 
     private fun checkUltimateProgress() {
+        // KMK --> Both conditions are monotone - the unlocked set and the library count only grow
+        // - so once both are satisfied this can never fire again. It runs on every chapter read
+        // and every library change, and re-reading plus re-validating the whole unlocked set is
+        // the expensive half, so short-circuit before doing any of it.
+        // KMK <--
+        if (prefs.isUnlocked("ultimate_perfection") && prefs.isUnlocked("ultimate_eternal_library")) return
         val countable = prefs.getUnlockedIds().count { Achievements.forId(it)?.countsTowardsProgress == true }
         if (countable >= 200) tryUnlockDirect("ultimate_perfection")
         val library = prefs.libraryMangaCount().get()
