@@ -198,7 +198,7 @@ class TranslationStatus {
                     skipReason = reason,
                     code = code,
                 )
-            ),
+                ),
         )
     }
 
@@ -222,7 +222,7 @@ class TranslationStatus {
                     error = error,
                     code = code,
                 )
-            ),
+                ),
         )
     }
 
