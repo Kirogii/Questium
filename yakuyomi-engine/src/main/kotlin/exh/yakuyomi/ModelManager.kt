@@ -30,6 +30,12 @@ data class RemoteModel(
     val url: String,
     val size: Long,
     val sha256: String,
+    /**
+     * Alternative models that improve quality when present but must never gate the pipeline.
+     * [isReady] only requires the non-optional ones, and a failure here is logged rather than
+     * surfaced, so a dead URL costs the user the alternative and nothing else.
+     */
+    val optional: Boolean = false,
 )
 
 @Serializable
@@ -125,6 +131,19 @@ class ModelManager(
                 sha256 = "a52db45eafc1dd2aa4ce9a339c711917fa98fefb31ce4506d4c95e8b5e3560b6",
             ),
         )
+
+        // PP-OCRv5 recognition. Same 48px CTC strip convention as the bundled int8 model, ~16.6 MB
+        // instead of ~43.6 MB, and its 18,385-entry vocabulary ships as an app asset selected by
+        // filename. Marked optional so a dead URL costs the upgrade and nothing else: the bundled
+        // model remains a complete, working fallback.
+        private val PP_OCR_V5 = RemoteModel(
+            role = "ocr",
+            name = "ppocrv5_rec.onnx",
+            url = "https://huggingface.co/PaddleOcrNet/PaddleOcrNet-models/resolve/main/PP-OCRv5_mobile_rec.onnx",
+            size = 16559278,
+            sha256 = "d253c3cbee6e507828a5271a30ab0ec8ae7c2a99d0cc8e6f844fe380809d22b3",
+            optional = true,
+        )
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -133,8 +152,10 @@ class ModelManager(
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchersHolder.get().io)
     private var downloadJob: Job? = null
 
+    private val fallbackModels: List<RemoteModel> = mergeOptionalModels(FALLBACK_MODELS)
+
     @Volatile
-    private var models: List<RemoteModel> = FALLBACK_MODELS
+    private var models: List<RemoteModel> = fallbackModels
 
     private val _status = MutableStateFlow(Status(State.NOT_INSTALLED))
     val status: StateFlow<Status> = _status.asStateFlow()
@@ -149,7 +170,22 @@ class ModelManager(
     private fun hasValidSize(model: RemoteModel): Boolean =
         file(model).takeIf { it.exists() }?.length()?.let { it == model.size } == true
 
-    fun isReady(): Boolean = models.isNotEmpty() && models.all(::hasValidSize)
+    /**
+     * Only the required models gate readiness. An optional model that failed to download leaves the
+     * reader on the bundled fallback instead of reporting the engine permanently unready.
+     */
+    fun isReady(): Boolean {
+        val required = models.filterNot { it.optional }
+        return required.isNotEmpty() && required.all(::hasValidSize)
+    }
+
+    /**
+     * Re-attaches the app-provided optional models to whichever manifest is active.
+     * [refreshManifest] replaces [models] wholesale, so an entry listed in [FALLBACK_MODELS] alone
+     * would vanish the first time the remote manifest fetched.
+     */
+    private fun mergeOptionalModels(base: List<RemoteModel>): List<RemoteModel> =
+        if (base.any { it.name == PP_OCR_V5.name }) base else base + PP_OCR_V5
 
     fun installedBytes(): Long = models.sumOf { model ->
         file(model).takeIf { it.exists() }?.length() ?: 0L
@@ -181,7 +217,8 @@ class ModelManager(
      */
     private fun verifyInBackground() {
         scope.launch {
-            val corrupt = verify().filterValues { !it }.keys
+            val required = models.filterNot { it.optional }.map { it.name }.toSet()
+            val corrupt = verify().filterKeys { it in required }.filterValues { !it }.keys
             if (corrupt.isNotEmpty()) {
                 xLogW("Yakuyomi model files missing/corrupt: $corrupt")
                 _status.value = Status(State.NOT_INSTALLED, downloadedBytes = installedBytes())
@@ -224,21 +261,33 @@ class ModelManager(
             var completed = 0L
             _status.value = Status(State.DOWNLOADING, completed, total)
 
-            try {
-                for (model in toFetch) {
-                    if (!isActive) return@launch
-                    _status.value = _status.value.copy(currentFile = model.name)
+            // Each model is attempted independently: one unreachable URL must not abandon the
+            // files queued behind it, which is what a single try around the loop would do.
+            val failedRequired = mutableListOf<String>()
+            val failedOptional = mutableListOf<String>()
+            for (model in toFetch) {
+                if (!isActive) return@launch
+                _status.value = _status.value.copy(currentFile = model.name)
+                try {
                     downloadAndVerify(model) { delta ->
                         completed += delta
                         _status.value = _status.value.copy(downloadedBytes = completed, totalBytes = total)
                     }
+                } catch (e: CancellationException) {
+                    refresh()
+                    return@launch
+                } catch (e: Exception) {
+                    val reason = "${model.name}: ${e.message ?: "Unknown error"}"
+                    if (model.optional) failedOptional += reason else failedRequired += reason
                 }
-                refresh()
-                verifyInBackground()
-            } catch (e: CancellationException) {
-                refresh()
-            } catch (e: Exception) {
-                _status.value = Status(State.ERROR, completed, total, error = e.message ?: "Unknown error")
+            }
+            if (failedOptional.isNotEmpty()) {
+                xLogW("Yakuyomi optional models unavailable, continuing without them: $failedOptional")
+            }
+            refresh()
+            verifyInBackground()
+            if (failedRequired.isNotEmpty()) {
+                _status.value = Status(State.ERROR, completed, total, error = failedRequired.joinToString("; "))
             }
         }
     }
@@ -283,7 +332,7 @@ class ModelManager(
                     if (manifest.models.isNotEmpty() && manifest.models.size < 20) {
                         val valid = manifest.models.filter { it.name.isNotBlank() && it.url.startsWith("https://") && it.size in 1024..500_000_000L && it.sha256.length == 64 }
                         if (valid.size == manifest.models.size) {
-                            models = applyCustomModelUrls(valid)
+                            models = mergeOptionalModels(applyCustomModelUrls(valid))
                         }
                     }
                 }
@@ -292,8 +341,8 @@ class ModelManager(
                 if (attempt == 0) kotlinx.coroutines.delay(500)
             }
         }
-        if (models === FALLBACK_MODELS || models == FALLBACK_MODELS) {
-            models = applyCustomModelUrls(FALLBACK_MODELS)
+        if (models == fallbackModels) {
+            models = applyCustomModelUrls(fallbackModels)
         }
     }
 
