@@ -45,9 +45,11 @@ class TranslationManager(
     }
 
     suspend fun shouldTranslateForManga(mangaId: Long): Boolean {
-        if (!shouldTranslate()) return false
-        return perMangaStore.isEnabled(mangaId)
+        if (!isEnabledForManga(mangaId)) return false
+        return true
     }
+
+    fun isEnabledForManga(mangaId: Long): Boolean = isEnabled() && !isGated() && perMangaStore.isEnabled(mangaId)
 
     fun isPerMangaEnabled(mangaId: Long): Boolean = perMangaStore.isEnabled(mangaId)
 

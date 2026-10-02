@@ -27,7 +27,7 @@ object ReaderTranslation : PageTranslator {
     suspend fun needsOriginalBytes(page: ReaderPage): Boolean {
         val manager = globalAppGraph.translationManager
         val mangaId = page.chapter.chapter.manga_id ?: 0L
-        if (manager.isEnabled() && !manager.isGated() && manager.isPerMangaEnabled(mangaId)) return true
+        if (manager.isEnabledForManga(mangaId)) return true
         return UpscaleReaderHook.isUpscaleActive(mangaId)
     }
 
@@ -47,7 +47,7 @@ object ReaderTranslation : PageTranslator {
         val manager = globalAppGraph.translationManager
         val statusStore = globalAppGraph.translationStatus
         val mangaId = page.chapter.chapter.manga_id ?: 0L
-        if (!manager.isEnabled() || manager.isGated() || !manager.isPerMangaEnabled(mangaId)) return
+        if (!manager.isEnabledForManga(mangaId)) return
 
         val chapterId = page.chapter.chapter.id ?: 0L
         val pageIndex = page.index

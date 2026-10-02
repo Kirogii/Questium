@@ -1170,6 +1170,9 @@ class MangaScreenModel(
             }
 
             val translationManager = globalAppGraph.translationManager
+            // Deliberately not isEnabledForManga: this drives the chapter-list progress indicator, which
+            // keeps showing translation state while the UI is gated (incognito/censor only blocks
+            // starting work, not displaying what already ran). The gate is not part of this question.
             val mtlEnabled = translationManager.isEnabled() && translationManager.isPerMangaEnabled(manga.id)
             val transStatus = if (mtlEnabled) translationStatus.chapterStatus(manga.id, chapter.id) else null
             val translationProgress = if (transStatus != null && transStatus.totalPages > 0) {

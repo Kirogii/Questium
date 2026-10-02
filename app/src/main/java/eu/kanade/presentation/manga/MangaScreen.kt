@@ -1741,6 +1741,7 @@ private fun onChapterItemClick(
 
 @Composable
 fun TranslateMangaToggle(manga: tachiyomi.domain.manga.model.Manga) {
+    val manager = androidx.compose.runtime.remember { mihon.app.di.globalAppGraph.translationManager }
     val store = androidx.compose.runtime.remember(manga.id) { mihon.app.di.globalAppGraph.translateMangaStore }
     val prefs = androidx.compose.runtime.remember { mihon.app.di.globalAppGraph.translationPreferences }
     val preferenceStore = androidx.compose.runtime.remember { mihon.app.di.globalAppGraph.preferenceStore }
@@ -1749,7 +1750,7 @@ fun TranslateMangaToggle(manga: tachiyomi.domain.manga.model.Manga) {
     // Gate UI when incognito/censor is on — still show row but disabled with hint
     val incognito by preferenceStore.getBoolean(tachiyomi.core.common.preference.Preference.appStateKey("incognito_mode"), false).collectAsState()
     val censor by preferenceStore.getBoolean("pref_censor_lewd_manga", false).collectAsState()
-    val isGated = incognito || censor
+    val isGated = manager.isGated() && (incognito || censor)
     // When global MTL is off, hide the per-manga toggle entirely.
     if (!globalEnabled) return
     val subtitle = if (isGated) {
@@ -1779,7 +1780,7 @@ fun TranslateMangaToggle(manga: tachiyomi.domain.manga.model.Manga) {
             checked = perMangaEnabled,
             enabled = globalEnabled && !isGated,
             onCheckedChange = {
-                store.setEnabled(manga.id, it)
+                manager.setPerMangaEnabled(manga.id, it)
             },
         )
     }

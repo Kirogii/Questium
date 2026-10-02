@@ -64,9 +64,20 @@ class TranslationManager(
         return true
     }
 
+    /**
+     * The one enablement gate: on globally, not gated, and on for this manga.
+     *
+     * Synchronous because the reader consults it on every page it binds, where suspending would mean
+     * a read per page. [shouldTranslateForManga] answers the same question and adds the log line.
+     */
+    fun isEnabledForManga(mangaId: Long): Boolean = isEnabled() && !isGated() && perMangaStore.isEnabled(mangaId)
+
     suspend fun shouldTranslateForManga(mangaId: Long): Boolean {
-        if (!shouldTranslate()) return false
-        return perMangaStore.isEnabled(mangaId)
+        if (!isEnabledForManga(mangaId)) {
+            if (isEnabled() && isGated()) xLogD("Translation gated: incognito/censor")
+            return false
+        }
+        return true
     }
 
     fun isPerMangaEnabled(mangaId: Long): Boolean = perMangaStore.isEnabled(mangaId)
