@@ -250,9 +250,17 @@ empty changelog:
 3. Push. `auto_release` validates the notes *before* creating the tag, so an empty
    file fails the run on `master` with nothing tagged, rather than publishing an
    empty release.
-4. **After** the release lands, run `--cut v<version>` to archive the notes into
-   `CHANGELOG.md` under that version and reset the file for the next cycle. Commit
-   the result.
+4. `auto_release` publishes the release and **then** runs the `cut-notes` job, which
+   archives the notes into `CHANGELOG.md` under that version and resets the file for
+   the next cycle. No manual step remains — do not run `--cut` yourself. The job cuts
+   at the tag, not at `master`, and refuses if `RELEASE_NOTES.md` changed after the tag
+   was made, because filing those bullets under a release that predates them is worse
+   than leaving them for the next cycle.
+
+Because the reset lands on `master`, an empty `RELEASE_NOTES.md` is a **legitimate**
+state between a release and the next cycle's first bullet. The validation in
+`check-version` is therefore gated on a new version actually being released; do not
+ungate it, or every post-release push turns red.
 
 Commit messages are for developers; `RELEASE_NOTES.md` is for users. Write both.
 
