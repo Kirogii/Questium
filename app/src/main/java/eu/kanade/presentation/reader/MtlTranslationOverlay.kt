@@ -180,7 +180,6 @@ private fun TranslatingChip(
     }
 }
 
-@Composable
 /**
  * @param reason the engine's own explanation, shown only when it is not the benign "no text" case -
  *   otherwise "Skipped — no text detected" would claim a reason the engine never gave (detection
@@ -188,8 +187,7 @@ private fun TranslatingChip(
  */
 @Composable
 private fun SkippedChip(skippedCount: Int, reason: String?) {
-    val benign = reason.isNullOrBlank() || reason.contains("no text", ignoreCase = true) ||
-        reason.contains("No text", ignoreCase = true)
+    val benign = reason.isNullOrBlank() || reason.contains("no text", ignoreCase = true)
     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
