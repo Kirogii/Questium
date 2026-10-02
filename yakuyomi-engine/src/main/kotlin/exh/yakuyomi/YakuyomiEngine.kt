@@ -134,7 +134,7 @@ class YakuyomiEngine(
             return null
         }
         return try {
-            val alphabet = loadAlphabet()
+            val alphabet = loadAlphabet(set.ocr)
             if (alphabet.size < 10) {
                 logcat { "Yakuyomi alphabet load failed, size=${alphabet.size}" }
                 return null
@@ -162,9 +162,27 @@ class YakuyomiEngine(
         }
     }
 
-    private fun loadAlphabet(): List<String> = runCatching {
-        context.assets.open("yakuyomi_alphabet.txt").bufferedReader().use { it.readLines().filter { l -> l.isNotBlank() } }
-    }.getOrElse { emptyList() }.takeIf { it.isNotEmpty() } ?: listOf(" ")
+    /**
+     * Loads the CTC alphabet for whichever OCR model is installed.
+     *
+     * The two models disagree on vocabulary, and the dictionary is matched to the logits by index,
+     * so the wrong list garbles every line rather than failing visibly. PP-OCRv5 is selected by
+     * filename; anything else keeps the bundled 19,264-entry list.
+     *
+     * Blank-looking lines are kept deliberately. PP-OCRv5's dictionary begins with U+3000
+     * (ideographic space), which Kotlin counts as whitespace, so an isNotBlank() filter would drop
+     * index 2 and shift every later character by one.
+     */
+    private fun loadAlphabet(ocrModelPath: String?): List<String> {
+        val asset = if (ocrModelPath != null && Regex("ppocr|ocrv5", RegexOption.IGNORE_CASE).containsMatchIn(ocrModelPath)) {
+            "yakuyomi_alphabet_ppocrv5.txt"
+        } else {
+            "yakuyomi_alphabet.txt"
+        }
+        return runCatching {
+            context.assets.open(asset).bufferedReader().use { it.readLines().filter { l -> l.isNotEmpty() } }
+        }.getOrElse { emptyList() }.takeIf { it.isNotEmpty() } ?: listOf(" ")
+    }
 
     /**
      * Returns the cached sessions, building them on first use. Not suspend: callers hold
