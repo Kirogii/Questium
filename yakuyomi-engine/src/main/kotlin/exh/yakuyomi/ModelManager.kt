@@ -139,7 +139,7 @@ class ModelManager(
         private val PP_OCR_V5 = RemoteModel(
             role = "ocr",
             name = "ppocrv5_rec.onnx",
-            url = "https://huggingface.co/PaddleOcrNet/PaddleOcrNet-models/resolve/main/PP-OCRv5_mobile_rec.onnx",
+            url = "https://github.com/PineappleTwilight/houri/releases/download/models-v1/PP-OCRv5_mobile_rec.onnx",
             size = 16559278,
             sha256 = "d253c3cbee6e507828a5271a30ab0ec8ae7c2a99d0cc8e6f844fe380809d22b3",
             optional = true,
