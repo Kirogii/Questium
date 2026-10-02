@@ -25,4 +25,22 @@ open class ReaderPage(
             field = value
             if (value) shiftedPage = false
         }
+
+    // KMK -->
+    /**
+     * True for the extra pages a too-tall image was split into.
+     *
+     * Such a page is one vertical slice of a source page, so it never pairs into a spread and its
+     * [index] is a synthetic value rather than a position in the chapter's list.
+     */
+    var splitSegment: Boolean = false
+
+    /**
+     * How many segments this page's image was split into, or 0 while it is still one image.
+     *
+     * Set on the page the split started from, which keeps the split from being redone - and its
+     * extra pages re-added to the chapter - every time the page is queued or reloaded.
+     */
+    var splitSegmentCount: Int = 0
+    // KMK <--
 }

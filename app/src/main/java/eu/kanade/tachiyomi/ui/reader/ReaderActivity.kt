@@ -1269,17 +1269,18 @@ class ReaderActivity : BaseActivity() {
      */
     fun onPageSelected(page: ReaderPage, hasExtraPage: Boolean = false) {
         // SY -->
+        val pageNumber = page.chapter.displayNumber(page)
         val currentPageText = if (hasExtraPage) {
             val invertDoublePage = (viewModel.state.value.viewer as? PagerViewer)?.config?.invertDoublePages ?: false
             if ((resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_LTR) xor
                 invertDoublePage
             ) {
-                "${page.number}-${page.number + 1}"
+                "$pageNumber-${pageNumber + 1}"
             } else {
-                "${page.number + 1}-${page.number}"
+                "${pageNumber + 1}-$pageNumber"
             }
         } else {
-            "${page.number}"
+            "$pageNumber"
         }
         // SY <--
         viewModel.onPageSelected(page, /* SY --> */ currentPageText, hasExtraPage /* SY <-- */)
@@ -1339,6 +1340,7 @@ class ReaderActivity : BaseActivity() {
             context = applicationContext,
             message = // SY -->
             if (secondPage != null) {
+                val pageNumber = page.chapter.displayNumber(page)
                 stringResource(
                     SYMR.strings.share_pages_info,
                     manga.title,
@@ -1346,14 +1348,14 @@ class ReaderActivity : BaseActivity() {
                     if (resources.configuration.layoutDirection ==
                         View.LAYOUT_DIRECTION_LTR
                     ) {
-                        "${page.number}-${page.number + 1}"
+                        "$pageNumber-${pageNumber + 1}"
                     } else {
-                        "${page.number + 1}-${page.number}"
+                        "${pageNumber + 1}-$pageNumber"
                     },
                 )
             } else {
                 // SY <--
-                stringResource(MR.strings.share_page_info, manga.title, chapter.name, page.number)
+                stringResource(MR.strings.share_page_info, manga.title, chapter.name, page.chapter.displayNumber(page))
             },
         )
         startActivity(intent)

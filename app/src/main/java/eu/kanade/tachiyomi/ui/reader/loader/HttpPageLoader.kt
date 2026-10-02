@@ -24,11 +24,24 @@ import mihon.app.di.globalAppGraph
 import mihon.core.concurrency.AppDispatchersHolder
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.withIOContext
+import tachiyomi.core.common.util.system.TallPageSplitter
+import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.PriorityBlockingQueue
 import kotlin.concurrent.atomics.AtomicInt
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.concurrent.atomics.incrementAndFetch
 import kotlin.math.min
+
+/** Cache-key suffix distinguishing a split segment from the image it was cut from. */
+private const val SEGMENT_KEY_SUFFIX = "#segment-"
+
+/**
+ * First index handed to an injected split segment.
+ *
+ * Well clear of any real page count, so a segment index can never collide with the index of a page
+ * the source listed.
+ */
+private const val SEGMENT_INDEX_BASE = 1 shl 28
 
 /**
  * Loader used to load chapters from an online source.
@@ -45,6 +58,14 @@ internal class HttpPageLoader(
 ) : PageLoader() {
 
     private val scope = CoroutineScope(SupervisorJob() + AppDispatchersHolder.get().readers)
+
+    /**
+     * Tallest page the readers will decode, in pixels.
+     *
+     * The decoder rejects anything past 16384px on a side and the WebGPU renderer's resize path
+     * caps at 8192px, so a segment is held to the stricter of the two.
+     */
+    private val maxSegmentHeight = 8192
 
     /**
      * A queue used to manage requests one by one while allowing priorities.
@@ -187,12 +208,12 @@ internal class HttpPageLoader(
      * @return a list of [PriorityPage] that were added to the [queue]
      */
     private fun preloadNextPages(currentPage: ReaderPage, amount: Int): List<PriorityPage> {
-        val pageIndex = currentPage.index
         val pages = currentPage.chapter.pages ?: return emptyList()
-        if (pageIndex == pages.lastIndex) return emptyList()
+        val position = currentPage.chapter.positionOf(currentPage)
+        if (position < 0) return emptyList()
 
         return pages
-            .subList(pageIndex + 1, min(pageIndex + 1 + amount, pages.size))
+            .subList(position + 1, min(position + 1 + amount, pages.size))
             .mapNotNull {
                 if (it.status == Page.State.Queue) {
                     PriorityPage(it, 0).apply { queue.offer(this) }
@@ -214,15 +235,25 @@ internal class HttpPageLoader(
                 page.status = Page.State.LoadPage
                 page.imageUrl = source.getImageUrl(page)
             }
-            val imageUrl = page.imageUrl!!
+            // page.imageUrl keeps naming the whole source image even after a split: only the source
+            // can be asked for it, while the segment files live under derived cache keys and are
+            // read through page.stream instead.
+            val imageUrl = page.imageUrl!!.substringBefore(SEGMENT_KEY_SUFFIX)
+
+            if (page.splitSegment) {
+                loadSegment(page, imageUrl)
+                return
+            }
 
             if (!chapterCache.isImageInCache(imageUrl)) {
                 page.status = Page.State.DownloadImage
+                page.imageUrl = imageUrl
                 val imageResponse = source.getImage(page, dataSaver)
                 chapterCache.putImageToCache(imageUrl, imageResponse)
             }
 
-            page.stream = { chapterCache.getImageFile(imageUrl).inputStream() }
+            val firstKey = splitOversizedPage(page, imageUrl) ?: imageUrl
+            page.stream = { chapterCache.getImageFile(firstKey).inputStream() }
             page.status = Page.State.Ready
         } catch (e: Throwable) {
             page.status = Page.State.Error(e)
@@ -231,6 +262,101 @@ internal class HttpPageLoader(
             }
         }
     }
+
+    /**
+     * Points an injected segment page at its own cache file, re-cutting just that segment if its
+     * file was evicted. Segment keys are derived from the image and the segment's position in it,
+     * so the same cut always lands on the same key.
+     */
+    private fun loadSegment(page: ReaderPage, imageUrl: String) {
+        val index = page.imageUrl!!.substringAfter(SEGMENT_KEY_SUFFIX, "").toIntOrNull() ?: 0
+        val key = ensureSegment(imageUrl, index)
+        page.stream = { chapterCache.getImageFile(key).inputStream() }
+        page.status = Page.State.Ready
+    }
+
+    /**
+     * Cache key for segment [index] of [imageUrl], re-cutting that one segment if it was evicted.
+     *
+     * The cut is driven by the image height and the segment limit, so it always produces the same
+     * number of segments in the same order - which is what makes a derived key stable enough to
+     * rebuild from.
+     */
+    private fun ensureSegment(imageUrl: String, index: Int): String {
+        val key = segmentKey(imageUrl, index)
+        if (chapterCache.isImageInCache(key)) return key
+
+        TallPageSplitter.split(
+            imageFile = chapterCache.getImageFile(imageUrl),
+            maxSegmentHeight = maxSegmentHeight,
+        ) { i, bytes ->
+            if (i == index) chapterCache.putImageToCache(key, bytes)
+        }
+        return key
+    }
+
+    /**
+     * Replaces a page too tall for the decoder with cached vertical segments, adding the segments
+     * past the first as extra pages of the chapter, and returns the cache key [page] itself now
+     * reads. Returns null when the image fits as-is.
+     *
+     * The segments are new [ReaderPage]s rather than extra entries on [page] because a page holds a
+     * single image; the chapter's list grows instead, which the viewers pick up because they
+     * re-read [ReaderChapter.pages] and key their page cache on identity rather than position.
+     */
+    private fun splitOversizedPage(page: ReaderPage, imageUrl: String): String? {
+        // Already cut once: the extra pages are in the chapter's list and re-adding them would
+        // duplicate every segment, so only the first segment's key is needed again.
+        if (page.splitSegmentCount > 0) return ensureSegment(imageUrl, 0)
+
+        val chapterPages = page.chapter.pages ?: return null
+        val position = page.chapter.positionOf(page)
+        if (position < 0) return null
+
+        val keys = mutableListOf<String>()
+        val split = TallPageSplitter.split(
+            imageFile = chapterCache.getImageFile(imageUrl),
+            maxSegmentHeight = maxSegmentHeight,
+        ) { index, bytes ->
+            val key = segmentKey(imageUrl, index)
+            chapterCache.putImageToCache(key, bytes)
+            keys += key
+        }
+        if (!split || keys.isEmpty()) return null
+
+        page.splitSegmentCount = keys.size
+
+        val extras = keys.drop(1).mapIndexed { offset, key ->
+            ReaderPage(index = segmentIndex(chapterPages.size + offset), url = page.url, imageUrl = key).apply {
+                chapter = page.chapter
+                splitSegment = true
+                status = Page.State.Ready
+                stream = { chapterCache.getImageFile(key).inputStream() }
+            }
+        }
+
+        val updated = ArrayList<ReaderPage>(chapterPages.size + extras.size).apply {
+            addAll(chapterPages)
+            extras.forEachIndexed { offset, extra -> add(position + 1 + offset, extra) }
+        }
+        page.chapter.state = ReaderChapter.State.Loaded(updated)
+
+        logcat { "Split page ${page.index} (${keys.size} segments), chapter now ${updated.size} pages" }
+        return keys.first()
+    }
+
+    private fun segmentKey(imageUrl: String, index: Int) = "$imageUrl$SEGMENT_KEY_SUFFIX$index"
+
+    /**
+     * Index handed to an injected segment page.
+     *
+     * [ReaderPage] takes its index at construction and cannot be renumbered afterwards, so a
+     * segment inserted mid-chapter cannot take the position it now sits at without colliding with
+     * the page that already owns that index. Segment indices are therefore drawn from a range no
+     * real page reaches, which keeps them unique - all the readers key their page cache on
+     * `PageKey.Reader(chapterId, index)` and would hand back the wrong page on a collision.
+     */
+    private fun segmentIndex(offset: Int): Int = SEGMENT_INDEX_BASE + offset
 
     // EXH -->
     fun boostPage(page: ReaderPage) {

@@ -352,14 +352,15 @@ internal fun WebGpuViewer.pageDistance(anchor: ViewerReaderPage, page: ViewerPag
         is ViewerReaderPage -> {
             val chapter = page.page.chapter
             when {
-                chapter === anchorChapter -> page.page.index - anchor.page.index
+                chapter === anchorChapter ->
+                    chapter.positionOf(page.page) - anchorChapter.positionOf(anchor.page)
                 chapter === anchor.nextChapter -> {
-                    val edge = anchorChapter.pages?.size?.let { it - 1 - anchor.page.index } ?: 0
-                    edge + 1 + page.page.index
+                    val edge = anchorChapter.pages?.size?.let { it - 1 - anchorChapter.positionOf(anchor.page) } ?: 0
+                    edge + 1 + chapter.positionOf(page.page)
                 }
                 chapter === anchor.prevChapter -> {
-                    val edge = chapter.pages?.size?.let { it - 1 - page.page.index } ?: 0
-                    -(anchor.page.index + 1 + edge)
+                    val edge = chapter.pages?.size?.let { it - 1 - chapter.positionOf(page.page) } ?: 0
+                    -(anchorChapter.positionOf(anchor.page) + 1 + edge)
                 }
                 else -> null
             }
@@ -388,10 +389,10 @@ internal fun WebGpuViewer.pageDistance(anchor: ViewerTransitionPage, page: Viewe
         is ViewerReaderPage -> {
             val chapter = page.page.chapter
             when {
-                chapter === next -> page.page.index + 1
+                chapter === next -> chapter.positionOf(page.page) + 1
                 chapter === prev -> {
                     val size = chapter.pages?.size
-                    if (size == null) -1 else -(size - page.page.index)
+                    if (size == null) -1 else -(size - chapter.positionOf(page.page))
                 }
                 else -> null
             }

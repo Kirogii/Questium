@@ -817,7 +817,7 @@ class ReaderViewModel(
             loadNewChapter(selectedChapter)
         }
 
-        val inDownloadRange = page.number.toDouble() / pages.size > 0.25
+        val inDownloadRange = selectedChapter.displayNumber(page).toDouble() / pages.size > 0.25
         if (inDownloadRange) {
             downloadNextChapters()
         }
@@ -927,12 +927,14 @@ class ReaderViewModel(
      */
     private suspend fun updateChapterProgress(
         readerChapter: ReaderChapter,
-        page: Page,
+        page: ReaderPage,
         // SY -->
         hasExtraPage: Boolean,
         // SY <--
     ) {
-        val pageIndex = page.index
+        // A list position, not Page.index: this value is persisted as last_page_read, and a page
+        // inserted by a tall-image split carries a synthetic index that would be written as-is.
+        val pageIndex = readerChapter.positionOf(page).takeIf { it >= 0 } ?: page.index
         val syncTriggerOpt = syncPreferences.getSyncTriggerOptions()
         val isSyncEnabled = syncPreferences.isSyncEnabled()
 
@@ -947,7 +949,7 @@ class ReaderViewModel(
 
             if (readerChapter.pages?.lastIndex == pageIndex ||
                 // SY -->
-                (hasExtraPage && readerChapter.pages?.lastIndex?.minus(1) == page.index)
+                (hasExtraPage && readerChapter.pages?.lastIndex?.minus(1) == pageIndex)
                 // SY <--
             ) {
                 updateChapterProgressOnComplete(readerChapter)
@@ -1351,7 +1353,7 @@ class ReaderViewModel(
         page: ReaderPage,
     ): String {
         val chapter = page.chapter.chapter
-        val filenameSuffix = " - ${page.number}"
+        val filenameSuffix = " - ${page.chapter.displayNumber(page)}"
         return DiskUtil.buildValidFilename(
             "${manga.title} - ${chapter.name}",
             MAX_FILE_NAME_BYTES - filenameSuffix.byteSize(),

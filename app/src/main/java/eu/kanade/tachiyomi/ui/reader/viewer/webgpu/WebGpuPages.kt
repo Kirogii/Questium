@@ -264,7 +264,7 @@ class ViewerReaderPage(
                 transition = viewer.config.alwaysShowChapterTransition,
             ) {
                 chapterPages?.let { pages ->
-                    pages.getOrNull(page.index - 1)?.let { viewer.getPage(it, viewer.currentPage) } ?: run {
+                    pages.getOrNull(page.chapter.positionOf(page) - 1)?.let { viewer.getPage(it, viewer.currentPage) } ?: run {
                         if (prevCh == null) return@run viewer.getPage(null, page.chapter, viewer.currentPage)
 
                         if (prevCh.state !is ReaderChapter.State.Loaded) {
@@ -293,7 +293,7 @@ class ViewerReaderPage(
                 transition = viewer.config.alwaysShowChapterTransition,
             ) {
                 chapterPages?.let { pages ->
-                    pages.getOrNull(page.index + 1)?.let { viewer.getPage(it, viewer.currentPage) } ?: run {
+                    pages.getOrNull(page.chapter.positionOf(page) + 1)?.let { viewer.getPage(it, viewer.currentPage) } ?: run {
                         if (nextCh == null) return@run viewer.getPage(page.chapter, null, viewer.currentPage)
 
                         if (nextCh.state !is ReaderChapter.State.Loaded) {

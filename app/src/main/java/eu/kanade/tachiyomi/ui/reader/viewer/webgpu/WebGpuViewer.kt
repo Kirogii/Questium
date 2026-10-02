@@ -302,6 +302,7 @@ open class WebGpuViewer(
      */
     internal fun derivedSpreadPosition(page: ReaderPage): SpreadPosition {
         if (!isDualPageMode()) return SpreadPosition.SINGLE
+        if (page.splitSegment) return SpreadPosition.SINGLE
         val offset = page.index - spreadStartIndex(page.chapter.chapter.id, page.index)
         return if (offset >= 0 && offset % 2 == 0) anchorPosition else partnerPosition
     }
@@ -321,6 +322,7 @@ open class WebGpuViewer(
 
     /** Registers whether [page] stands alone, for [spreadStartIndex]. Must hold [lock]. */
     internal fun noteIfLone(page: ViewerReaderPage) {
+        if (page.page.splitSegment) return
         val indices = loneIndices.getOrPut(page.page.chapter.chapter.id) { TreeSet() }
         if (page.standsAlone) indices.add(page.page.index) else indices.remove(page.page.index)
     }
@@ -1200,11 +1202,16 @@ open class WebGpuViewer(
                 if (isContinuous && pendingContinuousRestoreChapterId == cid) return
                 if (!isContinuous && pendingPagedRestoreChapterId == cid) return
                 // KMK <--
-                pager.state.seedPageIndex(page.page.index)
+                // Saved as a list position, not Page.index: an anchor is restored with
+                // coerceIn(0, pages.lastIndex), so a split segment's out-of-range index would
+                // clamp to the chapter's last page and resume the reader at the end.
+                val position = page.page.chapter.positionOf(page.page)
+                if (position < 0) return
+                pager.state.seedPageIndex(position)
                 val anchor = try {
-                    pager.state.captureAnchor().copy(pageIndex = page.page.index)
+                    pager.state.captureAnchor().copy(pageIndex = position)
                 } catch (_: Exception) {
-                    PageAnchor(pageIndex = page.page.index)
+                    PageAnchor(pageIndex = position)
                 }
                 currentAnchor = anchor
                 positionStore.saveAnchor(cid, anchor, force = force)

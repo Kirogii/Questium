@@ -197,6 +197,29 @@ class ChapterCache(
         }
     }
 
+    /**
+     * Add a locally produced image to cache.
+     *
+     * [imageUrl] is only a cache key here, not something that can be fetched - callers pass
+     * synthetic keys for images the app made itself.
+     */
+    @Throws(IOException::class)
+    fun putImageToCache(imageUrl: String, bytes: ByteArray) {
+        var editor: DiskLruCache.Editor? = null
+
+        try {
+            val key = DiskUtil.hashKeyForDisk(imageUrl)
+            editor = diskCache.edit(key) ?: return
+
+            editor.newOutputStream(0).use { it.write(bytes) }
+
+            diskCache.flush()
+            editor.commit()
+        } finally {
+            editor?.abortUnlessCommitted()
+        }
+    }
+
     fun clear(): Int {
         var deletedFiles = 0
         cacheDir.listFiles()?.forEach {
