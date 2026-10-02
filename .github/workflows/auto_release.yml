@@ -44,22 +44,6 @@ jobs:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Curated release notes
-        id: notes
-        run: |
-          # Deliberately before the tag step below. RELEASE_NOTES.md is cleared
-          # by --cut *after* a release, so at bump time it must still hold this
-          # cycle's notes; a push that bumps the version with an empty file
-          # would otherwise create the tag and publish an empty changelog, and
-          # the tag already existing would then make every later run skip the
-          # release. Failing here leaves master untagged and fixable.
-          python3 .github/scripts/release_notes.py --check
-          {
-            echo "NOTES<<notes_delimiter"
-            python3 .github/scripts/release_notes.py --render
-            echo "notes_delimiter"
-          } >> $GITHUB_OUTPUT
-
       - name: Extract version from build.gradle.kts
         id: version
         run: |
@@ -80,7 +64,8 @@ jobs:
         id: check
         run: |
           # ls-remote checks the remote so a shallow clone (fetch-depth: 1) can't
-          # miss a tag created by an earlier run.
+          # miss a tag created by an earlier run. Read-only: creating the tag
+          # waits until the notes check below has passed.
           if git ls-remote --tags origin "${{ steps.version.outputs.TAG }}" | grep -q .; then
             echo "NEW_VERSION=false"
             echo "NEW_VERSION=false" >> $GITHUB_OUTPUT
@@ -89,13 +74,36 @@ jobs:
             echo "NEW_VERSION=true"
             echo "NEW_VERSION=true" >> $GITHUB_OUTPUT
             echo "New version detected: ${{ steps.version.outputs.TAG }}"
-
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "${{ steps.version.outputs.TAG }}" -m "Release ${{ steps.version.outputs.TAG }}"
-            git push origin "${{ steps.version.outputs.TAG }}"
-            echo "Created and pushed tag: ${{ steps.version.outputs.TAG }}"
           fi
+
+      - name: Curated release notes
+        id: notes
+        # Only when a release is actually being cut. The cut-notes job resets
+        # RELEASE_NOTES.md after publishing, so the file is legitimately empty
+        # from then until the next cycle adds to it; validating on every push
+        # would turn each of those into a red run for no reason.
+        if: steps.check.outputs.NEW_VERSION == 'true'
+        run: |
+          # Deliberately before the tag step below. A push that bumps the version
+          # with an empty file would otherwise create the tag and publish an
+          # empty changelog, and the tag already existing would then make every
+          # later run skip the release. Failing here leaves master untagged and
+          # fixable.
+          python3 .github/scripts/release_notes.py --check
+          {
+            echo "NOTES<<notes_delimiter"
+            python3 .github/scripts/release_notes.py --render
+            echo "notes_delimiter"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create release tag
+        if: steps.check.outputs.NEW_VERSION == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ steps.version.outputs.TAG }}" -m "Release ${{ steps.version.outputs.TAG }}"
+          git push origin "${{ steps.version.outputs.TAG }}"
+          echo "Created and pushed tag: ${{ steps.version.outputs.TAG }}"
 
   prepare-build:
     name: Prepare build metadata
@@ -448,6 +456,58 @@ jobs:
           draft: false
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  cut-notes:
+    name: Archive release notes
+    runs-on: 'ubuntu-24.04'
+    needs:
+      - check-version
+      - release-app
+    # Runs after the release is published so the archived section matches what
+    # users actually saw. The file stays populated until here, which is why
+    # check-version above still finds this cycle's bullets.
+    if: needs.check-version.outputs.NEW_VERSION == 'true'
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Archive into CHANGELOG.md and reset for the next cycle
+        env:
+          TAG: ${{ needs.check-version.outputs.VERSION_TAG }}
+        run: |
+          set -euo pipefail
+          # Archive the notes as they stood at the tag. If master has gained
+          # bullets since, cutting now would file unreleased work under a
+          # release that predates it, so stop and let a human decide.
+          if ! git diff --quiet "$TAG" -- RELEASE_NOTES.md; then
+            echo "RELEASE_NOTES.md changed since $TAG was tagged; not cutting." >&2
+            git diff "$TAG" -- RELEASE_NOTES.md
+            exit 1
+          fi
+          python3 .github/scripts/release_notes.py --cut "$TAG"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md RELEASE_NOTES.md
+          git commit -m "Archive $TAG release notes into CHANGELOG.md and reset for the next cycle"
+
+          # Master moves during the tens of minutes the build takes, so rebase
+          # onto it instead of racing it. The reset itself pushes master and
+          # re-triggers this workflow, where the tag now exists and
+          # check-version reports NEW_VERSION=false so everything no-ops.
+          for attempt in 1 2 3; do
+            if git pull --rebase origin master && git push origin HEAD:master; then
+              echo "Pushed the archive and reset to master."
+              exit 0
+            fi
+            echo "Push attempt $attempt failed; retrying."
+            sleep 5
+          done
+          echo "Could not push the archive to master after 3 attempts." >&2
+          exit 1
 
   notify-discord:
     name: Announce release on Discord
