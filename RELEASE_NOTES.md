@@ -17,6 +17,7 @@ files moved. See .github/scripts/release_notes.py.
 - The Private extension installer is now offered in release builds, not just debug ones. It is the only installer that needs no install permission at all, so it keeps working when Android's "install unverified apps" setting is unavailable or has lapsed — which now means a 24 hour wait and a warning that can switch itself back off. Extensions installed privately are checked against the repository signing key before they are stored, and a copy that fails verification is discarded instead of replacing a working extension
 
 ### Improve
+- The reader's translation indicator now names the stage a page is actually in — detecting, translating, inpainting, or typesetting — instead of guessing from the page count, and pages that could not be translated now say why rather than only that they were skipped
 - The History tab's "Resume" button now skips back to the most recent entry you haven't finished, instead of always starting from the most recent entry of all
 - Achievements use noticeably less battery while you read. Checking whether you'd already earned something no longer rescans the whole achievement list for every single check, so finishing a chapter does far less work than before
 

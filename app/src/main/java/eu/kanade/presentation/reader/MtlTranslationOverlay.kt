@@ -94,13 +94,21 @@ fun MtlTranslationOverlay(
             shadowElevation = 4.dp,
         ) {
             when {
-                isTranslating -> TranslatingChip(doneCount = translatedCount, totalPages = knownTotal, hasTotal = hasTotal)
+                isTranslating -> TranslatingChip(
+                    doneCount = translatedCount,
+                    totalPages = knownTotal,
+                    hasTotal = hasTotal,
+                    stage = chapterStatus?.activeStage ?: exh.yakuyomi.TranslationStatus.PipelineStage.IDLE,
+                )
                 errorCount > 0 -> ErrorChip(
                     errorCount = errorCount,
                     reason = chapterStatus?.lastError,
                     onRetry = onRetry,
                 )
-                skippedCount > 0 && translatedCount == 0 -> SkippedChip(skippedCount = skippedCount)
+                skippedCount > 0 && translatedCount == 0 -> SkippedChip(
+                    skippedCount = skippedCount,
+                    reason = chapterStatus?.pages?.values?.firstOrNull { it.skipReason != null }?.skipReason,
+                )
                 showTranslated -> TranslatedChip()
                 else -> {}
             }
@@ -109,7 +117,12 @@ fun MtlTranslationOverlay(
 }
 
 @Composable
-private fun TranslatingChip(doneCount: Int, totalPages: Int, hasTotal: Boolean) {
+private fun TranslatingChip(
+    doneCount: Int,
+    totalPages: Int,
+    hasTotal: Boolean,
+    stage: exh.yakuyomi.TranslationStatus.PipelineStage,
+) {
     Column(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -141,13 +154,22 @@ private fun TranslatingChip(doneCount: Int, totalPages: Int, hasTotal: Boolean) 
             }
         }
         if (hasTotal) {
-            // Approximate: the pipeline reports per-page outcomes, not which stage is running, so
-            // this is inferred from progress. Treated as a hint, not a measurement.
-            val stageRes = when {
-                doneCount == 0 -> stringResource(KMR.strings.mtl_stage_detecting_ocr)
-                doneCount < totalPages / 2 -> stringResource(KMR.strings.mtl_stage_translating)
-                doneCount < totalPages -> stringResource(KMR.strings.mtl_stage_inpainting)
-                else -> stringResource(KMR.strings.mtl_stage_finalizing)
+            // Reported by the engine, not derived from the page count: a stage is whichever one the
+            // pipeline is actually in for the page in flight. IDLE only when nothing has started,
+            // so it falls back to the page count to avoid labelling an unstarted chapter.
+            val stageRes = when (stage) {
+                exh.yakuyomi.TranslationStatus.PipelineStage.DETECTING,
+                exh.yakuyomi.TranslationStatus.PipelineStage.OCR,
+                -> stringResource(KMR.strings.mtl_stage_detecting_ocr)
+
+                exh.yakuyomi.TranslationStatus.PipelineStage.TRANSLATING -> stringResource(KMR.strings.mtl_stage_translating)
+                exh.yakuyomi.TranslationStatus.PipelineStage.INPAINTING -> stringResource(KMR.strings.mtl_stage_inpainting)
+                exh.yakuyomi.TranslationStatus.PipelineStage.TYPESETTING -> stringResource(KMR.strings.mtl_stage_finalizing)
+                exh.yakuyomi.TranslationStatus.PipelineStage.IDLE -> when {
+                    doneCount == 0 -> stringResource(KMR.strings.mtl_stage_detecting_ocr)
+                    doneCount < totalPages / 2 -> stringResource(KMR.strings.mtl_stage_translating)
+                    else -> stringResource(KMR.strings.mtl_stage_finalizing)
+                }
             }
             Text(
                 text = stageRes,
@@ -159,19 +181,35 @@ private fun TranslatingChip(doneCount: Int, totalPages: Int, hasTotal: Boolean) 
 }
 
 @Composable
-private fun SkippedChip(skippedCount: Int) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = stringResource(
-                if (skippedCount > 1) KMR.strings.mtl_skipped_pages else KMR.strings.mtl_skipped_single,
-                skippedCount,
-            ),
-            style = MaterialTheme.typography.bodyMedium,
-        )
+/**
+ * @param reason the engine's own explanation, shown only when it is not the benign "no text" case -
+ *   otherwise "Skipped — no text detected" would claim a reason the engine never gave (detection
+ *   can fail outright, which is not the same as a page that simply has nothing to translate).
+ */
+@Composable
+private fun SkippedChip(skippedCount: Int, reason: String?) {
+    val benign = reason.isNullOrBlank() || reason.contains("no text", ignoreCase = true) ||
+        reason.contains("No text", ignoreCase = true)
+    Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = stringResource(
+                    if (skippedCount > 1) KMR.strings.mtl_skipped_pages else KMR.strings.mtl_skipped_single,
+                    skippedCount,
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        if (!benign && reason != null) {
+            Text(
+                text = reason,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

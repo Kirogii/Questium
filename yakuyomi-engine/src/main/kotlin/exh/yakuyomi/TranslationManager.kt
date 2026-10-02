@@ -492,6 +492,7 @@ class TranslationManager(
             when (result) {
                 is PageResult.Translated -> {
                     val webp = PageImageEncoder.toWebp(result.page, quality = 85)
+                    status.pageStage(mangaId, chapterId, pageIndex, lastStageReached(result.stats))
                     runCatching { result.page.recycle() }
                     pageCache.store(imageBytes, targetLang, model, webp, promptFingerprint)
                     if (pageCache.persistWhileReadingEnabled) {
@@ -505,11 +506,21 @@ class TranslationManager(
                     webp
                 }
                 is PageResult.Skipped -> {
-                    status.pageSkipped(mangaId, chapterId, pageIndex)
+                    // The engine's reason and code are what let the UI distinguish "nothing on this
+                    // page" from "detection failed"; both are recorded verbatim.
+                    val stage = stageForFailure(result.code)
+                    if (stage != TranslationStatus.PipelineStage.IDLE) {
+                        status.pageStage(mangaId, chapterId, pageIndex, stage)
+                    }
+                    status.pageSkipped(mangaId, chapterId, pageIndex, reason = result.reason, code = result.code.name)
                     null
                 }
                 is PageResult.Failed -> {
-                    status.pageError(mangaId, chapterId, pageIndex, friendlyError(result.reason))
+                    val stage = stageForFailure(result.code)
+                    if (stage != TranslationStatus.PipelineStage.IDLE) {
+                        status.pageStage(mangaId, chapterId, pageIndex, stage)
+                    }
+                    status.pageError(mangaId, chapterId, pageIndex, friendlyError(result.reason), code = result.code.name)
                     null
                 }
             }

@@ -20,10 +20,22 @@ class TranslationStatus {
         ERROR,
     }
 
+    enum class PipelineStage {
+        IDLE,
+        DETECTING,
+        OCR,
+        TRANSLATING,
+        INPAINTING,
+        TYPESETTING,
+    }
+
     data class PageStatus(
         val pageIndex: Int,
         val state: PageState,
         val error: String? = null,
+        val stage: PipelineStage = PipelineStage.IDLE,
+        val code: String? = null,
+        val skipReason: String? = null,
     )
 
     data class ChapterStatus(
@@ -34,6 +46,7 @@ class TranslationStatus {
         val lastError: String? = null,
         val lastCompletedAt: Long = 0L,
         val lastUpdated: Long = 0L,
+        val activeStage: PipelineStage = PipelineStage.IDLE,
     ) {
         val isTranslating: Boolean get() = false
         val translatedCount: Int get() = 0
@@ -54,8 +67,9 @@ class TranslationStatus {
     fun pageTranslating(mangaId: Long, chapterId: Long, pageIndex: Int, totalPages: Int = 0) = Unit
     fun pageDone(mangaId: Long, chapterId: Long, pageIndex: Int, totalPages: Int = 0) = Unit
     fun pageCached(mangaId: Long, chapterId: Long, pageIndex: Int, totalPages: Int = 0) = Unit
-    fun pageSkipped(mangaId: Long, chapterId: Long, pageIndex: Int) = Unit
-    fun pageError(mangaId: Long, chapterId: Long, pageIndex: Int, error: String, totalPages: Int = 0) = Unit
+    fun pageStage(mangaId: Long, chapterId: Long, pageIndex: Int, stage: PipelineStage) = Unit
+    fun pageSkipped(mangaId: Long, chapterId: Long, pageIndex: Int, reason: String? = null, code: String? = null) = Unit
+    fun pageError(mangaId: Long, chapterId: Long, pageIndex: Int, error: String, totalPages: Int = 0, code: String? = null) = Unit
     fun resetChapter(mangaId: Long, chapterId: Long) = Unit
     fun updateForRetry(mangaId: Long, chapterId: Long, pages: Set<Int>) = Unit
     fun clearAll() {

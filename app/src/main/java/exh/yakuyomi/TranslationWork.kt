@@ -112,13 +112,14 @@ class TranslationWork(
                 globalAppGraph.translationStatus.setTotalPages(mangaId, chapterId, orderedPages.size)
                 for ((index, bytes) in orderedPages) {
                     try {
-                        val before = globalAppGraph.translationStatus.chapterStatus(mangaId, chapterId)?.pages?.get(index)
                         val result = manager.translatePage(mangaId, chapterId, bytes, index)
-                        val after = globalAppGraph.translationStatus.chapterStatus(mangaId, chapterId)?.pages?.get(index)
+                        // translatePage returns only the bytes, so a null means "not translated"
+                        // without saying why; the status store is the record of which case it was.
+                        val outcome = globalAppGraph.translationStatus.chapterStatus(mangaId, chapterId)?.pages?.get(index)
                         if (result != null) {
                             translated++
                         } else {
-                            when (after?.state) {
+                            when (outcome?.state) {
                                 TranslationStatus.PageState.CACHED,
                                 TranslationStatus.PageState.DONE,
                                 TranslationStatus.PageState.SKIPPED,
@@ -128,7 +129,7 @@ class TranslationWork(
                                 else -> {}
                             }
                         }
-                        xLogD("TranslationWork page $index result=${if (result != null) "ok" else "null"} before=$before after=$after")
+                        xLogD("TranslationWork page $index result=${if (result != null) "ok" else "null"} outcome=$outcome")
                     } catch (e: Exception) {
                         errored++
                         xLogE("TranslationWork translate page $index failed", e)
