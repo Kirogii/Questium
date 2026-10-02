@@ -10,6 +10,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.putJsonObject
 import li.joye.yakuyomi.engine.Translator
 import mihon.core.concurrency.AppDispatchersHolder
 import okhttp3.MediaType.Companion.toMediaType
@@ -333,6 +334,22 @@ class YakuyomiTranslator(
             val url = "https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent?key=$apiKey"
             val visionBytes = cappedVisionBytes()
             val body = buildJsonObject {
+                putJsonObject("generationConfig") {
+                    // Pin the reply to a JSON array of {index,text} so the model cannot answer in
+                    // prose, a dash list, or a numbered list. The looser parsers still handle every
+                    // other provider, and stay as the fallback if a model ignores the constraint.
+                    put("responseMimeType", "application/json")
+                    putJsonObject("responseSchema") {
+                        put("type", "ARRAY")
+                        putJsonObject("items") {
+                            put("type", "OBJECT")
+                            putJsonObject("properties") {
+                                putJsonObject("index") { put("type", "INTEGER") }
+                                putJsonObject("text") { put("type", "STRING") }
+                            }
+                        }
+                    }
+                }
                 putJsonArray("contents") {
                     add(
                         buildJsonObject {
@@ -396,7 +413,11 @@ class YakuyomiTranslator(
             val content = first["content"]?.jsonObject ?: return parseTranslationLinesFromJson(jsonStr)
             val parts = content["parts"]?.jsonArray ?: return parseTranslationLinesFromJson(jsonStr)
             val text = parts.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.contentOrNull }.joinToString("\n")
-            if (text.isBlank()) parseTranslationLinesFromJson(jsonStr) else parseTranslationLines(text)
+            // Schema-constrained first; the loose parsers stay for a model that ignores the schema
+            // or a provider whose reply is not JSON at all.
+            parseStructuredTranslations(text)
+                ?: parseTranslationLines(text)
+                ?: parseTranslationLinesFromJson(jsonStr)
         } catch (_: Exception) {
             parseTranslationLinesFromJson(jsonStr)
         }

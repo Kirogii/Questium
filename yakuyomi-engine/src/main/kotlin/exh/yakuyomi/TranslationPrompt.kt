@@ -1,5 +1,20 @@
 package exh.yakuyomi
 
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+
+/**
+ * Stand-in the model is told to emit for a line it may not translate.
+ *
+ * The point is to keep a refusal local. Without it a single blocked region tends to make the model
+ * decline the whole page, and the caller sees a failure rather than a page that is translated
+ * everywhere except one bubble.
+ */
+internal const val CENSORED_MARKER = "[CENSORED]"
+
 private const val MAX_TEXT_LEN = 500
 private const val MAX_PROMPT_CHARS = 8000
 private const val MAX_GLOSSARY_ENTRIES = 50
@@ -49,7 +64,7 @@ private fun sfxDirective(value: String): String = when (value.trim().lowercase()
 private fun protocol(isEnFix: Boolean, target: String): String = if (isEnFix) {
     "Return each corrected line as `<|n|> correction` with its original ID, one per input line, no extra commentary, no quotes."
 } else {
-    "Return each translated line as `<|n|> translation` with its original ID, one per input line, no extra commentary, no quotes. If a line is already $target or is purely SFX/numbers, return it as-is with its ID."
+    "Return each translated line as `<|n|> translation` with its original ID, one per input line, no extra commentary, no quotes. If a line is already $target or is purely SFX/numbers, return it as-is with its ID. If any single line is blocked for content reasons, return `$CENSORED_MARKER` for that line only and still translate every other line - never refuse the whole page."
 }
 // KMK <--
 
@@ -178,7 +193,47 @@ internal fun parseTranslationLines(content: String): List<String>? {
 }
 
 /** Fallback parse for raw JSON bodies: dash lines first, then the first "content" field. */
+/**
+ * Decodes a schema-constrained reply of the shape `[{"index":1,"text":"..."}, ...]`.
+ *
+ * Cloud Gemini can be pinned to `application/json` with an ARRAY-of-OBJECT response schema, which
+ * removes the guessing [parseTranslationLines] does about dash lists and numbering. Entries are
+ * placed by their `index` rather than by position, so a reordered or partial reply still lands each
+ * translation on the line it belongs to. A bare array of strings is accepted too, since that is the
+ * schema's other legal shape.
+ *
+ * Returns null when the payload is not this shape, so the caller can fall back to the looser parsers.
+ */
+internal fun parseStructuredTranslations(jsonStr: String): List<String>? {
+    val trimmed = jsonStr.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
+    if (!trimmed.startsWith("[")) return null
+    return try {
+        val array = kotlinx.serialization.json.Json.parseToJsonElement(trimmed).jsonArray
+        val byIndex = HashMap<Int, String>()
+        var positional = 0
+        var sawObject = false
+        for (element in array) {
+            val obj = element.jsonObject
+            val text = obj["text"]?.jsonPrimitive?.contentOrNull ?: obj["translation"]?.jsonPrimitive?.contentOrNull
+            if (text != null) {
+                sawObject = true
+                val index = obj["index"]?.jsonPrimitive?.intOrNull
+                if (index != null) byIndex[index] = text else positional++
+            } else if (element.jsonPrimitive.contentOrNull != null) {
+                element.jsonPrimitive.contentOrNull.let { if (it.isNotBlank()) byIndex[positional++] = it }
+            }
+        }
+        if (!sawObject && byIndex.isEmpty()) return null
+        // Explicit indexes win; anything they did not cover falls back to the order received.
+        val maxIndex = byIndex.keys.maxOrNull() ?: return byIndex.values.toList()
+        (0..maxIndex).map { byIndex[it] ?: "" }
+    } catch (_: Exception) {
+        null
+    }
+}
+
 internal fun parseTranslationLinesFromJson(jsonStr: String): List<String>? {
+    parseStructuredTranslations(jsonStr)?.let { return it }
     val lines = jsonStr.lines().map { it.trim() }.filter { it.startsWith("- ") }
         .map { it.removePrefix("- ").trim() }
         .filter { it.isNotBlank() }
