@@ -192,7 +192,6 @@ internal fun parseTranslationLines(content: String): List<String>? {
     return working.lines().map { it.trim() }.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }
 }
 
-/** Fallback parse for raw JSON bodies: dash lines first, then the first "content" field. */
 /**
  * Decodes a schema-constrained reply of the shape `[{"index":1,"text":"..."}, ...]`.
  *
