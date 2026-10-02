@@ -219,8 +219,9 @@ internal fun parseStructuredTranslations(jsonStr: String): List<String>? {
                 sawObject = true
                 val index = obj["index"]?.jsonPrimitive?.intOrNull
                 if (index != null) byIndex[index] = text else positional++
-            } else if (element.jsonPrimitive.contentOrNull != null) {
-                element.jsonPrimitive.contentOrNull.let { if (it.isNotBlank()) byIndex[positional++] = it }
+            } else {
+                val bare = element.jsonPrimitive.contentOrNull
+                if (bare != null && bare.isNotBlank()) byIndex[positional++] = bare
             }
         }
         if (!sawObject && byIndex.isEmpty()) return null
