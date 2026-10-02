@@ -11,7 +11,7 @@ files moved. See .github/scripts/release_notes.py.
 ### New
 
 ### Improve
-- On-device text recognition now downloads PaddleOCR v5 alongside the built-in model, and uses it when it arrives. It is roughly a third of the size, so it costs less storage and download time, and it is faster at reading small text. It is an upgrade rather than a swap: if it cannot be downloaded, or the URL is unavailable, the reader carries on with the model you already have
+- On-device text recognition can now use PaddleOCR v5 instead of the built-in model. It is about a third of the size — 16.6 MB rather than 43.6 MB — which is the trade: measured on a test page, it reads hand-lettered Japanese less accurately than the built-in model, so it is offered as a space saving rather than an upgrade, and the built-in model stays the default
 - Cloud Gemini translations now ask for a structured JSON reply matched to the input lines, so the translation no longer depends on the model returning a recognisable list format. A line that cannot be translated for content reasons is replaced on its own instead of causing the whole page to fail
 - The reader's translation indicator now names the stage a page is actually in — detecting, translating, inpainting, or typesetting — instead of guessing from the page count, and pages that could not be translated now say why rather than only that they were skipped
 
