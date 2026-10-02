@@ -59,3 +59,33 @@
 - decision_delta: [static_validation_completed_with_gradle_limitation]
 - carry_forward_refs: [E-005, E-006]
 - next: handoff report and anonymized field journal
+
+## 2026-10-01T21:40:00-04:00 | lead | v3-acquisition
+- action: acquired and hashed the v3.1.0 public release APK; carved and decompiled the managed assembly
+- command_or_ref: E-007
+- result_summary: v3.1.0 is unobfuscated .NET MAUI; 58 decompiled files vs 52 at v2.6.0, +25% lines; managed PE sits at ELF offset 16384
+- artifacts: [apk/K3Manga.AutoTranslate.v3.1.0.apk, analysis/dotnet/v3/managed.dll, analysis/dotnet/decompiled-v3/]
+- evidence_ids: [E-007]
+- decision_delta: [v3_pipeline_delta_identified]
+- carry_forward_refs: [E-007]
+- next: establish what may be reused before changing any code
+
+## 2026-10-01T22:10:00-04:00 | lead | licensing-boundary
+- action: checked the public repository for source and for any licence grant
+- command_or_ref: E-008
+- result_summary: zero .cs files in the v2.6.0 and v3.1.0 trees; no LICENSE has ever existed; the download page states "All rights reserved"
+- artifacts: [evidence/E-008.md]
+- evidence_ids: [E-008]
+- decision_delta: [adaptation_is_behavioural_not_textual]
+- carry_forward_refs: [E-008]
+- next: implement the adopted techniques against documented provider APIs only
+
+## 2026-10-01T22:35:00-04:00 | lead | v3-adaptation
+- action: pinned the Gemini reply to a JSON response schema and added a per-line censored stand-in
+- command_or_ref: E-009
+- result_summary: responseMimeType + responseSchema with index-keyed parsing and loose-parser fallback; a declined line no longer fails the page
+- artifacts: [yakuyomi-engine/src/main/kotlin/exh/yakuyomi/TranslationPrompt.kt, yakuyomi-engine/src/main/kotlin/exh/yakuyomi/YakuyomiTranslator.kt]
+- evidence_ids: [E-009]
+- decision_delta: [structured_cloud_reply_adopted; ocr_swap_blocked_on_hosting]
+- carry_forward_refs: [E-009]
+- next: user-side build verification; OCR swap only once weights are published
