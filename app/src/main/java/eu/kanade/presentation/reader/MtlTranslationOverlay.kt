@@ -55,6 +55,12 @@ fun MtlTranslationOverlay(
     val chapters by status.chapters.collectAsState()
     val chapterStatus = chapters[mangaId to chapterId]
 
+    // The caller's totalPages is -1 until its chapter finishes loading, which would pin this chip to
+    // the indeterminate branch forever. The status store's own count is declared by the reader as
+    // soon as a page is translated, so prefer it and keep the parameter only as a fallback.
+    val knownTotal = chapterStatus?.totalPages?.takeIf { it > 0 } ?: totalPages
+    val hasTotal = knownTotal > 0
+
     // Transient "translated" state that auto-hides after a couple of seconds.
     var showTranslated by remember { mutableStateOf(false) }
     LaunchedEffect(chapterStatus?.isTranslating, chapterStatus?.lastCompletedAt) {
@@ -88,7 +94,7 @@ fun MtlTranslationOverlay(
             shadowElevation = 4.dp,
         ) {
             when {
-                isTranslating -> TranslatingChip(doneCount = translatedCount, totalPages = totalPages, isTranslating = isTranslating)
+                isTranslating -> TranslatingChip(doneCount = translatedCount, totalPages = knownTotal, hasTotal = hasTotal)
                 errorCount > 0 -> ErrorChip(
                     errorCount = errorCount,
                     reason = chapterStatus?.lastError,
@@ -103,7 +109,7 @@ fun MtlTranslationOverlay(
 }
 
 @Composable
-private fun TranslatingChip(doneCount: Int, totalPages: Int, isTranslating: Boolean = true) {
+private fun TranslatingChip(doneCount: Int, totalPages: Int, hasTotal: Boolean) {
     Column(
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -112,7 +118,7 @@ private fun TranslatingChip(doneCount: Int, totalPages: Int, isTranslating: Bool
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (totalPages > 0) {
+            if (hasTotal) {
                 val progress = (doneCount.coerceAtMost(totalPages)).toFloat() / totalPages.toFloat()
                 CircularProgressIndicator(
                     progress = { progress },
@@ -134,16 +140,17 @@ private fun TranslatingChip(doneCount: Int, totalPages: Int, isTranslating: Bool
                 )
             }
         }
-        if (totalPages > 0) {
-            val stage = when {
-                doneCount == 0 && !isTranslating -> "Detecting · OCR"
-                doneCount == 0 && isTranslating -> "Translating"
-                doneCount < totalPages / 2 -> "Translating"
-                doneCount < totalPages -> "Inpainting · Typesetting"
-                else -> "Finalizing"
+        if (hasTotal) {
+            // Approximate: the pipeline reports per-page outcomes, not which stage is running, so
+            // this is inferred from progress. Treated as a hint, not a measurement.
+            val stageRes = when {
+                doneCount == 0 -> stringResource(KMR.strings.mtl_stage_detecting_ocr)
+                doneCount < totalPages / 2 -> stringResource(KMR.strings.mtl_stage_translating)
+                doneCount < totalPages -> stringResource(KMR.strings.mtl_stage_inpainting)
+                else -> stringResource(KMR.strings.mtl_stage_finalizing)
             }
             Text(
-                text = stage,
+                text = stageRes,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
