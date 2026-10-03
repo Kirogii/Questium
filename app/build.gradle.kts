@@ -252,6 +252,10 @@ configurations.all {
 // KMK <--
 
 dependencies {
+    // KMK --> Native Quest renderer, embedded in the existing app.
+    implementation("org.godotengine:godot:4.6.0.stable")
+    implementation(files("libs/vr/godotopenxr-meta-release.aar"))
+    // KMK <--
     implementation(projects.i18n)
     // KMK -->
     implementation(projects.i18nKmk)
@@ -361,7 +365,7 @@ dependencies {
 
     // UI libraries
     implementation(libs.material)
-    implementation(libs.flexible.adapter.core)
+    implementation(projects.flexibleAdapter)
     implementation(libs.photoview)
     implementation(libs.directionalviewpager) {
         exclude(group = "androidx.viewpager", module = "viewpager")
@@ -426,6 +430,23 @@ androidComponents {
         it.packaging.resources.excludes.add("META-INF/*.version")
     }
 }
+
+// KMK --> Pack the spatial reader into the same APK. Set GODOT_BIN to Godot 4.6.
+val exportVrPack by tasks.registering(Exec::class) {
+    val readerProject = rootProject.file("xr")
+    val pack = layout.projectDirectory.file("src/main/assets/vr.pck")
+    inputs.files(fileTree(readerProject) { exclude(".godot/**", "tests/**") })
+    outputs.file(pack)
+    doFirst { pack.asFile.parentFile.mkdirs() }
+    workingDir(readerProject)
+    commandLine(
+        providers.environmentVariable("GODOT_BIN").getOrElse("godot"),
+        "--headless", "--xr-mode", "off", "--path", readerProject.absolutePath,
+        "--export-pack", "EmbeddedAndroid", pack.asFile.absolutePath,
+    )
+}
+tasks.named("preBuild").configure { dependsOn(exportVrPack) }
+// KMK <--
 
 buildscript {
     dependencies {

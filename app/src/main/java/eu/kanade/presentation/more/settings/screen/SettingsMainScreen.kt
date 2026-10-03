@@ -199,6 +199,14 @@ object SettingsMainScreen : Screen() {
     )
 
     private val items = listOfNotNull(
+        // KMK -->
+        Item(
+            titleRes = KMR.strings.pref_vr_title,
+            subtitleRes = KMR.strings.pref_vr_summary,
+            icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,
+            screen = SettingsVrScreen,
+        ),
+        // KMK <--
         Item(
             titleRes = MR.strings.pref_category_appearance,
             subtitleRes = MR.strings.pref_appearance_summary,

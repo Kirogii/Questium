@@ -165,6 +165,9 @@ jobs:
           # when source changes (e.g. 20a5e30 chmod fix, c7af74c meson fix). ccache is cached separately via
           # hendrikmuhs/ccache-action and does not need .cxx fallback.
 
+      - name: Set up Godot VR reader
+        uses: ./.github/actions/setup-godot
+
       - name: Set up gradle
         uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6
         with:

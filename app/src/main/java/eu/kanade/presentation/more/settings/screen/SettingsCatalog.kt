@@ -38,6 +38,7 @@ object SettingsCatalog {
         SettingsAppearanceScreen,
         SettingsLibraryScreen,
         SettingsReaderScreen,
+        SettingsVrScreen,
         SettingsDownloadScreen,
         SettingsTrackingScreen,
         // AM (CONNECTIONS) -->

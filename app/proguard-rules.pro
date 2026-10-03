@@ -372,3 +372,7 @@
 -dontwarn org.ietf.jgss.Oid
 -dontwarn com.google.re2j.Matcher
 -dontwarn com.google.re2j.Pattern
+
+# KMK: Godot calls the bridge by reflection from native code.
+-keep class eu.kanade.tachiyomi.ui.vr.HouriVrBridge { *; }
+-keep class org.godotengine.openxr.vendors.** { *; }

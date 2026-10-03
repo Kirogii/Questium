@@ -54,6 +54,8 @@ enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
 rootProject.name = "Houri"
 include(":app")
+include(":flexible-adapter")
+project(":flexible-adapter").projectDir = file("external/flexible-adapter")
 include(":core-metadata")
 include(":core:archive")
 include(":core:common")

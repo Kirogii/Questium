@@ -75,6 +75,7 @@ import exh.util.defaultReaderType
 import exh.util.mangaType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -122,6 +123,7 @@ import tachiyomi.source.local.isLocal
 import java.io.File
 import java.time.Instant
 import java.util.Date
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Presenter used by the activity to perform background operations.
@@ -184,6 +186,15 @@ class ReaderViewModel(
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
+
+    // KMK --> VR mode exits by restarting the engine process; wait for durable saves first.
+    private val pendingPageSaves = ConcurrentHashMap.newKeySet<Job>()
+
+    suspend fun awaitPendingPageSaves() {
+        pendingPageSaves.toList().forEach { it.join() }
+        updateHistory()
+    }
+    // KMK <--
 
     private val eventChannel = Channel<Event>()
     val eventFlow = eventChannel.receiveAsFlow()
@@ -810,6 +821,9 @@ class ReaderViewModel(
         // Save last page read and mark as read if needed
         viewModelScope.launchNonCancellable {
             updateChapterProgress(selectedChapter, page/* SY --> */, hasExtraPage/* SY <-- */)
+        }.also { save ->
+            pendingPageSaves.add(save)
+            save.invokeOnCompletion { pendingPageSaves.remove(save) }
         }
 
         if (selectedChapter != getCurrentChapter()) {

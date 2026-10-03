@@ -1,0 +1,21 @@
+name: Set up embedded VR reader
+description: Install the pinned Godot engine and validate spatial reader logic
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$RUNNER_TEMP/godot"
+        cd "$RUNNER_TEMP/godot"
+        curl --fail --location --retry 3 -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.6-stable/Godot_v4.6-stable_linux.x86_64.zip
+        echo '0c1bc5e8dca8f892a9a5fd0628b742f399fbd520e5f0051ecac021c0aa4ea5a8f0d237c8ed6b767b2afda7f7a4b32001118f1b04a82e335a5e35b947a1217940  godot.zip' | sha512sum --check
+        unzip -q godot.zip
+        chmod +x Godot_v4.6-stable_linux.x86_64
+        echo "GODOT_BIN=$RUNNER_TEMP/godot/Godot_v4.6-stable_linux.x86_64" >> "$GITHUB_ENV"
+    - shell: bash
+      run: |
+        set -euo pipefail
+        "$GODOT_BIN" --headless --xr-mode off --path xr --editor --quit
+        "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/book_check.gd
+        "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/input_check.gd
