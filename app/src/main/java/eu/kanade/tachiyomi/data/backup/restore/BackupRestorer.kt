@@ -91,6 +91,35 @@ class BackupRestorer(
             null
         }
         val prevSuppress = achievementPrefs?.suppressOrganicForImport
+        // A restore rewrites the whole unlocked-achievements preference in one write, so every
+        // id the user ever earned arrives as a single "new" change. Notifying per id queued one
+        // toast and one sound per achievement — on a fresh install that is the entire catalogue,
+        // staggered 900ms apart. Bulk mode collapses the restore into one summary; it has to
+        // bracket the whole restore, because the restore is exactly what produces the burst.
+        val unlockNotifier = try {
+            mihon.app.di.globalAppGraph.achievementNotifier
+        } catch (_: Exception) {
+            null
+        }
+        unlockNotifier?.setBulkMode(true)
+        try {
+            // Separate function so the bulk-mode bracket stays one indentation level out and
+            // its `finally` cannot be skipped by anything in the restore body.
+            restoreFromFileBulk(uri, options, achievementPrefs, prevSuppress)
+        } finally {
+            // A Throwable escaping the restore must not leave bulk mode latched, which would
+            // silence toasts for the rest of the process. Whatever the restore unlocked is
+            // summarised in exactly one line on the way out.
+            runCatching { unlockNotifier?.setBulkMode(false) }
+        }
+    }
+
+    private suspend fun restoreFromFileBulk(
+        uri: Uri,
+        options: RestoreOptions,
+        achievementPrefs: tachiyomi.domain.achievement.service.AchievementPreferences?,
+        prevSuppress: Boolean?,
+    ) {
         try {
             achievementPrefs?.suppressOrganicForImport = true
             val backup = BackupDecoder(context).decode(uri)
@@ -168,7 +197,7 @@ class BackupRestorer(
                 // KMK <--
             }
         } finally {
-            if (prevSuppress != null) achievementPrefs.suppressOrganicForImport = prevSuppress
+            if (prevSuppress != null) achievementPrefs?.suppressOrganicForImport = prevSuppress
             // KMK --> credit imported library entries towards library/backlog achievements
             // (restore runs with organic increments suppressed, so library_X unlocks
             // would otherwise never fire for DB imports).

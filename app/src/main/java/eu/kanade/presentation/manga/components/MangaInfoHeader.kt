@@ -91,6 +91,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil3.Image
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
@@ -143,7 +144,7 @@ fun MangaInfoBox(
     // KMK -->
     librarySearch: (query: String) -> Unit,
     onSourceClick: () -> Unit,
-    onCoverLoaded: (DomainMangaCover) -> Unit,
+    onCoverLoaded: (DomainMangaCover, Image) -> Unit,
     coverRatio: MutableFloatState,
     // KMK <--
     // KMK --> Explicit translated display title (spec 2026-09-23); null keeps original.
@@ -543,7 +544,7 @@ private fun MangaAndSourceTitlesLarge(
     // KMK -->
     librarySearch: (query: String) -> Unit,
     onSourceClick: () -> Unit,
-    onCoverLoaded: (DomainMangaCover) -> Unit,
+    onCoverLoaded: (DomainMangaCover, Image) -> Unit,
     coverRatio: MutableFloatState,
     usePanoramaCover: Boolean = false,
     // KMK <--
@@ -574,7 +575,7 @@ private fun MangaAndSourceTitlesLarge(
                 onCoverLoaded = { mangaCover, result ->
                     val image = result.result.image
                     coverRatio.floatValue = image.height.toFloat() / image.width
-                    onCoverLoaded(mangaCover)
+                    onCoverLoaded(mangaCover, image)
                 },
                 // KMK <--
             )
@@ -593,7 +594,7 @@ private fun MangaAndSourceTitlesLarge(
                 onCoverLoaded = { mangaCover, result ->
                     val image = result.result.image
                     coverRatio.floatValue = image.height.toFloat() / image.width
-                    onCoverLoaded(mangaCover)
+                    onCoverLoaded(mangaCover, image)
                 },
                 // KMK <--
             )
@@ -634,7 +635,7 @@ private fun MangaAndSourceTitlesSmall(
     // KMK -->
     librarySearch: (query: String) -> Unit,
     onSourceClick: () -> Unit,
-    onCoverLoaded: (DomainMangaCover) -> Unit,
+    onCoverLoaded: (DomainMangaCover, Image) -> Unit,
     coverRatio: MutableFloatState,
     usePanoramaCover: Boolean = false,
     topAlignCover: Boolean = false,
@@ -670,7 +671,7 @@ private fun MangaAndSourceTitlesSmall(
                 onCoverLoaded = { mangaCover, result ->
                     val image = result.result.image
                     coverRatio.floatValue = image.height.toFloat() / image.width
-                    onCoverLoaded(mangaCover)
+                    onCoverLoaded(mangaCover, image)
                 },
                 // KMK <--
             )
@@ -692,7 +693,7 @@ private fun MangaAndSourceTitlesSmall(
                 onCoverLoaded = { mangaCover, result ->
                     val image = result.result.image
                     coverRatio.floatValue = image.height.toFloat() / image.width
-                    onCoverLoaded(mangaCover)
+                    onCoverLoaded(mangaCover, image)
                 },
                 // KMK <--
             )

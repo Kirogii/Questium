@@ -271,8 +271,27 @@ class AchievementPreferences(
         )
     }
 
+    /**
+     * Clears every achievement-scoped value.
+     *
+     * [counterNames] and [dailyCounterNames] are supplied by the caller because the catalogue of
+     * lifetime counters lives with [AchievementManager]. Wiping without them left those counters
+     * (downloads, categories, sources, subcategories, tracker updates, ...) populated, so a
+     * user who wiped and then re-created ten categories could never re-earn `category_ten` -
+     * the tier had already been "consumed" against a counter that was never reset.
+     */
     @Synchronized
-    fun wipe() {
+    fun wipe(counterNames: Collection<String> = emptyList(), dailyCounterNames: Collection<String> = emptyList()) {
+        // Only touch counters that hold something, so a wipe does not materialise preferences
+        // for tiers the user never came near.
+        counterNames.forEach { if (counter(it).get() != 0L) counter(it).set(0) }
+        dailyCounterNames.forEach { if (dailyCounter(it).get() != 0L) dailyCounter(it).set(0) }
+        dailyCounterDay().set(0)
+        directionStreakDir().set(-1)
+        directionStreakCount().set(0)
+        weekendReadKey().set(0)
+        weekendReadCount().set(0)
+
         unlockedAchievements().set("")
         organicChaptersRead().set(0)
         mangaFinishedCount().set(0)

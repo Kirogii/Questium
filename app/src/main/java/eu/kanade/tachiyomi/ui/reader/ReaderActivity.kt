@@ -952,9 +952,15 @@ class ReaderActivity : BaseActivity() {
     }
 
     private fun exhCurrentpage(): ReaderPage? {
-        val viewer = viewModel.state.value.viewer
-        val currentPage = viewer?.currentReaderPage?.index
-        return currentPage?.let { viewModel.state.value.viewerChapters?.currChapter?.pages?.getOrNull(it) }
+        val viewer = viewModel.state.value.viewer ?: return null
+        val currentPage = viewer.currentReaderPage ?: return null
+        val pages = viewModel.state.value.viewerChapters?.currChapter?.pages ?: return null
+        // Resolved by list position, not by Page.index. An index is assigned when the list is
+        // built and a split segment carries a synthetic one, so indexing the list with it either
+        // returned the wrong page or null - which is what left the counter and the saved reading
+        // position stranded once a long strip was cut into segments.
+        val position = pages.indexOfFirst { it === currentPage }
+        return if (position >= 0) pages[position] else pages.getOrNull(currentPage.index)
     }
 
     fun reloadChapters(doublePages: Boolean, force: Boolean = false) {
@@ -969,7 +975,10 @@ class ReaderActivity : BaseActivity() {
         val currentChapter = viewModel.state.value.currentChapter
         if (doublePages) {
             // If we're moving from singe to double, we want the current page to be the first page
-            val currentPage = viewModel.state.value.currentPage
+            // currentPage is 1-based (a stored position plus one), so the pages *before* the
+            // current one are take(currentPage - 1). Counting from currentPage included the page
+            // itself, which inverted the parity whenever the current page was a lone one.
+            val currentPage = viewModel.state.value.currentPage - 1
             viewer.config.shiftDoublePage = (
                 currentPage + (currentChapter?.pages?.take(currentPage)?.count { it.fullPage || it.isolatedPage } ?: 0)
                 ) % 2 != 0
@@ -1659,7 +1668,9 @@ class ReaderActivity : BaseActivity() {
                             },
                             startTimestamp = System.currentTimeMillis(),
                             // KMK -->
-                            currentPage = viewModel.state.value.currentPage + 1,
+                            // Already 1-based; the extra +1 reported a page number one ahead
+                            // of the reader's own counter.
+                            currentPage = viewModel.state.value.currentPage,
                             totalPages = viewModel.state.value.viewerChapters?.currChapter?.pages?.size,
                             sourceName = sourceManager.get(manga.source)?.name,
                             // KMK <--

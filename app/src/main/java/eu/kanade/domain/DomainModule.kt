@@ -168,7 +168,7 @@ class DomainModule : InjektModule {
         addFactory { AddTracks(get(), get(), get(), get()) }
         addFactory { RefreshTracks(get(), get(), get(), get()) }
         addFactory { DeleteTrack(get()) }
-        addFactory { GetTracksPerManga(get(), get()) }
+        addFactory { GetTracksPerManga(get()) }
         addFactory { GetTracks(get()) }
         addFactory { InsertTrack(get()) }
         addFactory { SyncChapterProgressWithTrack(get(), get(), get()) }

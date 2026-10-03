@@ -299,6 +299,7 @@ interface AppGraph : ViewModelGraph {
     // Accessors added while migrating remaining call sites off Injekt
     val protoBuf: ProtoBuf
     val sqlDriver: SqlDriver
+    val databaseExporter: eu.kanade.tachiyomi.data.database.DatabaseExporter
     val databaseHandler: DatabaseHandler
     val database: Database
     val mangaRepository: MangaRepository

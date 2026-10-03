@@ -1,7 +1,6 @@
 package eu.kanade.tachiyomi.data.coil
 
 import android.graphics.BitmapFactory
-import androidx.palette.graphics.Palette
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.coil.MangaCoverMetadata.setRatioAndColors
 import eu.kanade.tachiyomi.ui.manga.MangaScreenModel
@@ -70,7 +69,8 @@ object MangaCoverMetadata {
      * @param force if true then it will always re-calculate ratio & color for favorite mangas.
      *
      * This is only for loading color first time it appears on Library/Browse. Any new colors caused by loading new
-     * cover when open a manga detail or change cover will be updated separately on [MangaScreenModel.setPaletteColor].
+     * cover when open a manga detail or change cover will be updated separately on
+     * [MangaScreenModel.onCoverPaletteAvailable].
      *
      * @author Jays2Kings, cuong-tran
      */
@@ -122,52 +122,27 @@ object MangaCoverMetadata {
             ?: coverCache.getCustomCoverFile(mangaCover.mangaId).takeIf { it.exists() }
             ?: coverCache.getCoverFile(mangaCover.url)
 
-        val rawBitmap = when {
+        val bitmap = when {
             bufferedSource != null -> BitmapFactory.decodeStream(bufferedSource.inputStream(), null, options)
             file?.exists() == true -> BitmapFactory.decodeFile(file.path, options)
             else -> return
         } ?: return
 
-        // Palette's getPixelsFromBitmap cannot read HARDWARE bitmaps (getSkBitmap abort -> SIGABRT).
-        // This happens when browsing extensions that load covers via HARDWARE (e.g. Coil with
-        // hardware bitmaps). Copy to software ARGB_8888 first, or skip palette if copy fails.
-        val bitmapForPalette = if (rawBitmap.config == android.graphics.Bitmap.Config.HARDWARE) {
-            try {
-                val software = rawBitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
-                if (!rawBitmap.isRecycled) rawBitmap.recycle()
-                software ?: return
-            } catch (_: Throwable) {
-                try {
-                    if (!rawBitmap.isRecycled) rawBitmap.recycle()
-                } catch (_: Throwable) {}
-                return
+        try {
+            if (mangaCover.isMangaFavorite) {
+                CoverPaletteExtractor.dominantColorOf(bitmap)?.let { (rgb, textColor) ->
+                    mangaCover.dominantCoverColors = rgb to textColor
+                }
             }
-        } else {
-            rawBitmap
+            CoverPaletteExtractor.vibrantColorOf(bitmap)?.let { color ->
+                mangaCover.vibrantCoverColor = color
+            }
+        } finally {
+            // Covers come from the shared bitmap pool; leaking here is what eventually
+            // makes Coil skip decoding altogether.
+            runCatching { if (!bitmap.isRecycled) bitmap.recycle() }
         }
 
-        var palette: Palette? = null
-        try {
-            palette = Palette.from(bitmapForPalette).generate()
-        } catch (_: Throwable) {
-        }
-        try {
-            if (palette != null) {
-                if (mangaCover.isMangaFavorite) {
-                    palette.dominantSwatch?.let { swatch ->
-                        mangaCover.dominantCoverColors = swatch.rgb to swatch.titleTextColor
-                    }
-                }
-                palette.getBestColor()?.let { color ->
-                    mangaCover.vibrantCoverColor = color
-                }
-            }
-        } catch (_: Throwable) {
-        } finally {
-            try {
-                if (!bitmapForPalette.isRecycled) bitmapForPalette.recycle()
-            } catch (_: Throwable) {}
-        }
         if (mangaCover.isMangaFavorite && options.outWidth != -1 && options.outHeight != -1) {
             val raw = options.outWidth / options.outHeight.toFloat()
             mangaCover.ratio = raw.coerceIn(MangaCover.MIN_COVER_RATIO, MangaCover.MAX_COVER_RATIO)

@@ -63,6 +63,7 @@ import eu.kanade.tachiyomi.data.backup.create.BackupCreateJob
 import eu.kanade.tachiyomi.data.backup.restore.BackupRestoreJob
 import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.cache.PagePreviewCache
+import eu.kanade.tachiyomi.data.database.DatabaseExporter
 import eu.kanade.tachiyomi.data.export.LibraryExporter
 import eu.kanade.tachiyomi.data.export.LibraryExporter.ExportOptions
 import eu.kanade.tachiyomi.data.sync.SyncDataJob
@@ -71,6 +72,7 @@ import eu.kanade.tachiyomi.data.sync.service.GoogleDriveService
 import eu.kanade.tachiyomi.data.sync.service.GoogleDriveSyncService
 import eu.kanade.tachiyomi.util.system.DeviceUtil
 import eu.kanade.tachiyomi.util.system.toast
+import exh.log.xLogE
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.coroutines.Dispatchers
@@ -452,6 +454,29 @@ object SettingsDataScreen : SearchableSettings {
             }
         }
 
+        val databaseExporter = remember { globalAppGraph.databaseExporter }
+        val exportDbLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument("application/vnd.sqlite3"),
+        ) { uri ->
+            uri ?: return@rememberLauncherForActivityResult
+            scope.launch {
+                // Subject bound to a val so the failure branch smart-casts: ktlint rejects the typed
+                // branch-lambda alternative, and `when` subjects have no implicit `it`.
+                when (val result = databaseExporter.export(uri)) {
+                    DatabaseExporter.Result.Success -> context.toast(KMR.strings.database_export_success)
+                    // The checkpoint is what keeps recent writes out of the exported file, so
+                    // refusing is the only honest outcome here.
+                    DatabaseExporter.Result.SnapshotUnavailable ->
+                        context.toast(KMR.strings.database_export_checkpoint_failed)
+
+                    is DatabaseExporter.Result.Failed -> {
+                        xLogE("Database export failed", result.cause)
+                        context.toast(KMR.strings.database_export_failed)
+                    }
+                }
+            }
+        }
+
         if (showDialog) {
             ColumnSelectionDialog(
                 options = exportOptions,
@@ -470,6 +495,15 @@ object SettingsDataScreen : SearchableSettings {
                     title = stringResource(MR.strings.library_list),
                     onClick = { showDialog = true },
                 ),
+                // KMK --> Snapshot export: DatabaseExporter checkpoints the WAL on the live
+                // connection first, so the file carries every commit rather than whatever
+                // happened to be folded into the main file at that instant.
+                Preference.PreferenceItem.TextPreference(
+                    title = stringResource(KMR.strings.pref_export_database),
+                    subtitle = stringResource(KMR.strings.pref_export_database_summary),
+                    onClick = { exportDbLauncher.launch(databaseExporter.suggestedFileName) },
+                ),
+                // KMK <--
             ),
         )
     }

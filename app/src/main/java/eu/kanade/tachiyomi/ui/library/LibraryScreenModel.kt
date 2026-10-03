@@ -33,6 +33,7 @@ import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.source.online.all.MergedSource
 import eu.kanade.tachiyomi.ui.category.categorySortOrderOf
+import eu.kanade.tachiyomi.ui.library.handler.LibraryFilterHandler
 import eu.kanade.tachiyomi.util.chapter.applyScanlatorPriority
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
@@ -56,7 +57,6 @@ import exh.source.isMetadataSource
 import exh.source.mangaDexSourceIds
 import exh.source.nHentaiSourceIds
 import exh.util.cancellable
-import exh.util.isLewd
 import exh.util.nullIfBlank
 import exh.util.removeArticles
 import kotlinx.collections.immutable.ImmutableList
@@ -163,6 +163,7 @@ class LibraryScreenModel(
     private val searchEngine: SearchEngine = globalAppGraph.searchEngine,
     private val setCustomMangaInfo: SetCustomMangaInfo = globalAppGraph.setCustomMangaInfo,
     private val getMergedChaptersByMangaId: GetMergedChaptersByMangaId = globalAppGraph.getMergedChaptersByMangaId,
+    private val libraryFilterHandler: LibraryFilterHandler = LibraryFilterHandler(downloadManager, getMergedMangaById),
     syncPreferences: SyncPreferences = globalAppGraph.syncPreferences,
     // SY <--
     // KMK -->
@@ -472,6 +473,15 @@ class LibraryScreenModel(
         // KMK <--
     }
 
+    /**
+     * Delegates to [LibraryFilterHandler].
+     *
+     * The handler was extracted from this god-class specifically to make filtering testable and
+     * independent of its thirty-odd injected dependencies, but it was never wired up: this
+     * method kept a second, private copy of every predicate. Two copies of the tracking filter
+     * meant they could drift, and this one rebuilt the per-tracker include/exclude lists inside
+     * the per-item predicate - two list allocations per library entry, per recomputation.
+     */
     private suspend fun List<LibraryItem>.applyFilters(
         trackMap: Map<Long, List<Track>>,
         trackingFilter: Map<Long, TriState>,
@@ -481,131 +491,26 @@ class LibraryScreenModel(
         includedCategories: ImmutableSet<Long>,
         excludedCategories: ImmutableSet<Long>,
         // KMK <--
-    ): List<LibraryItem> {
-        val downloadedOnly = preferences.globalFilterDownloaded
-        val skipOutsideReleasePeriod = preferences.skipOutsideReleasePeriod
-        val filterDownloaded = if (downloadedOnly) TriState.ENABLED_IS else preferences.filterDownloaded
-        val filterUnread = preferences.filterUnread
-        val filterStarted = preferences.filterStarted
-        val filterBookmarked = preferences.filterBookmarked
-        val filterCompleted = preferences.filterCompleted
-        val filterIntervalCustom = preferences.filterIntervalCustom
-        val filterCategories = preferences.filterCategories
-
-        val isNotLoggedInAnyTrack = trackingFilter.isEmpty()
-
-        val excludedTracks = trackingFilter.mapNotNull { if (it.value == TriState.ENABLED_NOT) it.key else null }
-        val includedTracks = trackingFilter.mapNotNull { if (it.value == TriState.ENABLED_IS) it.key else null }
-        val trackFiltersIsIgnored = includedTracks.isEmpty() && excludedTracks.isEmpty()
-
-        // SY -->
-        val filterLewd = preferences.filterLewd
-        // SY <--
-
-        // Pre-fetch merged manga data to avoid N+1 queries
-        val mergedMangaCache = mutableMapOf<Long, List<Manga>>()
-        filter { isMergedSourceId(it.libraryManga.manga.source) }.forEach { item ->
-            mergedMangaCache[item.libraryManga.manga.id] = getMergedMangaById.await(item.libraryManga.manga.id)
-        }
-
-        val filterFnDownloaded: suspend (LibraryItem) -> Boolean = {
-            applyFilter(filterDownloaded) {
-                it.libraryManga.manga.isLocal() ||
-                    it.downloadCount > 0 ||
-                    // KMK -->
-                    if (isMergedSourceId(it.libraryManga.manga.source)) {
-                        mergedMangaCache[it.libraryManga.manga.id]
-                            .orEmpty()
-                            .sumOf { manga -> downloadManager.getDownloadCount(manga) } > 0
-                    } else {
-                        // KMK <--
-                        downloadManager.getDownloadCount(it.libraryManga.manga) > 0
-                    }
-            }
-        }
-
-        val filterFnUnread: (LibraryItem) -> Boolean = {
-            applyFilter(filterUnread) { it.libraryManga.unreadCount > 0 }
-        }
-
-        val filterFnStarted: (LibraryItem) -> Boolean = {
-            applyFilter(filterStarted) { it.libraryManga.hasStarted }
-        }
-
-        val filterFnBookmarked: (LibraryItem) -> Boolean = {
-            applyFilter(filterBookmarked) { it.libraryManga.hasBookmarks }
-        }
-
-        val filterFnCompleted: (LibraryItem) -> Boolean = {
-            applyFilter(filterCompleted) { it.libraryManga.manga.status.toInt() == SManga.COMPLETED }
-        }
-
-        val filterFnIntervalCustom: (LibraryItem) -> Boolean = {
-            if (skipOutsideReleasePeriod) {
-                applyFilter(filterIntervalCustom) { it.libraryManga.manga.fetchInterval < 0 }
-            } else {
-                true
-            }
-        }
-
-        // SY -->
-        val filterFnLewd: (LibraryItem) -> Boolean = {
-            applyFilter(filterLewd) { it.libraryManga.manga.isLewd() }
-        }
-        // SY <--
-
-        val filterFnTracking: (LibraryItem) -> Boolean = tracking@{ item ->
-            val mangaTracks = trackMap[item.id].orEmpty()
-
-            // Overall tracked/untracked gate (tracked on ANY tracker / untracked entirely).
-            when (trackedOverall) {
-                TriState.ENABLED_IS -> if (mangaTracks.isEmpty()) return@tracking false
-                TriState.ENABLED_NOT -> if (mangaTracks.isNotEmpty()) return@tracking false
-                TriState.DISABLED -> {}
-            }
-
-            if (isNotLoggedInAnyTrack || trackFiltersIsIgnored) return@tracking true
-
-            val isExcluded = excludedTracks.isNotEmpty() && mangaTracks.fastAny { it.trackerId in excludedTracks }
-            val isIncluded = includedTracks.isEmpty() || mangaTracks.fastAny { it.trackerId in includedTracks }
-
-            !isExcluded && isIncluded
-        }
-
-        // KMK -->
-        val filterFnCategories: (LibraryItem) -> Boolean = categories@{ item ->
-            if (!filterCategories) return@categories true
-
-            val mangaCategories = item.libraryManga.categories.fastFilterNot { it == 0L }.toSet()
-
-            // Early return
-            if (mangaCategories.isEmpty()) {
-                return@categories includedCategories.isEmpty()
-            }
-
-            val isExcluded = excludedCategories.any { it in mangaCategories }
-            val isIncluded = includedCategories.isEmpty() || includedCategories.all { it in mangaCategories }
-
-            !isExcluded && isIncluded
-        }
-        // KMK <--
-
-        return fastFilter {
-            filterFnDownloaded(it) &&
-                filterFnUnread(it) &&
-                filterFnStarted(it) &&
-                filterFnBookmarked(it) &&
-                filterFnCompleted(it) &&
-                filterFnIntervalCustom(it) &&
-                filterFnTracking(it) &&
-                // SY -->
-                filterFnLewd(it) &&
-                // SY <--
-                // KMK -->
-                filterFnCategories(it)
-            // KMK <--
-        }
-    }
+    ): List<LibraryItem> = libraryFilterHandler.filter(
+        items = this,
+        trackMap = trackMap,
+        trackingFilter = trackingFilter,
+        trackedOverall = trackedOverall,
+        preferences = LibraryFilterHandler.ItemPreferencesShim(
+            filterDownloaded = preferences.filterDownloaded,
+            filterUnread = preferences.filterUnread,
+            filterStarted = preferences.filterStarted,
+            filterBookmarked = preferences.filterBookmarked,
+            filterCompleted = preferences.filterCompleted,
+            filterIntervalCustom = preferences.filterIntervalCustom,
+            filterLewd = preferences.filterLewd,
+            filterCategories = preferences.filterCategories,
+            globalFilterDownloaded = preferences.globalFilterDownloaded,
+            skipOutsideReleasePeriod = preferences.skipOutsideReleasePeriod,
+        ),
+        includedCategories = includedCategories,
+        excludedCategories = excludedCategories,
+    )
 
     private suspend fun List<LibraryItem>.applyGrouping(
         categories: List<Category>,

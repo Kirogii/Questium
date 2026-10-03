@@ -8,6 +8,7 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.materialkolor.DynamicMaterialExpressiveTheme // TODO: Consider switching to a stable Material3 Compose library when materialkolor stabilizes or migrate to official Material3 dynamic color APIs
 import eu.kanade.domain.ui.UiPreferences
@@ -91,16 +92,22 @@ private fun BaseTachiyomiTheme(
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val isDark = isSystemInDarkTheme()
+    // Monet and CUSTOM are seeded from live system state (wallpaper colours, the user's
+    // accent). Re-resolving only when the enum changed left the app showing the colours
+    // captured at composition time, so a wallpaper or accent change stayed invisible
+    // until the process restarted - the one thing a dynamic theme must not do.
+    val scheme = remember(configuration, appTheme, isDark, isAmoled) {
+        getThemeColorScheme(
+            context = context,
+            appTheme = appTheme,
+            isDark = isDark,
+            isAmoled = isAmoled,
+        )
+    }
     MaterialTheme(
-        colorScheme = remember(appTheme, isDark, isAmoled) {
-            getThemeColorScheme(
-                context = context,
-                appTheme = appTheme,
-                isDark = isDark,
-                isAmoled = isAmoled,
-            )
-        },
+        colorScheme = scheme,
         content = content,
     )
 }

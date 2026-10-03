@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.library
 
+import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.graphics.res.animatedVectorResource
 import androidx.compose.animation.graphics.res.rememberAnimatedVectorPainter
@@ -18,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalUriHandler
@@ -35,6 +37,7 @@ import eu.kanade.presentation.library.DeleteLibraryMangaDialog
 import eu.kanade.presentation.library.LibrarySettingsDialog
 import eu.kanade.presentation.library.components.AchievementsContent
 import eu.kanade.presentation.library.components.LibraryContent
+import eu.kanade.presentation.library.components.LibraryLayoutShimmer
 import eu.kanade.presentation.library.components.LibraryToolbar
 import eu.kanade.presentation.library.components.SyncFavoritesConfirmDialog
 import eu.kanade.presentation.library.components.SyncFavoritesProgressDialog
@@ -310,14 +313,26 @@ data object LibraryTab : Tab {
             snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         ) { contentPadding ->
             when {
+                // KMK --> Skeleton follows the selected layout. The single Adaptive grid that
+                // used to stand in here had a fixed column count and cover ratio, so switching
+                // between the list, cover-only and comfortable grids made the whole library
+                // visibly re-flow at the moment loading finished.
+                // KMK <--
                 state.isLoading -> {
-                    androidx.compose.animation.Crossfade(
-                        targetState = true,
-                        label = "libraryLoading",
-                        modifier = Modifier.padding(contentPadding),
-                    ) {
-                        if (it) tachiyomi.presentation.core.components.LibraryShimmerGrid()
+                    // Collected through the same by-delegate the pager uses: these are
+                    // PreferenceMutableState, i.e. MutableState, not Flows. Wrapping them in
+                    // collectAsState() has no matching overload and would subscribe twice.
+                    val displayMode by screenModel.getDisplayMode()
+                    val configuration = LocalConfiguration.current
+                    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                    val columns by remember(isLandscape) {
+                        screenModel.getColumnsForOrientation(isLandscape)
                     }
+                    LibraryLayoutShimmer(
+                        displayMode = displayMode,
+                        columns = columns,
+                        contentPadding = contentPadding,
+                    )
                 }
                 state.searchQuery.isNullOrEmpty() && !state.hasActiveFilters && state.isLibraryEmpty -> {
                     val handler = LocalUriHandler.current

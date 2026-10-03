@@ -21,6 +21,7 @@ import eu.kanade.presentation.browse.components.BrowseSourceCompactGrid
 import eu.kanade.presentation.browse.components.BrowseSourceEHentaiList
 import eu.kanade.presentation.browse.components.BrowseSourceList
 import eu.kanade.presentation.components.AppBar
+import eu.kanade.presentation.library.components.LibraryLayoutShimmer
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.source.Source
 import exh.metadata.metadata.RaisedSearchMetadata
@@ -37,7 +38,6 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
 import tachiyomi.presentation.core.screens.EmptyScreenAction
-import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.source.local.LocalSource
 
 @Composable
@@ -45,6 +45,9 @@ fun BrowseSourceContent(
     source: Source?,
     mangaList: LazyPagingItems<StateFlow</* SY --> */Pair<Manga, RaisedSearchMetadata?>/* SY <-- */>>,
     columns: GridCells,
+    // KMK --> Raw column count for the loading skeleton; [columns] has no readable count until it
+    // is measured. 0 means the adaptive strategy, which falls back to a sensible fixed width.
+    columnsCount: Int = 0,
     // SY -->
     ehentaiBrowseDisplayMode: Boolean,
     // SY <--
@@ -86,7 +89,20 @@ fun BrowseSourceContent(
     }
 
     if (mangaList.itemCount == 0 && mangaList.loadState.refresh is LoadState.Loading) {
-        LoadingScreen(Modifier.padding(contentPadding))
+        // KMK --> Real layout skeleton rather than a centred spinner: the first page of a source
+        // is the slowest fetch in the app, and a bare spinner gave the user nothing to read while
+        // it happened. Matching the selected layout also means the grid does not re-flow when the
+        // results land.
+        // KMK <--
+        // Passed as contentPadding, not as modifier padding: LibraryLayoutShimmer
+        // applies its own padding, so padding the modifier as well would inset
+        // the placeholder by an extra 8dp and make the grid shift on arrival.
+        LibraryLayoutShimmer(
+            displayMode = if (ehentaiBrowseDisplayMode) LibraryDisplayMode.List else displayMode,
+            columns = columnsCount.takeIf { it > 0 } ?: ADAPTIVE_SKELETON_COLUMNS,
+            contentPadding = contentPadding,
+        )
+        // KMK <--
         return
     }
 
@@ -238,3 +254,6 @@ internal fun MissingSourceScreen(
         )
     }
 }
+
+/** Column count used for the skeleton when the real grid is adaptive. */
+private const val ADAPTIVE_SKELETON_COLUMNS = 3

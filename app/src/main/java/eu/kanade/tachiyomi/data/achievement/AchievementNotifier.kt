@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.Configuration
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.widget.Toast
 import androidx.appcompat.view.ContextThemeWrapper
 import dev.zacsweers.metro.AppScope
@@ -22,10 +23,30 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import mihon.app.di.globalAppGraph
+import tachiyomi.domain.achievement.model.Achievement
 import tachiyomi.domain.achievement.model.Achievements
 import tachiyomi.domain.achievement.service.AchievementPreferences
 import tachiyomi.domain.achievement.service.AchievementUnlockNotifier
 
+/**
+ * Turns achievement unlocks into toasts, sounds and webhooks.
+ *
+ * Everything funnels through [notify]. The previous implementation had two independent
+ * paths - [AchievementUnlockNotifier.onUnlocked] and a collector on the unlocked-ids
+ * preference - each with its own loop, neither consulting the other's de-duplication, and
+ * the collector had no upper bound at all. Restoring a backup on a fresh install writes
+ * every previously unlocked id in one go, so the collector saw the whole set as "new" and
+ * queued one toast plus one sound per achievement, staggered 900 ms apart.
+ *
+ * Three rules now bound what a user can see, regardless of producer:
+ *
+ * 1. **One funnel.** Direct unlocks and preference-observed unlocks share [notify], so
+ *    de-duplication is applied once rather than per path.
+ * 2. **One toast per batch.** Anything past [SUMMARY_THRESHOLD] becomes a single summary
+ *    line, and only the highest tier in the batch plays a sound.
+ * 3. **Bulk mode wins.** [setBulkMode] suppresses toasts and sound entirely for the
+ *    duration of a restore; the unlock is still recorded and the webhook still fires.
+ */
 @SingleIn(AppScope::class)
 @Inject
 class AchievementNotifier(
@@ -38,112 +59,177 @@ class AchievementNotifier(
     private val webhookNotifier: eu.kanade.tachiyomi.data.webhook.WebhookNotifier,
     // KMK <--
 ) : AchievementUnlockNotifier {
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
-    private var lastSeen = prefs.getUnlockedIds()
+
+    private val lock = Any()
+
+    /** Last set observed by the preference collector; the baseline for "newly unlocked". */
+    private var lastSeen: Set<String> = prefs.getUnlockedIds()
+
     private var started = false
-    private val recentlyNotified = mutableMapOf<String, Long>()
+
+    /** id -> uptime millis of the last toast, so a re-notified id stays quiet. */
+    private val recentlyNotified = HashMap<String, Long>()
+
+    /** Nesting depth for [setBulkMode]; only 0 <-> nonzero transitions matter. */
+    private var bulkDepth = 0
+
+    private var bulkSummary: MutableList<String>? = null
 
     fun start() {
-        if (started) return
-        started = true
-        lastSeen = prefs.getUnlockedIds()
+        synchronized(lock) {
+            if (started) return
+            started = true
+            // Re-read rather than trusting the field: the notifier is constructed eagerly but
+            // start() may run later, and a restore in between must be the baseline, not a
+            // difference to be announced.
+            lastSeen = prefs.getUnlockedIds()
+        }
         scope.launch {
             prefs.unlockedAchievements().changes()
                 .map { raw -> if (raw.isBlank()) emptySet() else raw.split(",").filter { it.isNotBlank() }.toSet() }
                 .distinctUntilChanged()
                 .collect { current ->
-                    val now = android.os.SystemClock.uptimeMillis()
-                    val newly = (current - lastSeen)
-                        .filterNot { (now - (recentlyNotified[it] ?: 0L)) < 10_000L }
-                    if (newly.isNotEmpty()) {
-                        var delayMs = 0L
-                        for (id in newly) {
-                            val ach = Achievements.forId(id) ?: continue
-                            handler.postDelayed({
-                                showToast(ach)
-                                soundPlayer.play(ach.tier)
-                            }, delayMs)
-                            delayMs += 900
-                        }
+                    val fresh = synchronized(lock) {
+                        val added = current - lastSeen
+                        lastSeen = current
+                        added
                     }
-                    lastSeen = current
+                    notify(fresh.toList())
                 }
         }
     }
 
-    override fun onUnlocked(ids: List<String>) = notifyNow(ids)
+    override fun setBulkMode(enabled: Boolean) {
+        val pending = synchronized(lock) {
+            bulkDepth = (bulkDepth + if (enabled) 1 else -1).coerceAtLeast(0)
+            if (bulkDepth == 0) {
+                val collected = bulkSummary
+                bulkSummary = null
+                collected
+            } else {
+                null
+            }
+        }
+        if (pending != null) flushBulkSummary(pending)
+    }
 
-    fun notifyNow(ids: List<String>) {
-        if (!prefs.achievementsEnabled().get()) return
+    override fun onUnlocked(ids: List<String>) = notify(ids)
+
+    private fun notify(ids: List<String>) {
         if (ids.isEmpty()) return
-        val now = android.os.SystemClock.uptimeMillis()
-        ids.forEach { recentlyNotified[it] = now }
+        if (!prefs.achievementsEnabled().get()) return
+
+        val now = SystemClock.uptimeMillis()
+        val fresh = synchronized(lock) {
+            pruneRecent()
+            ids.filter { (now - (recentlyNotified[it] ?: 0L)) >= DEDUPE_WINDOW_MS }
+                .onEach { recentlyNotified[it] = now }
+        }
+        if (fresh.isEmpty()) return
+
+        if (isBulk()) {
+            synchronized(lock) {
+                (bulkSummary ?: mutableListOf<String>().also { bulkSummary = it }).addAll(fresh)
+            }
+            return
+        }
+
+        val valid = fresh.mapNotNull(Achievements::forId)
+        if (valid.isEmpty()) return
+
+        sendWebhooks(fresh)
+        present(valid)
+    }
+
+    /**
+     * Bulk mode still owes the user one line, otherwise a restore looks like it silently
+     * ate their progress. Kept to a single toast with no sound.
+     */
+    private fun flushBulkSummary(ids: List<String>) {
+        if (ids.isEmpty()) return
+        if (!prefs.achievementsEnabled().get()) return
+        if (!prefs.achievementToastsEnabled().get()) return
+        val valid = ids.mapNotNull(Achievements::forId)
+        if (valid.isEmpty()) return
+        handler.post {
+            runCatching { themedToastContext().toast(summaryText(valid), duration = Toast.LENGTH_LONG) }
+        }
+    }
+
+    private fun sendWebhooks(ids: List<String>) {
         // KMK -->
         ids.forEach { id ->
             val ach = Achievements.forId(id) ?: return@forEach
             val revealed = if (ach.isSecret) ach.copy(unlockedAt = 1L) else ach
-            webhookNotifier.notify(
-                event = eu.kanade.tachiyomi.data.webhook.WebhookEvent.ACHIEVEMENT_UNLOCKED,
-                data = mapOf(
-                    "achievement_id" to id,
-                    "achievement_title" to revealed.displayTitle,
-                    "achievement_tier" to ach.tier.name,
-                ),
-            )
+            runCatching {
+                webhookNotifier.notify(
+                    event = eu.kanade.tachiyomi.data.webhook.WebhookEvent.ACHIEVEMENT_UNLOCKED,
+                    data = mapOf(
+                        "achievement_id" to id,
+                        "achievement_title" to revealed.displayTitle,
+                        "achievement_tier" to ach.tier.name,
+                    ),
+                )
+            }
         }
         // KMK <--
-        val valid = ids.mapNotNull { Achievements.forId(it) }
-        if (valid.isEmpty()) return
-        if (valid.size > 3) {
-            val revealed = valid.map { if (it.isSecret) it.copy(unlockedAt = 1L) else it }
-            val summary = "Unlocked ${revealed.size} achievements: " + revealed.take(3).joinToString(", ") { it.displayTitle } + if (revealed.size > 3) " +${revealed.size - 3} more" else ""
+    }
+
+    private fun present(valid: List<Achievement>) {
+        val highest = valid.maxBy { it.tier.ordinal }
+
+        if (valid.size > SUMMARY_THRESHOLD) {
             handler.post {
                 if (prefs.achievementToastsEnabled().get()) {
-                    try {
-                        themedToastContext().toast(summary, duration = Toast.LENGTH_LONG)
-                    } catch (_: Exception) {}
+                    runCatching { themedToastContext().toast(summaryText(valid), duration = Toast.LENGTH_LONG) }
                 }
-                valid.forEach { soundPlayer.play(it.tier) }
-            }
-            var delayMs = 900L
-            for (ach in valid.takeLast(2)) {
-                handler.postDelayed({
-                    if (prefs.achievementToastsEnabled().get()) showToast(ach)
-                }, delayMs)
-                delayMs += 900
+                soundPlayer.play(highest.tier)
             }
             return
         }
+
         var delayMs = 0L
         for (ach in valid) {
             handler.postDelayed({
                 if (prefs.achievementToastsEnabled().get()) showToast(ach)
                 soundPlayer.play(ach.tier)
             }, delayMs)
-            delayMs += 900
+            delayMs += TOAST_SPACING_MS
         }
     }
 
-    private fun showToast(ach: tachiyomi.domain.achievement.model.Achievement) {
+    private fun summaryText(valid: List<Achievement>): String {
+        val revealed = valid.map { if (it.isSecret) it.copy(unlockedAt = 1L) else it }
+        val shown = revealed.take(SUMMARY_SHOWN)
+        val remaining = revealed.size - shown.size
+        return buildString {
+            append("Unlocked ")
+            append(revealed.size)
+            append(if (revealed.size == 1) " achievement: " else " achievements: ")
+            append(shown.joinToString(", ") { it.displayTitle })
+            if (remaining > 0) append(" +$remaining more")
+        }
+    }
+
+    private fun showToast(ach: Achievement) {
         if (!prefs.achievementsEnabled().get()) return
         if (!prefs.achievementToastsEnabled().get()) return
         val resolved = if (ach.isSecret) ach.copy(unlockedAt = 1L) else ach
-        val tierLabel = when (resolved.tier) {
-            tachiyomi.domain.achievement.model.AchievementTier.MYTHIC -> "MYTHIC"
-            tachiyomi.domain.achievement.model.AchievementTier.LEGENDARY -> "LEGENDARY"
-            tachiyomi.domain.achievement.model.AchievementTier.PLATINUM -> "PLATINUM"
-            tachiyomi.domain.achievement.model.AchievementTier.GOLD -> "GOLD"
-            tachiyomi.domain.achievement.model.AchievementTier.SILVER -> "SILVER"
-            tachiyomi.domain.achievement.model.AchievementTier.ULTIMATE -> "ULTIMATE"
-            else -> "BRONZE"
-        }
         val secretPrefix = if (resolved.isSecret) "Secret Unlocked! " else ""
-        val desc = if (resolved.displayDescription.length > 80) resolved.displayDescription.take(77) + "..." else resolved.displayDescription
-        val msg = "${resolved.displayIcon}  ${secretPrefix}${resolved.displayTitle} [$tierLabel] — $desc"
-        try {
-            themedToastContext().toast(msg, duration = Toast.LENGTH_LONG)
-        } catch (_: Exception) {}
+        val desc = resolved.displayDescription
+            .let { if (it.length > MAX_DESCRIPTION_CHARS) it.take(MAX_DESCRIPTION_CHARS - 3) + "..." else it }
+        val msg = "${resolved.displayIcon}  $secretPrefix${resolved.displayTitle} — $desc"
+        runCatching { themedToastContext().toast(msg, duration = Toast.LENGTH_LONG) }
+    }
+
+    private fun isBulk(): Boolean = synchronized(lock) { bulkDepth > 0 }
+
+    private fun pruneRecent() {
+        val cutoff = SystemClock.uptimeMillis() - DEDUPE_WINDOW_MS
+        recentlyNotified.entries.removeAll { it.value < cutoff }
     }
 
     private fun themedToastContext(): Context {
@@ -169,5 +255,20 @@ class AchievementNotifier(
         } catch (_: Exception) {
             context
         }
+    }
+
+    private companion object {
+        /** Above this many unlocks at once, one summary toast replaces the individual ones. */
+        const val SUMMARY_THRESHOLD = 3
+
+        /** Titles listed in a summary before it collapses into "+N more". */
+        const val SUMMARY_SHOWN = 3
+
+        const val TOAST_SPACING_MS = 900L
+
+        /** Same id re-announced inside this window is treated as the same event. */
+        const val DEDUPE_WINDOW_MS = 10_000L
+
+        const val MAX_DESCRIPTION_CHARS = 80
     }
 }

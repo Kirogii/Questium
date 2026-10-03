@@ -5,8 +5,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import eu.kanade.tachiyomi.BuildConfig
+import exh.yakuyomi.DeviceMemory
 import kotlinx.collections.immutable.toImmutableList
 import tachiyomi.presentation.core.util.collectAsState
+import androidx.compose.runtime.collectAsState as collectState
 import tachiyomi.core.common.preference.Preference as PreferenceData
 
 /**
@@ -44,7 +46,16 @@ fun Preference.gatesPassed(): Boolean {
     // DeviceMemory ships with the same FQN in both the engine and the stub modules,
     // so this resolves in either flavor.
     if (mtlOnly && BuildConfig.IS_NOMTL) return false
-    if (ramGated && !exh.yakuyomi.DeviceMemory.isMtlSupported(LocalContext.current)) return false
+    // The bypass is collected rather than read once: the About easter egg flips it at runtime, and
+    // a plain SharedPreferences read leaves every composed row on its old verdict until the
+    // process restarts. Equivalent to DeviceMemory.isMtlSupported, but recomposable.
+    val ramGateDisabled by RamGateState.isDisabled.collectState()
+    if (ramGated &&
+        !ramGateDisabled &&
+        !DeviceMemory.hasSufficientRam(LocalContext.current, DeviceMemory.MTL_MIN_RAM_BYTES)
+    ) {
+        return false
+    }
     return true
 }
 

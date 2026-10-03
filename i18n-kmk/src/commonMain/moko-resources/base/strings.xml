@@ -609,4 +609,9 @@
     <string name="pref_yakuyomi_prompt_info">Prompt changes apply to the next translation and invalidate cached results that depend on the previous prompt.</string>
     <string name="pref_global_search_source_category">Source category</string>
     <string name="pref_global_search_source_category_all">All categories</string>
+    <string name="pref_export_database">Export database</string>
+    <string name="pref_export_database_summary">Write a snapshot of the library database to a file you choose</string>
+    <string name="database_export_success">Database exported</string>
+    <string name="database_export_checkpoint_failed">Export failed: the database could not be snapshotted. Try again with the app idle.</string>
+    <string name="database_export_failed">Database export failed</string>
 </resources>

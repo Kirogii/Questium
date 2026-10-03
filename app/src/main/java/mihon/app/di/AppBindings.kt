@@ -31,6 +31,7 @@ import tachiyomi.core.common.preference.PreferenceStore
 import tachiyomi.core.common.storage.AndroidStorageFolderProvider
 import tachiyomi.core.common.storage.FolderProvider
 import tachiyomi.data.Chapters
+import tachiyomi.data.Custom_manga_info
 import tachiyomi.data.Database
 import tachiyomi.data.DateColumnAdapter
 import tachiyomi.data.History
@@ -117,6 +118,11 @@ object AppBindings {
                 resultsAdapter = MemoColumnAdapter,
             ),
             // KMK <--
+            // SY -->
+            custom_manga_infoAdapter = Custom_manga_info.Adapter(
+                genreAdapter = StringListColumnAdapter,
+            ),
+            // SY <--
         )
     }
 

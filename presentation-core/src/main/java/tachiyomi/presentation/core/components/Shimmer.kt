@@ -78,23 +78,6 @@ fun ShimmerBox(
 }
 
 @Composable
-fun MangaCardShimmer(modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(4.dp)) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(180.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .shimmer(),
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        ShimmerBox(height = 12.dp, width = 80.dp)
-        Spacer(modifier = Modifier.height(4.dp))
-        ShimmerBox(height = 10.dp, width = 60.dp)
-    }
-}
-
-@Composable
 fun MangaListShimmer(modifier: Modifier = Modifier) {
     Row(modifier = modifier.padding(8.dp)) {
         Box(
@@ -130,22 +113,6 @@ fun ChapterListShimmer(modifier: Modifier = Modifier) {
                         .shimmer(),
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun LibraryShimmerGrid(modifier: Modifier = Modifier) {
-    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-        columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(128.dp),
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(8.dp),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-    ) {
-        items(12) {
-            MangaCardShimmer()
         }
     }
 }

@@ -15,14 +15,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.util.fastAny
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
-import androidx.palette.graphics.Palette
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
+import coil3.BitmapImage
 import coil3.Image
-import coil3.asDrawable
-import coil3.imageLoader
-import coil3.request.ImageRequest
-import coil3.request.allowHardware
 import eu.kanade.core.preference.asState
 import eu.kanade.core.util.insertSeparators
 import eu.kanade.domain.chapter.interactor.GetAvailableScanlators
@@ -51,8 +47,7 @@ import eu.kanade.presentation.manga.DownloadAction
 import eu.kanade.presentation.manga.components.ChapterDownloadAction
 import eu.kanade.presentation.util.formattedMessage
 import eu.kanade.tachiyomi.BuildConfig
-import eu.kanade.tachiyomi.data.cache.CoverCache
-import eu.kanade.tachiyomi.data.coil.getBestColor
+import eu.kanade.tachiyomi.data.coil.CoverPaletteExtractor
 import eu.kanade.tachiyomi.data.download.DownloadCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
@@ -76,7 +71,6 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.applyScanlatorPriority
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
-import eu.kanade.tachiyomi.util.system.getBitmapOrNull
 import eu.kanade.tachiyomi.util.system.toast
 import exh.log.xLogE
 import exh.md.utils.FollowStatus
@@ -258,7 +252,6 @@ class MangaScreenModel(
     private val insertLibraryUpdateErrors: InsertLibraryUpdateErrors = globalAppGraph.insertLibraryUpdateErrors,
     private val insertLibraryUpdateErrorMessages: InsertLibraryUpdateErrorMessages = globalAppGraph.insertLibraryUpdateErrorMessages,
     private val deleteChaptersFromDb: DeleteChapters = globalAppGraph.deleteChapters,
-    private val coverCache: CoverCache = globalAppGraph.coverCache,
     // KMK <--
 ) : StateScreenModel<MangaScreenModel.State>(State.Loading) {
 
@@ -610,92 +603,29 @@ class MangaScreenModel(
 
     // KMK -->
     /**
-     * Get the color of the manga cover by loading cover with ImageRequest directly from network.
+     * Seeds the cover-based theme from the bitmap the details header has already decoded.
+     *
+     * This used to fire a *second* Coil request per details-screen open purely to sample
+     * the palette, which failed whenever the cover could not be re-fetched (offline,
+     * cache-only policy, expired URL) and left the screen permanently untinted. The cover
+     * is already in memory here, so there is nothing left to fetch.
      */
-    fun setPaletteColor(model: Any, isRetry: Boolean = false) {
-        if (model is ImageRequest && model.defined.sizeResolver != null) return
+    fun onCoverPaletteAvailable(mangaCover: MangaCover, image: Image) {
+        if (!themeCoverBased && !mangaCover.isMangaFavorite) return
 
-        val imageRequestBuilder = if (model is ImageRequest) {
-            model.newBuilder()
-        } else {
-            ImageRequest.Builder(context).data(model)
-        }
-            .allowHardware(false)
+        val vibrantColor = CoverPaletteExtractor.vibrantColorOf(image) ?: return
+        mangaCover.vibrantCoverColor = vibrantColor
 
-        val generatePalette: (Image) -> Unit = generatePalette@{ image ->
-            screenModelScope.launchIO {
-                val rawBitmap = image.asDrawable(context.resources).getBitmapOrNull() ?: return@launchIO
-                // Palette's getPixelsFromBitmap cannot read HARDWARE bitmaps (getSkBitmap abort -> SIGABRT
-                // when browsing extensions that load covers via HARDWARE). Copy to software first.
-                val bitmap = if (rawBitmap.config == android.graphics.Bitmap.Config.HARDWARE) {
-                    try {
-                        val software = rawBitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
-                        // Do not recycle rawBitmap here — Coil may still own it; just use the copy
-                        software ?: return@launchIO
-                    } catch (_: Throwable) {
-                        return@launchIO
-                    }
-                } else {
-                    rawBitmap
-                }
-                // Extra guard: recycled bitmaps also abort in getPixels
-                if (bitmap.isRecycled) return@launchIO
-                try {
-                    val palette = Palette.from(bitmap).generate()
-                    val mangaCover = when (model) {
-                        is Manga -> model.asMangaCover()
-                        is MangaCover -> model
-                        else -> return@launchIO
-                    }
-                    if (mangaCover.isMangaFavorite) {
-                        palette.dominantSwatch?.let { swatch ->
-                            mangaCover.dominantCoverColors = swatch.rgb to swatch.titleTextColor
-                        }
-                    }
-                    val vibrantColor = palette.getBestColor() ?: return@launchIO
-                    mangaCover.vibrantCoverColor = vibrantColor
-                    updateSuccessState { state ->
-                        state.copy(seedColor = Color(vibrantColor))
-                    }
-                } catch (_: Throwable) {
-                    // Never crash browse flow for palette failures (hardware, 16KB, OOM)
-                }
+        if (mangaCover.isMangaFavorite) {
+            CoverPaletteExtractor.dominantColorOf((image as? BitmapImage)?.bitmap)?.let { (rgb, textColor) ->
+                mangaCover.dominantCoverColors = rgb to textColor
             }
         }
 
-        context.imageLoader.enqueue(
-            imageRequestBuilder
-                .target(
-                    onSuccess = generatePalette,
-                    onError = {
-                        // KMK --> A failed cover load is usually a stale/corrupt
-                        // CoverCache entry: delete it and retry once from the network
-                        // so the palette can still be derived (single-retry guard).
-                        val thumbnailUrl = when (model) {
-                            is Manga -> model.thumbnailUrl
-                            is MangaCover -> model.url
-                            is String -> model
-                            is ImageRequest -> when (val data = model.data) {
-                                is Manga -> data.thumbnailUrl
-                                is MangaCover -> data.url
-                                is String -> data
-                                else -> null
-                            }
-                            else -> null
-                        }
-                        val cachedFile = thumbnailUrl?.let(coverCache::getCoverFile)
-                        when {
-                            !isRetry && cachedFile != null && cachedFile.exists() && cachedFile.delete() -> {
-                                setPaletteColor(model, isRetry = true)
-                            }
-                            isRetry -> logcat(LogPriority.ERROR) { "Cover palette retry failed: $thumbnailUrl" }
-                            else -> logcat(LogPriority.ERROR) { "Cover palette load failed: $thumbnailUrl" }
-                        }
-                        // KMK <--
-                    },
-                )
-                .build(),
-        )
+        val seed = Color(vibrantColor)
+        updateSuccessState { state ->
+            if (state.seedColor == seed) state else state.copy(seedColor = seed)
+        }
     }
 
     private suspend fun syncTrackers() {
