@@ -266,7 +266,7 @@ class AboutScreen : Screen() {
 
     companion object {
         fun getVersionName(withBuildDate: Boolean): String {
-            return when {
+            val build = when {
                 isDebugBuildType -> {
                     "Debug ${BuildConfig.COMMIT_SHA}".let {
                         if (withBuildDate) {
@@ -297,6 +297,10 @@ class AboutScreen : Screen() {
                     }
                 }
             }
+            // KMK --> The no-MTL flavor installs under its own app id and ships without the AI
+            // engine, so it names itself here instead of looking like a broken main build.
+            return if (BuildConfig.IS_NOMTL) "$build · No-MTL build" else build
+            // KMK <--
         }
 
         internal fun getFormattedBuildTime(): String {

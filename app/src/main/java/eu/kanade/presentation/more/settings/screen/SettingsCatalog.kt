@@ -1,6 +1,8 @@
 package eu.kanade.presentation.more.settings.screen
 
 // KMK -->
+import eu.kanade.tachiyomi.BuildConfig
+
 /**
  * Single source of truth for the list of searchable settings screens.
  *
@@ -16,6 +18,22 @@ package eu.kanade.presentation.more.settings.screen
  * implements [SearchableSettings] must appear here.
  */
 object SettingsCatalog {
+
+    /**
+     * AI feature screens, dropped from the no-MTL build.
+     *
+     * Filtered out of [searchableScreens] rather than branched around, so search cannot reach a
+     * screen the settings hub hides on that flavor.
+     */
+    private val aiScreens: Set<SearchableSettings> = setOf(
+        SettingsYakuyomiScreen,
+        SettingsYakuyomiProviderScreen,
+        SettingsYakuyomiModelsScreen,
+        SettingsYakuyomiBehaviorScreen,
+        SettingsYakuyomiPromptScreen,
+        SettingsUpscalerScreen,
+    )
+
     val searchableScreens: List<SearchableSettings> = listOfNotNull(
         SettingsAppearanceScreen,
         SettingsLibraryScreen,
@@ -32,7 +50,7 @@ object SettingsCatalog {
         SettingsEhScreen,
         SettingsMangadexScreen,
         // SY <--
-        // KMK --> Off-device MTL is available even on no-MTL builds.
+        // KMK -->
         SettingsYakuyomiScreen,
         SettingsYakuyomiProviderScreen,
         SettingsYakuyomiModelsScreen,
@@ -41,6 +59,6 @@ object SettingsCatalog {
         SettingsUpscalerScreen,
         // KMK <--
         SettingsAdvancedScreen,
-    )
+    ).filterNot { BuildConfig.IS_NOMTL && it in aiScreens }
 }
 // KMK <--

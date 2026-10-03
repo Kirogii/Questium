@@ -62,6 +62,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -547,6 +549,13 @@ private fun MangaScreenSmallImpl(
     var offsetX by remember { mutableFloatStateOf(0f) }
     val fabPosition by uiPreferences.readButtonPosition().collectAsState()
     val readButtonPosition = uiPreferences.readButtonPosition()
+    // KMK --> Tint the read button with the cover's own colour, the way the cover-seeded theme
+    // does for the rest of the screen. Content colour follows the seed's luminance so the
+    // label stays readable on a pale or a dark cover alike.
+    val readButtonContainer = state.seedColor ?: MaterialTheme.colorScheme.primaryContainer
+    val readButtonContent = state.seedColor
+        ?.let { if (it.luminance() > 0.5f) Color.Black else Color.White }
+        ?: MaterialTheme.colorScheme.onPrimaryContainer
     // KMK <--
 
     BackHandler(onBack = {
@@ -686,7 +695,8 @@ private fun MangaScreenSmallImpl(
                                 }
                             }
                         },
-                    containerColor = MaterialTheme.colorScheme.primary,
+                    containerColor = readButtonContainer,
+                    contentColor = readButtonContent,
                     // KMK <--
                 )
             }
@@ -1136,6 +1146,13 @@ private fun MangaScreenLargeImpl(
     var offsetX by remember { mutableFloatStateOf(0f) }
     val fabPosition by uiPreferences.readButtonPosition().collectAsState()
     val readButtonPosition = uiPreferences.readButtonPosition()
+    // KMK --> Tint the read button with the cover's own colour, the way the cover-seeded theme
+    // does for the rest of the screen. Content colour follows the seed's luminance so the
+    // label stays readable on a pale or a dark cover alike.
+    val readButtonContainer = state.seedColor ?: MaterialTheme.colorScheme.primaryContainer
+    val readButtonContent = state.seedColor
+        ?.let { if (it.luminance() > 0.5f) Color.Black else Color.White }
+        ?: MaterialTheme.colorScheme.onPrimaryContainer
     // KMK <--
 
     val insetPadding = WindowInsets.systemBars.only(WindowInsetsSides.Horizontal).asPaddingValues()
@@ -1274,7 +1291,8 @@ private fun MangaScreenLargeImpl(
                                 }
                             }
                         },
-                    containerColor = MaterialTheme.colorScheme.primary,
+                    containerColor = readButtonContainer,
+                    contentColor = readButtonContent,
                     // KMK <--
                 )
             }

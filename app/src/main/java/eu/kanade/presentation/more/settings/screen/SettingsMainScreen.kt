@@ -48,6 +48,7 @@ import eu.kanade.presentation.more.settings.screen.about.AboutScreen
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.presentation.util.LocalBackPress
 import eu.kanade.presentation.util.Screen
+import eu.kanade.tachiyomi.BuildConfig
 import exh.assets.EhAssets
 import exh.assets.ehassets.EhLogo
 import exh.assets.ehassets.MangadexLogo
@@ -191,6 +192,10 @@ object SettingsMainScreen : Screen() {
         val formatSubtitle: @Composable () -> String = { stringResource(subtitleRes) },
         val icon: ImageVector,
         val screen: VoyagerScreen,
+        // KMK -->
+        /** Hidden on the no-MTL build, which ships without the AI engine behind this screen. */
+        val mtlOnly: Boolean = false,
+        // KMK <--
     )
 
     private val items = listOfNotNull(
@@ -264,18 +269,21 @@ object SettingsMainScreen : Screen() {
             screen = SettingsMangadexScreen,
         ),
         // SY <--
-        // KMK --> Off-device MTL (MangaTranslator + remote model URLs) is available even on no-MTL builds.
+        // KMK --> AI feature categories. Off-device MTL needs no local engine, but the no-MTL
+        // build is meant to be the one without AI features at all, so they are hidden there.
         Item(
             titleRes = KMR.strings.pref_yakuyomi_enabled,
             subtitleRes = KMR.strings.pref_yakuyomi_enabled_summary,
             icon = Icons.Outlined.Language,
             screen = SettingsYakuyomiScreen,
+            mtlOnly = true,
         ),
         Item(
             titleRes = KMR.strings.pref_upscale_title,
             subtitleRes = KMR.strings.pref_upscale_enabled_summary,
             icon = Icons.Outlined.AutoFixHigh,
             screen = SettingsUpscalerScreen,
+            mtlOnly = true,
         ),
         Item(
             titleRes = KMR.strings.label_achievements,
@@ -309,5 +317,7 @@ object SettingsMainScreen : Screen() {
             icon = Icons.Outlined.Info,
             screen = AboutScreen(),
         ),
-    )
+        // KMK -->
+    ).filterNot { it.mtlOnly && BuildConfig.IS_NOMTL }
+    // KMK <--
 }

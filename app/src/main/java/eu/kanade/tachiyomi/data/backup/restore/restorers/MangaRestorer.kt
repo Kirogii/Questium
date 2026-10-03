@@ -299,6 +299,9 @@ class MangaRestorer(
                     chapter.scanlator,
                     chapter.read,
                     chapter.bookmark,
+                    // KMK -->
+                    chapter.bookmarkColor.value.toLong(),
+                    // KMK <--
                     chapter.lastPageRead,
                     chapter.chapterNumber,
                     chapter.sourceOrder,
@@ -332,9 +335,8 @@ class MangaRestorer(
                     version = chapter.version,
                     isSyncing = 1,
                     memo = chapter.memo.let(MemoColumnAdapter::encode),
-                    // KMK --> backups carry no bookmark colour, so pass null and
-                    // let coalesce preserve whatever colour the row already has
-                    bookmarkColor = null,
+                    // KMK -->
+                    bookmarkColor = chapter.bookmarkColor.value.toLong(),
                     // KMK <--
                 )
             }

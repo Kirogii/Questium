@@ -11,6 +11,10 @@ files moved. See .github/scripts/release_notes.py.
 ### New
 
 ### Improve
+- Bookmark colours are now included in backups. Recolouring a chapter's bookmark was left out of the backup file, so restoring a backup brought every bookmark back without its colour
+- The read button on a series page now takes its colour from that series' cover, in the same spirit as cover-based dynamic theming, with the label colour chosen to stay readable on a light or a dark cover
+- The build without AI features no longer offers the AI settings categories — translation and upscaling are gone from both the settings list and settings search on that build, where they could not do anything anyway
+- That build now also says so in About, and next to its version in settings, so it is not mistaken for a broken copy of the main app
 - On-device text recognition can now use PaddleOCR v5 instead of the built-in model. It is about a third of the size — 16.6 MB rather than 43.6 MB — which is the trade: measured on a test page, it reads hand-lettered Japanese less accurately than the built-in model, so it is offered as a space saving rather than an upgrade, and the built-in model stays the default
 - Cloud Gemini translations now ask for a structured JSON reply matched to the input lines, so the translation no longer depends on the model returning a recognisable list format. A line that cannot be translated for content reasons is replaced on its own instead of causing the whole page to fail
 - The reader's translation indicator now names the stage a page is actually in — detecting, translating, inpainting, or typesetting — instead of guessing from the page count, and pages that could not be translated now say why rather than only that they were skipped

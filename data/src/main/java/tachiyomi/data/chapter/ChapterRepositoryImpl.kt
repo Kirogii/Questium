@@ -33,6 +33,9 @@ class ChapterRepositoryImpl(
                         chapter.scanlator,
                         chapter.read,
                         chapter.bookmark,
+                        // KMK -->
+                        chapter.bookmarkColor.value.toLong(),
+                        // KMK <--
                         chapter.lastPageRead,
                         chapter.chapterNumber,
                         chapter.sourceOrder,
