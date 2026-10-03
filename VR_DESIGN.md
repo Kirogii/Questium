@@ -35,7 +35,7 @@ Do not substitute a WebView, a stereoscopic phone display, or a separately insta
 
 The feature branch contains the embedded Godot/OpenXR activity, native content bridge, spatial library, deforming book, tracked input, seeker and options. The executable book and input checks pass, including far seeking and tracking-loss cancellation. Spotless formatting and validation pass. A desktop render verified page orientation and aspect preservation.
 
-Android compilation and real Quest acceptance remain unverified. This is an experimental implementation, not a tested 1:1 reproduction of Livro. Its geometry, controls and interaction are independently implemented; no Livro code or artwork is bundled.
+The nomtl debug Kotlin compilation also passes. Full APK assembly and real Quest acceptance remain unverified. This is an experimental implementation, not a tested 1:1 reproduction of Livro. Its geometry, controls and interaction are independently implemented; no Livro code or artwork is bundled.
 
 The full Windows assembleDebug attempt failed in existing native modules: imagedecoder's native downloads/build and llamatik's missing WSL installation. FlexibleAdapter's unavailable JitPack artifact was replaced by source from the exact pinned commit. The dedicated Linux CI workflow is the APK verification path for this machine.
 

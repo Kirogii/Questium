@@ -78,35 +78,40 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
 
     @UsedByGodot
     fun request(payload: String) {
-        host.lifecycleScope.launch(Dispatchers.IO) {
+        // Acquire navigation in call order before dispatching work, including the final save before exit.
+        host.lifecycleScope.launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 val request = JSONObject(payload)
-                when (request.getString("action")) {
-                    "library" -> library()
-                    "chapters" -> chapters(request.getString("manga").toLong())
-                    "cover" -> cover(request.getString("manga").toLong())
-                    "open" -> navigation.withLock {
-                        open(request.getString("manga").toLong(), request.getString("chapter").toLong())
-                    }
-                    "page" -> page(request.getString("token"), request.getInt("index"))
-                    "progress" -> navigation.withLock { progress(request.getString("token"), request.getInt("index")) }
-                    "next_chapter", "previous_chapter" -> navigation.withLock {
-                        reader?.let {
-                            val before = it.currentChapter?.id
-                            it.awaitPendingPageSaves()
-                            if (request.getString("action") == "next_chapter") it.loadNextChapter() else it.loadPreviousChapter()
-                            if (it.currentChapter?.id != before) publishChapter(it)
-                        }
-                    }
-                    "exit" -> navigation.withLock {
-                        reader?.awaitPendingPageSaves()
-                        host.exitVr()
-                    }
+                if (request.getString("action") in listOf("open", "progress", "next_chapter", "previous_chapter", "exit")) {
+                    navigation.withLock { withContext(Dispatchers.IO) { handleRequest(request) } }
+                } else {
+                    withContext(Dispatchers.IO) { handleRequest(request) }
                 }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 send(JSONObject().put("kind", "error").put("message", error.message ?: error.javaClass.simpleName))
+            }
+        }
+    }
+
+    private suspend fun handleRequest(request: JSONObject) {
+        when (request.getString("action")) {
+            "library" -> library()
+            "chapters" -> chapters(request.getString("manga").toLong())
+            "cover" -> cover(request.getString("manga").toLong())
+            "open" -> open(request.getString("manga").toLong(), request.getString("chapter").toLong())
+            "page" -> page(request.getString("token"), request.getInt("index"))
+            "progress" -> progress(request.getString("token"), request.getInt("index"))
+            "next_chapter", "previous_chapter" -> reader?.let {
+                val before = it.currentChapter?.id
+                it.awaitPendingPageSaves()
+                if (request.getString("action") == "next_chapter") it.loadNextChapter() else it.loadPreviousChapter()
+                if (it.currentChapter?.id != before) publishChapter(it)
+            }
+            "exit" -> {
+                reader?.awaitPendingPageSaves()
+                host.exitVr()
             }
         }
     }
