@@ -1,12 +1,13 @@
 name: Quest VR APK
 on:
   workflow_dispatch:
+  pull_request:
   push:
     branches: [feature/quest-vr]
 permissions:
   contents: read
 concurrency:
-  group: quest-vr-${{ github.ref }}
+  group: quest-vr-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   build:
@@ -32,7 +33,7 @@ jobs:
       - name: Verify formatting
         run: ./gradlew spotlessCheck
       - name: Build standalone Quest APK
-        run: ./gradlew assembleNomtlDebug --build-cache --parallel
+        run: ./gradlew assembleNomtlDebug -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: Quest-VR-debug-APK

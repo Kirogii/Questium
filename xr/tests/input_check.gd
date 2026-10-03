@@ -26,6 +26,9 @@ func _check() -> void:
     reader.holder = "right"
     reader._pointer("right", Vector3.ZERO, Vector3.FORWARD, true, false)
     assert(reader.holder.is_empty())
+    assert(reader.book.begin_turn(1))
+    reader._cancel_interactions()
+    assert(reader.book.turn_direction == 0, "Losing application focus cancels a turn")
     assert(reader.book.turn_direction == 0, "Tracking loss must cancel a physical page grab")
     reader.tracked["right"].pressed = false
     var spine: Vector3 = reader.book.global_position

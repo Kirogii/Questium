@@ -406,6 +406,19 @@ func _process(_delta: float) -> void:
             pressed = controller.is_button_pressed("trigger_click") or controller.is_button_pressed("grip_click")
         _pointer(hand, tip, direction, pressed, valid, pointer_basis)
 
+func _notification(what: int) -> void:
+    if what in [NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT] and is_instance_valid(book):
+        _cancel_interactions()
+
+func _cancel_interactions() -> void:
+    book.cancel_turn()
+    holder = ""
+    moving = false
+    _panel_input(camera.global_position, Vector3.UP, false, true)
+    ui_owner = ""
+    for hand in tracked:
+        tracked[hand].pressed = false
+
 func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, valid: bool, pointer_basis: Basis = Basis.IDENTITY) -> void:
     var previous: bool = tracked[hand].pressed
     if not valid:
