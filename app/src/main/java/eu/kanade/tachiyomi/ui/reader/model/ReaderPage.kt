@@ -42,7 +42,21 @@ open class ReaderPage(
      * with a decoded surface attached, which is what draws the old strip over its replacement.
      * Recording the state on the page itself lets a viewer reject one without having to go back to
      * the chapter to ask whether it is still real.
+     *
+     * Volatile because the writer and the viewer that reads it are on different threads, and the
+     * write deliberately happens *before* [eu.kanade.tachiyomi.ui.reader.model.ReaderChapter.replacePages]
+     * announces the new list - otherwise a viewer woken by that announcement could still read `false`
+     * here and keep the page it was told to drop.
      */
+    @Volatile
     var supersededBySplit: Boolean = false
+
+    /**
+     * The page whose split produced this one, or null when this page is not a segment.
+     *
+     * What lets a viewer that was showing the parent land on the first segment instead of on the
+     * chapter's resume target, which after a mid-session split is a different page entirely.
+     */
+    var splitSourcePage: ReaderPage? = null
     // KMK <--
 }

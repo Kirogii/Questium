@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import tachiyomi.core.common.util.system.logcat
+import java.util.concurrent.atomic.AtomicInteger
 
 data class ReaderChapter(val chapter: Chapter) {
 
@@ -31,9 +32,17 @@ data class ReaderChapter(val chapter: Chapter) {
      * Identity rather than a hash of the list, so it is a cheap read on the render path and cannot
      * collide. Callers compare it against the value they last built from.
      */
-    @Volatile
-    var pageListVersion: Int = 0
-        private set
+    val pageListVersion: Int get() = pageListVersionCounter.get()
+
+    /**
+     * Atomic rather than a plain counter, because the writers are not guaranteed to be one thread.
+     * A split runs on a loader worker while a fresh
+     * [eu.kanade.tachiyomi.ui.reader.loader.ChapterLoader] load runs on its own, so two of them can
+     * touch the same chapter - and a non-atomic `++` on a volatile int loses one of the two
+     * increments, leaving a viewer to reconcile against a version it has already seen and never
+     * notice the list it missed.
+     */
+    private val pageListVersionCounter = AtomicInteger()
 
     /**
      * Replaces the loaded page list and announces it. Every writer that changes the list's contents
@@ -41,7 +50,7 @@ data class ReaderChapter(val chapter: Chapter) {
      */
     fun replacePages(newPages: List<ReaderPage>) {
         state = State.Loaded(newPages)
-        pageListVersion++
+        pageListVersionCounter.incrementAndGet()
     }
 
     /**
@@ -52,6 +61,19 @@ data class ReaderChapter(val chapter: Chapter) {
      * by identity, since two distinct pages can legitimately share an index across a chapter swap.
      */
     fun positionOf(page: ReaderPage): Int = pages?.indexOfFirst { it === page } ?: -1
+
+    /**
+     * The page that now stands where [page] used to, or null when [page] is still in the list.
+     *
+     * A split removes the page it cuts and inserts its segments in its place, so a viewer that was
+     * showing [page] has to land on the first of them. Falling back to the chapter's resume target
+     * instead would teleport the reader to wherever the chapter was opened, which for a page they
+     * had already turned to is somewhere else entirely.
+     *
+     * Identity, like [positionOf]: the segments record the page they came from, so two pages sharing
+     * one image cannot hand each other's replacement over.
+     */
+    fun splitReplacementOf(page: ReaderPage): ReaderPage? = pages?.firstOrNull { it.splitSourcePage === page }
 
     /**
      * 1-based number to show the reader for [page].

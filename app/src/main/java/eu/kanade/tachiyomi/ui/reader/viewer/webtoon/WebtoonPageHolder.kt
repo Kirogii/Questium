@@ -152,7 +152,13 @@ class WebtoonPageHolder(
                             progressIndicator.setProgress(value)
                         }
                     }
-                    Page.State.Ready -> setImage()
+                    Page.State.Ready -> {
+                        setImage()
+                        // A too-tall image is cut into segments as it reaches Ready, replacing this
+                        // page in the chapter's list. The viewer's item list has to be rebuilt for
+                        // those to be scrollable to, and this transition is the only signal it did.
+                        viewer.onPageReady(page)
+                    }
                     is Page.State.Error -> setError(state.error)
                 }
             }

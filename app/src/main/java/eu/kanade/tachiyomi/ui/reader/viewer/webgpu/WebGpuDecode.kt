@@ -1039,17 +1039,7 @@ internal fun WebGpuViewer.preloadPage(page: ViewerPage, prioritize: Boolean = fa
 internal fun WebGpuViewer.preloadPages(page: ViewerPage) {
     // Must precede the rest: [page] itself can be one a split replaced, and all of it walks outward from it.
     viewerChapters?.let { chapters ->
-        if (syncPageList(chapters)) {
-            // Neighbours of a discarded node lead nowhere; re-enter via the resume target.
-            val fallback = chapters.currChapter.pages?.let { list ->
-                list.getOrNull(
-                    chapters.currChapter.requestedPage.coerceIn(0, maxOf(0, list.lastIndex)),
-                ) ?: list.firstOrNull()
-            } ?: return
-            currentPage = getPage(fallback, currentPage)
-            preloadPages(currentPage ?: return)
-            return
-        }
+        if (syncPageList(chapters)) return
     }
 
     // Get the canonical page from cache to ensure we're working with current data

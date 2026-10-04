@@ -244,18 +244,12 @@ abstract class PagerViewer(
      * A split removes the page that was on screen and puts its segments in that slot, so the pager's
      * item count changes while it is sitting on that position. Holding the position is deliberate:
      * the replacement occupies the same slot, so the reader lands on the first segment and carries
-     * on. Holders for pages the split removed are destroyed, otherwise their decoded bitmap stays
-     * attached to a position that now holds something else.
+     * on. Holders for pages the split removed need no manual disposal - the adapter answers
+     * POSITION_NONE for them (they are not in the rebuilt item list any more), so ViewPager destroys
+     * them itself and takes their decoded bitmap with them.
      */
     private fun reanchorAfterPageListChange() {
         val chapter = viewerChapters?.currChapter ?: return
-
-        // A holder for a page the split replaced keeps its decoded bitmap attached to a position
-        // that now holds a segment, which is what laid the old strip over its own replacement.
-        val stale = pager.children
-            .filterIsInstance<PagerPageHolder>()
-            .filter { it.page.supersededBySplit }
-        stale.forEach { holder -> runCatching { pager.removeView(holder) } }
 
         // The pager may now be past the end if pages were removed rather than only added.
         val lastIndex = maxOf(0, adapter.getCount() - 1)
@@ -264,12 +258,42 @@ abstract class PagerViewer(
             pager.setCurrentItem(target, false)
         }
 
+        // Only cleared when the page on screen is the one the split removed. Blanking it
+        // unconditionally re-reports the page that is still showing, and the adapter's setChapters
+        // has usually already resolved it through the pager listener by this point.
+        if ((currentPage as? ReaderPage)?.supersededBySplit == true) {
+            currentPage = null
+        }
+
         // Resolved against the rebuilt item list, so this reports the page now in that slot rather
         // than the one the split removed.
-        currentPage = null
         onPageChange(target)
 
         logcat { "Re-anchored after page list change: ${chapter.pages?.size} pages" }
+    }
+
+    /**
+     * Rebuilds the item list once a page reaches [Page.State.Ready], if that load split it.
+     *
+     * The loader cuts a too-tall image as it finishes loading, so the chapter's page list can grow
+     * while the pager sits on the very position that page occupies. Page-change callbacks alone do
+     * not cover that: the item count stays shorter than the chapter's, and turning past its end
+     * reaches nothing - the segments and everything after them are simply not there to turn to.
+     *
+     * The version compare is the only guard, and it is the one that terminates: this fires for the
+     * page the split replaced, whose load did the cutting, and stops firing once the rebuilt list
+     * has caught up. Gating on the page instead would skip exactly the page that needs rebuilding.
+     *
+     * Posted rather than called inline, because the caller is a holder mid-render and re-anchoring
+     * destroys holders - including the one that asked.
+     */
+    internal fun onPageReady(page: ReaderPage) {
+        val chapter = viewerChapters?.currChapter ?: return
+        // A page of an adjacent chapter finishing its load says nothing about this chapter's list,
+        // and it is not the current chapter the adapter would rebuild from either.
+        if (page.chapter !== chapter) return
+        if (chapter.pageListVersion == adapter.currentPageListVersion) return
+        pager.post { onPageChange(pager.currentItem) }
     }
 
     private fun checkAllowPreload(page: ReaderPage?): Boolean {

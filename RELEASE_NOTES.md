@@ -22,3 +22,16 @@ files moved. See .github/scripts/release_notes.py.
   into segments, and the reader could end up drawing the whole strip and its segments at the same
   time. Either the strip or its replacement could also linger as a blank or stale page when you
   turned to it. Long strips now have exactly one representation and page through cleanly.
+- **Fixed very tall pages breaking a chapter after you left and came back.** A cut page was
+  remembered as a set of separate pages, so reopening the chapter treated each of them as a whole
+  page and cut them again — one strip could end up shown dozens of times, and pages after it were
+  duplicated too.
+- **Fixed the reader getting stuck on very tall pages.** Where a page was cut, the reader's page
+  list could stay shorter than the chapter, leaving the rest of the strip and every page after it
+  unreachable — turning past the end simply did nothing. This now follows in all three reading
+  modes: strip, webtoon, and the GPU viewer.
+- **Fixed the GPU reader jumping to the wrong page after a very tall page was cut.** It could send
+  you back to wherever the chapter was opened rather than to the page replacing the one you were on.
+- **Fixed very tall pages failing to reload after the image cache was cleared or trimmed.** Cutting
+  one needs the original image, which could be dropped while its pieces were kept, leaving the page
+  permanently broken instead of re-fetching.

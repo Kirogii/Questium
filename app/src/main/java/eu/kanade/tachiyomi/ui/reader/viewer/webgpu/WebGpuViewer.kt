@@ -345,7 +345,8 @@ open class WebGpuViewer(
     internal fun pageInCache(page: ViewerPage): Boolean = pageCache[pageKey(page)] === page
 
     /**
-     * Drops cached shells for pages a split has replaced, and moves off one if it was on screen.
+     * Drops cached shells for pages a split has replaced, and reports the page the viewer should
+     * land on if it was showing one of them.
      *
      * A page too tall for the decoder is replaced by its segments after this viewer has already
      * built its page graph. The parent shell stays cached under its own [PageKey.Reader] and keeps
@@ -353,15 +354,15 @@ open class WebGpuViewer(
      * segment - so the strip was drawn twice, the whole and the pieces overlapping. Nothing else
      * evicts it: it is not idle, not farthest, and its key still looks valid.
      *
-     * Returns true when the viewer was showing a page that no longer exists, so the caller can
-     * re-anchor.
+     * Returns the shell that was on screen when a split removed it, or null when nothing the viewer
+     * was showing was removed.
      */
-    internal fun evictReplacedPages(): Boolean {
-        var droppedCurrent = false
+    private fun evictReplacedPages(): ViewerReaderPage? {
+        var dropped: ViewerReaderPage? = null
         synchronized(lock) {
             val orphaned = pageCache.values.filterIsInstance<ViewerReaderPage>()
                 .filter { it.page.supersededBySplit }
-            if (orphaned.isEmpty()) return false
+            if (orphaned.isEmpty()) return null
             orphaned.forEach { shell ->
                 pageCache.remove(pageKey(shell))
                 decodeQueue.remove(shell)
@@ -371,24 +372,39 @@ open class WebGpuViewer(
                     shell.imagePage.cleanup()
                 }
             }
-            droppedCurrent = orphaned.any { it === currentPage }
-            if (droppedCurrent) currentPage = null
+            // Read through a local: currentPage is a var, so the compiler will not smart-cast it past
+            // the check below, and the shell is the only thing still holding the page once it is
+            // out of the cache.
+            val shown = currentPage
+            if (shown is ViewerReaderPage && shown in orphaned) {
+                dropped = shown
+                currentPage = null
+            }
         }
-        return droppedCurrent
+        return dropped
     }
 
     /** Last [ReaderChapter.pageListVersion] this viewer reconciled against. */
     private var seenPageListVersion = -1
 
     /**
-     * Reconciles against a page list the loader replaced underneath us. Cheap when nothing changed:
-     * one volatile int compare.
+     * Reconciles against a page list the loader replaced underneath us.
+     *
+     * Cheap when nothing changed: one volatile int compare. Returns true when the viewer had to
+     * move off a page the split removed, so the caller should stop - it was about to walk outward
+     * from a node that no longer exists, and re-anchoring has already queued the right pages.
      */
     internal fun syncPageList(chapters: ViewerChapters): Boolean {
         val version = chapters.currChapter.pageListVersion
         if (version == seenPageListVersion) return false
         seenPageListVersion = version
-        return evictReplacedPages()
+        val discarded = evictReplacedPages() ?: return false
+        // Re-enter from whatever now stands in the discarded page's place - not from the chapter's
+        // resume target, which is where the chapter was opened and can be pages away from where the
+        // reader actually was.
+        val replacement = discarded.page.chapter.splitReplacementOf(discarded.page) ?: discarded.page
+        moveToPage(getSpreadAnchor(getPage(replacement, discarded)))
+        return true
     }
 
     init {

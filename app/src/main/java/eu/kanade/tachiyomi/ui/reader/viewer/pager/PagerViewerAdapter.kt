@@ -68,6 +68,15 @@ class PagerViewerAdapter(
      * has R2L direction.
      */
     fun setChapters(chapters: ViewerChapters, forceTransition: Boolean) {
+        // Recorded before anything else here, including the moveToPage at the bottom: that call can
+        // re-enter through PagerViewer.onPageChange, which asks whether the page list has changed.
+        // Latching last would let the nested call see a stale version and rebuild forever.
+        //
+        // A full set is also the baseline syncPageList needs - it exists to catch pages replaced
+        // *after* this point, and without recording it the initial load would read as a change.
+        lastPageListVersion = chapters.currChapter.pageListVersion
+        lastChapters = chapters
+
         val newItems = mutableListOf<ReaderItem>()
 
         // Forces chapter transition if there is missing chapters
@@ -139,12 +148,6 @@ class PagerViewerAdapter(
         if (insertPageLastPage != null) {
             viewer.moveToPage(insertPageLastPage)
         }
-
-        // A full set is the baseline: syncPageList exists to catch pages replaced *after* this
-        // point, and without recording it the initial load would read as a change and re-anchor
-        // the reader for no reason. Retained so a re-set can reuse the adjacent chapters.
-        lastPageListVersion = chapters.currChapter.pageListVersion
-        lastChapters = chapters
     }
 
     /**
@@ -264,6 +267,9 @@ class PagerViewerAdapter(
         return true
     }
 
+    /** [ReaderChapter.pageListVersion] the item list was last built from, or -1 before the first set. */
+    val currentPageListVersion: Int get() = lastPageListVersion
+
     private var lastPageListVersion = -1
 
     private var lastChapters: ViewerChapters? = null
@@ -310,7 +316,11 @@ class PagerViewerAdapter(
             else -> joinedItems.indexOfFirst { it.first == newPage || it.second == newPage }
         }
 
-        viewer.pager.setCurrentItem(index, false)
+        // The page we were on is no longer in the rebuilt list - a split took it out and put its
+        // segments where it stood. Holding the position is the point of the split, so land on the
+        // slot we already occupy instead of the -1 that ViewPager would read as "the first page".
+        val target = if (index >= 0) index else viewer.pager.currentItem.coerceIn(0, joinedItems.lastIndex.coerceAtLeast(0))
+        viewer.pager.setCurrentItem(target, false)
     }
 
     fun splitDoublePages(current: ReaderPage) {
