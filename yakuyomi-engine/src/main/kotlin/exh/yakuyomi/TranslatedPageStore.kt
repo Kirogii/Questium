@@ -5,6 +5,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
 @SingleIn(AppScope::class)
@@ -17,6 +18,9 @@ class TranslatedPageStore(
         private const val MAX_SAVED_BYTES = 256L * 1024 * 1024
         private const val MAX_SAVED_CHAPTERS = 40
 
+        /** Highest index that gets a readable filename; beyond this the index is hashed. */
+        private const val MAX_READABLE_PAGE_INDEX = 5000
+
         // KMK --> Sidecar holding the manga title next to its cached pages, so the
         // per-manga cache screen can name entries after the manga leaves the library.
         const val TITLE_FILE = "title.txt"
@@ -24,35 +28,73 @@ class TranslatedPageStore(
         // KMK <--
     }
 
+    /** What a saved page was produced with, so a configuration change can invalidate it. */
+    private data class Stamp(val policy: String?, val identity: String?)
+
     // KMK --> Titles already on disk this process: skips re-reading on every save.
     private val lastTitles = ConcurrentHashMap<Long, String>()
     // KMK <--
 
-    private fun baseDir(): File = File(context.filesDir, "yakuyomi_saved").apply { mkdirs() }
+    private fun baseDir(): File = File(context.filesDir, "yakuyomi_saved")
 
     private fun chapterDir(mangaId: Long, chapterId: Long): File =
         File(baseDir(), "$mangaId/$chapterId").apply { mkdirs() }
 
+    /** Same path as [chapterDir] but without creating it, for read paths. */
+    private fun existingChapterDir(mangaId: Long, chapterId: Long): File =
+        File(File(context.filesDir, "yakuyomi_saved"), "$mangaId/$chapterId")
+
     fun pageFile(mangaId: Long, chapterId: Long, pageIndex: Int): File =
-        File(chapterDir(mangaId, chapterId), "page_$pageIndex.webp")
+        File(chapterDir(mangaId, chapterId), pageFileName(pageIndex))
+
+    /** [pageFile] without the directory side effect, for reads. */
+    private fun pageFileIfPresent(mangaId: Long, chapterId: Long, pageIndex: Int): File =
+        File(existingChapterDir(mangaId, chapterId), pageFileName(pageIndex))
+
+    /**
+     * Filename for [pageIndex].
+     *
+     * Source pages keep their readable name. A tall page split by the reader produces synthetic
+     * segment indices above 2^28, which [save] used to reject outright - so a long strip was
+     * re-detected, re-OCR'd and re-translated (paid for again by the LLM) on every single visit.
+     * Hashing the out-of-range index gives those pages a stable, bounded name instead. Nothing was
+     * ever written under the old rejected range, so this adds capability rather than orphaning
+     * files.
+     */
+    private fun pageFileName(pageIndex: Int): String =
+        if (pageIndex in 0..MAX_READABLE_PAGE_INDEX) {
+            "page_$pageIndex.webp"
+        } else {
+            "page_h${sha1(pageIndex.toString())}.webp"
+        }
+
+    private fun sha1(value: String): String =
+        MessageDigest.getInstance("SHA-1")
+            .digest(value.toByteArray())
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            .take(16)
 
     fun loadIfExists(
         mangaId: Long,
         chapterId: Long,
         pageIndex: Int,
         expectedPolicyFingerprint: String? = null,
+        expectedIdentity: String? = null,
     ): ByteArray? {
-        val f = pageFile(mangaId, chapterId, pageIndex)
-        if (expectedPolicyFingerprint != null && loadPolicyFingerprint(mangaId, chapterId, pageIndex) != expectedPolicyFingerprint) {
-            return null
+        // The read path must not create anything: this runs for every page the reader binds, and
+        // mkdirs on a cache lookup means a read-only miss still touches the filesystem.
+        val f = pageFileIfPresent(mangaId, chapterId, pageIndex)
+        if (!f.isFile || f.length() == 0L) return null
+        if (expectedPolicyFingerprint != null || expectedIdentity != null) {
+            // A missing stamp cannot be validated against anything, so it counts as stale the
+            // moment a caller asks for a fingerprint or an identity.
+            val stamp = loadStamp(mangaId, chapterId, pageIndex)
+            if (stamp?.policy != expectedPolicyFingerprint) return null
+            if (expectedIdentity != null && stamp?.identity != expectedIdentity) return null
         }
-        return if (f.exists() && f.length() > 0) {
-            try {
-                f.readBytes()
-            } catch (_: Exception) {
-                null
-            }
-        } else {
+        return try {
+            f.readBytes()
+        } catch (_: Exception) {
             null
         }
     }
@@ -64,9 +106,10 @@ class TranslatedPageStore(
         webpBytes: ByteArray,
         mangaTitle: String? = null,
         policyFingerprint: String? = null,
+        identity: String? = null,
     ) {
         if (webpBytes.isEmpty() || webpBytes.size > 5 * 1024 * 1024) return
-        if (pageIndex < 0 || pageIndex > 5000) return
+        if (pageIndex < 0) return
         val f = pageFile(mangaId, chapterId, pageIndex)
         try {
             val tmp = File(f.parentFile, f.name + ".tmp")
@@ -78,7 +121,7 @@ class TranslatedPageStore(
                 tmp.delete()
             }
         } catch (_: Exception) {}
-        if (!policyFingerprint.isNullOrBlank()) savePolicyFingerprint(mangaId, chapterId, pageIndex, policyFingerprint)
+        saveStamp(mangaId, chapterId, pageIndex, policyFingerprint, identity)
         saveTitle(mangaId, mangaTitle)
         pruneIfNeeded()
     }
@@ -99,15 +142,39 @@ class TranslatedPageStore(
     }
 
     private fun policyFile(mangaId: Long, chapterId: Long, pageIndex: Int): File =
-        File(chapterDir(mangaId, chapterId), "$POLICY_FILE_PREFIX$pageIndex.txt")
+        File(chapterDir(mangaId, chapterId), "$POLICY_FILE_PREFIX${pageFileName(pageIndex)}")
 
-    private fun loadPolicyFingerprint(mangaId: Long, chapterId: Long, pageIndex: Int): String? = runCatching {
-        policyFile(mangaId, chapterId, pageIndex).takeIf { it.isFile }?.readText()?.trim()
+    /** [policyFile] without the directory side effect, for reads. */
+    private fun policyFileIfPresent(mangaId: Long, chapterId: Long, pageIndex: Int): File =
+        File(existingChapterDir(mangaId, chapterId), "$POLICY_FILE_PREFIX${pageFileName(pageIndex)}")
+
+    /**
+     * Reads the stamp, tolerating the pre-identity format where the file held only the policy
+     * fingerprint. Such an entry reports a null identity, so it is treated as stale the moment a
+     * caller asks for one - which is every caller now.
+     */
+    private fun loadStamp(mangaId: Long, chapterId: Long, pageIndex: Int): Stamp? = runCatching {
+        val f = policyFileIfPresent(mangaId, chapterId, pageIndex)
+        if (!f.isFile) return@runCatching null
+        val lines = f.readText().split('\n')
+        Stamp(
+            policy = lines.getOrNull(0)?.trim()?.takeIf { it.isNotEmpty() },
+            identity = lines.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() },
+        )
     }.getOrNull()
 
-    private fun savePolicyFingerprint(mangaId: Long, chapterId: Long, pageIndex: Int, fingerprint: String) {
+    private fun saveStamp(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        policyFingerprint: String?,
+        identity: String?,
+    ) {
+        if (policyFingerprint.isNullOrBlank() && identity.isNullOrBlank()) return
         runCatching {
-            policyFile(mangaId, chapterId, pageIndex).writeText(fingerprint.take(160))
+            policyFile(mangaId, chapterId, pageIndex).writeText(
+                "${policyFingerprint.orEmpty().take(160)}\n${identity.orEmpty().take(160)}",
+            )
         }
     }
 

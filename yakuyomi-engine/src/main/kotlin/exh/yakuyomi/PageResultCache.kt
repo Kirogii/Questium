@@ -72,9 +72,16 @@ class PageResultCache(
         targetLang: String,
         model: String,
         promptFingerprint: String,
+        identity: String,
     ): PageCacheHit? {
         if (persistEnabled) {
-            pageStore.loadIfExists(mangaId, chapterId, pageIndex, promptFingerprint)?.let { bytes ->
+            pageStore.loadIfExists(
+                mangaId = mangaId,
+                chapterId = chapterId,
+                pageIndex = pageIndex,
+                expectedPolicyFingerprint = promptFingerprint,
+                expectedIdentity = identity,
+            )?.let { bytes ->
                 if (bytes.isNotEmpty()) return PageCacheHit(bytes, PageCacheSource.SAVED_PAGE)
             }
         }
@@ -108,7 +115,10 @@ class PageResultCache(
         webp: ByteArray,
         mangaTitle: String?,
         promptFingerprint: String,
+        identity: String,
     ) {
-        runCatching { pageStore.save(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint) }
+        runCatching {
+            pageStore.save(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint, identity)
+        }
     }
 }

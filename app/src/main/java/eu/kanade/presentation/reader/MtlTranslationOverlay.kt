@@ -45,6 +45,7 @@ fun MtlTranslationOverlay(
     totalPages: Int,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    currentPageIndex: Int? = null,
 ) {
     if (mangaId == null || chapterId == null || chapterId == 0L) return
     val manager = remember { globalAppGraph.translationManager }
@@ -78,9 +79,16 @@ fun MtlTranslationOverlay(
     val isTranslating = chapterStatus?.isTranslating == true
     val errorCount = chapterStatus?.errorCount ?: 0
     val translatedCount = chapterStatus?.translatedCount ?: 0
-    val skippedCount = chapterStatus?.skippedCount ?: 0
 
-    val visible = isTranslating || (errorCount > 0 && !isTranslating) || showTranslated
+    // What the reader is actually looking at. The chapter aggregates cannot answer that: a chapter
+    // where page 1 translated and pages 2-20 had no text reports the same totals as one where every
+    // page is done, so a chapter-scoped "✓ Translated" sat under pages that were still in Japanese.
+    val currentPage = currentPageIndex?.let { chapterStatus?.pages?.get(it) }
+    val currentPageTranslated = currentPage?.state == exh.yakuyomi.TranslationStatus.PageState.DONE ||
+        currentPage?.state == exh.yakuyomi.TranslationStatus.PageState.CACHED
+
+    val visible = isTranslating || (errorCount > 0 && !isTranslating) ||
+        (showTranslated && currentPageTranslated)
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(),
@@ -105,11 +113,19 @@ fun MtlTranslationOverlay(
                     reason = chapterStatus?.lastError,
                     onRetry = onRetry,
                 )
-                skippedCount > 0 && translatedCount == 0 -> SkippedChip(
-                    skippedCount = skippedCount,
-                    reason = chapterStatus?.pages?.values?.firstOrNull { it.skipReason != null }?.skipReason,
+                // The page on screen outranks the chapter aggregate: reporting success next to a
+                // page that is still in its source language is the one thing this chip must not do.
+                currentPage != null && currentPage.state == exh.yakuyomi.TranslationStatus.PageState.SKIPPED &&
+                    !currentPage.isRetryable -> SkippedChip(
+                    skippedCount = 1,
+                    reason = currentPage.skipReason,
                 )
-                showTranslated -> TranslatedChip()
+                currentPage != null && currentPage.isRetryable -> ErrorChip(
+                    errorCount = 1,
+                    reason = currentPage.error ?: currentPage.skipReason,
+                    onRetry = onRetry,
+                )
+                showTranslated && currentPageTranslated -> TranslatedChip()
                 else -> {}
             }
         }

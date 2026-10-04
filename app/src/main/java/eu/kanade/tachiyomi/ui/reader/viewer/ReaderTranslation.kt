@@ -58,13 +58,18 @@ object ReaderTranslation : PageTranslator {
         // Avoid re-translating pages already processed in this session, but still serve any
         // stored translated bytes so the reader keeps showing the translated image on re-bind.
         val existing = statusStore.chapterStatus(mangaId, chapterId)?.pages?.get(pageIndex)
-        when (existing?.state) {
-            exh.yakuyomi.TranslationStatus.PageState.TRANSLATING,
-            exh.yakuyomi.TranslationStatus.PageState.SKIPPED,
-            -> return
-            exh.yakuyomi.TranslationStatus.PageState.DONE,
-            exh.yakuyomi.TranslationStatus.PageState.CACHED,
-            -> {
+        when {
+            existing?.state == exh.yakuyomi.TranslationStatus.PageState.TRANSLATING -> return
+            // A skip the provider caused is not a final answer, so it falls through to another
+            // attempt; returning here is what made one dropped connection skip the page for the
+            // rest of the session with nothing logged and nothing to retry from.
+            existing != null &&
+                existing.state == exh.yakuyomi.TranslationStatus.PageState.SKIPPED &&
+                !existing.isRetryable -> return
+            existing?.state in setOf(
+                exh.yakuyomi.TranslationStatus.PageState.DONE,
+                exh.yakuyomi.TranslationStatus.PageState.CACHED,
+            ) -> {
                 scope.launchIO {
                     try {
                         val bytes = manager.getTranslatedBytes(mangaId, chapterId, originalBytes, pageIndex)
@@ -81,7 +86,7 @@ object ReaderTranslation : PageTranslator {
                 }
                 return
             }
-            else -> Unit // ERROR or unknown → allow retry
+            else -> Unit // ERROR, a retryable skip, or unknown → allow retry
         }
 
         scope.launchIO {
