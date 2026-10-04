@@ -7,6 +7,8 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.model.segmentIndex
+import eu.kanade.tachiyomi.ui.reader.model.segmentParentIndex
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import exh.source.isEhBasedSource
 import exh.util.DataSaver
@@ -20,7 +22,6 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
-import logcat.LogPriority
 import mihon.app.di.globalAppGraph
 import mihon.core.concurrency.AppDispatchersHolder
 import tachiyomi.core.common.util.lang.launchIO
@@ -35,32 +36,6 @@ import kotlin.math.min
 
 /** Cache-key suffix distinguishing a split segment from the image it was cut from. */
 private const val SEGMENT_KEY_SUFFIX = "#segment-"
-
-/**
- * First index handed to an injected split segment.
- *
- * Well clear of any real page count, so a segment index can never collide with the index of a page
- * the source listed.
- */
-private const val SEGMENT_INDEX_BASE = 1 shl 28
-
-/**
- * Slots reserved per source page inside the segment index range.
- *
- * Derived from the page's own index rather than from the chapter's current length, so the same
- * slice of the same image always gets the same index. Deriving it from the length meant a second
- * split pass - which sees a longer list - produced a different index for the same slice, leaving
- * the previous copy live in every index-keyed page cache alongside the new one.
- *
- * The stride has to exceed the number of segments one page can produce, or two source pages
- * share index space and the readers - which key their page cache on `PageKey.Reader(chapterId,
- * index)` - hand back the wrong page. [tachiyomi.core.common.util.system.TallPageSplitter]
- * bisects, so the count is a power of two bounded by `2 * ceil(height / maxSegmentHeight)`:
- * at an 8192px segment limit that exceeds 16 for any strip over ~64k px, which long webtoon
- * chapters do reach. 4096 covers strips up to ~33M px, and still leaves room for ~450k source
- * pages per chapter inside the 27 bits [SEGMENT_INDEX_BASE] leaves above it.
- */
-private const val SEGMENT_INDEX_STRIDE = 1L shl 12
 
 /**
  * Loader used to load chapters from an online source.
@@ -227,25 +202,21 @@ internal class HttpPageLoader(
         }
     }
 
-/**
+    /**
      * [pages] with every run of split segments folded back into the single page it replaced.
      *
      * The cached list is what `getPages` hands back on the next open, and it is read as a plain list
-     * of source pages: a segment's `imageUrl` is a derived cache key that only means anything to
-     * this loader, and its `splitSegment` flag is not part of [Page]. Saving the split list as-is
-     * therefore restores each segment as if it were a source page, and every one of them splits
-     * again on load - turning one strip into as many segment pages as it had segments squared.
-     *
-     * What this costs: `last_page_read` is a position, and the positions after a split are shifted
-     * by however many segments preceded them, so a resume can land a page or two later than it left
-     * in a chapter holding a very tall image. Bounded, and the alternative is the duplication above.
+     * of source pages: a segment's `imageUrl` is a derived cache key that only means anything to this
+     * loader, and its `splitSegment` flag is not part of [Page]. Saving the split list as-is therefore
+     * restores each segment as if it were a source page, and every one of them splits again on load -
+     * turning one strip into as many segment pages as it had segments squared.
      */
     private fun unSplit(pages: List<ReaderPage>): List<Page> {
         val result = mutableListOf<Page>()
         var index = 0
         while (index < pages.size) {
             val page = pages[index]
-            val parentIndex = if (page.splitSegment) parentIndexOf(page.index) else null
+            val parentIndex = page.segmentParentIndex
             if (parentIndex == null) {
                 result += Page(page.index, page.url, page.imageUrl)
                 index++
@@ -254,20 +225,12 @@ internal class HttpPageLoader(
             // The whole run shares one parent index, so this collapses exactly the pages a single
             // split inserted - two parents whose images happen to share a URL cannot merge.
             result += Page(parentIndex, page.url, page.imageUrl?.substringBefore(SEGMENT_KEY_SUFFIX))
-            while (index < pages.size && pages[index].splitSegment && parentIndexOf(pages[index].index) == parentIndex) {
+            while (index < pages.size && pages[index].segmentParentIndex == parentIndex) {
                 index++
             }
         }
         return result
     }
-
-    /** Index of the page a segment carrying [index] was cut from, or null when [index] is not one. */
-    private fun parentIndexOf(index: Int): Int? =
-        if (index < SEGMENT_INDEX_BASE) {
-            null
-        } else {
-            ((index - SEGMENT_INDEX_BASE) / SEGMENT_INDEX_STRIDE).toInt()
-        }
 
     /**
      * Preloads the given [amount] of pages after the [currentPage] with a lower priority.
@@ -466,33 +429,6 @@ internal class HttpPageLoader(
         }
 
     private fun segmentKey(imageUrl: String, index: Int) = "$imageUrl$SEGMENT_KEY_SUFFIX$index"
-
-    /**
-     * Index handed to an injected segment page.
-     *
-     * [ReaderPage] takes its index at construction and cannot be renumbered afterwards, so a
-     * segment inserted mid-chapter cannot take the position it now sits at without colliding with
-     * the page that already owns that index. Segment indices are therefore drawn from a range no
-     * real page reaches, which keeps them unique - all the readers key their page cache on
-     * `PageKey.Reader(chapterId, index)` and would hand back the wrong page on a collision.
-     */
-    private fun segmentIndex(parent: ReaderPage, segmentNumber: Int): Int {
-        if (segmentNumber >= SEGMENT_INDEX_STRIDE) {
-            // Unreachable in practice, but a silent wrap here would alias two segments of the
-            // same page onto one cache key, so it is worth saying out loud.
-            logcat(LogPriority.ERROR) {
-                "Page ${parent.index} produced more than $SEGMENT_INDEX_STRIDE segments; " +
-                    "segment $segmentNumber collides with another page's index range"
-            }
-        }
-        // SEGMENT_INDEX_STRIDE is a Long, so the sum widens; it stays inside Int for any
-        // real chapter (< 2^27 / 2^12 pages) because the base leaves 27 bits of headroom.
-        return (
-            SEGMENT_INDEX_BASE +
-                parent.index.toLong().coerceAtLeast(0) * SEGMENT_INDEX_STRIDE +
-                segmentNumber.coerceIn(0, SEGMENT_INDEX_STRIDE.toInt() - 1)
-            ).toInt()
-    }
 
     // EXH -->
     fun boostPage(page: ReaderPage) {

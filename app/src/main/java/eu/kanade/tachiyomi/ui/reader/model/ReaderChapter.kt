@@ -76,6 +76,45 @@ data class ReaderChapter(val chapter: Chapter) {
     fun splitReplacementOf(page: ReaderPage): ReaderPage? = pages?.firstOrNull { it.splitSourcePage === page }
 
     /**
+     * Position to store for [page], in the coordinates the page list has before any split.
+     *
+     * [positionOf] counts positions in the list as it stands, which is what the reader pages through
+     * and what the progress bar has to show. It is not what to *persist*: a split inserts pages, so
+     * every position after one shifts by however many segments came before it, and the list that
+     * survives a close is the un-split one the loader restores. A stored position therefore names a
+     * different page on the next open than it did on the way out.
+     *
+     * Every segment of one strip maps to the same stored position, which is the point - reading any
+     * slice of a long image has to resume the image, not some later page. Unlisted pages fall back to
+     * [Page.index], the coordinate they had before anything could shift them.
+     */
+    fun savedIndexOf(page: ReaderPage): Int {
+        val list = pages ?: return page.index
+        val position = positionOf(page)
+        if (position < 0) return page.index
+        val run = page.segmentParentIndex
+        var saved = 0
+        var index = 0
+        while (index < position) {
+            val parent = list[index].segmentParentIndex
+            if (parent == null) {
+                saved++
+                index++
+                continue
+            }
+            // Stops on the run [page] belongs to, before counting it: a page inside a run answers
+            // with the slot that run occupies, not with the slot after it. Every other run is
+            // skipped whole and costs one position, matching how it restores.
+            if (run != null && parent == run) break
+            saved++
+            while (index < position && list[index].segmentParentIndex == parent) {
+                index++
+            }
+        }
+        return saved
+    }
+
+    /**
      * 1-based number to show the reader for [page].
      *
      * [Page.number] is derived from the immutable [Page.index], so it cannot report a position for

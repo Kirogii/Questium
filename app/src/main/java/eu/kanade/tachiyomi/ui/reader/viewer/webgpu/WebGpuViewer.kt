@@ -1265,9 +1265,10 @@ open class WebGpuViewer(
                 if (isContinuous && pendingContinuousRestoreChapterId == cid) return
                 if (!isContinuous && pendingPagedRestoreChapterId == cid) return
                 // KMK <--
-                // Saved as a list position, not Page.index: an anchor is restored with
+                // Live position, not Page.index: an anchor is restored with
                 // coerceIn(0, pages.lastIndex), so a split segment's out-of-range index would
-                // clamp to the chapter's last page and resume the reader at the end.
+                // clamp to the chapter's last page and resume the reader at the end. This is what the
+                // running session and the progress display are measured against.
                 val position = page.page.chapter.positionOf(page.page)
                 if (position < 0) return
                 pager.state.seedPageIndex(position)
@@ -1277,7 +1278,16 @@ open class WebGpuViewer(
                     PageAnchor(pageIndex = position)
                 }
                 currentAnchor = anchor
-                positionStore.saveAnchor(cid, anchor, force = force)
+                // Stored in the coordinates the chapter has on the next open instead: the loader
+                // folds the segments away when it persists the page list, so a live position names a
+                // later page once that has happened. Only the copy on disk is converted - the live
+                // anchor above stays in the list the reader is actually paging through.
+                val saved = page.page.chapter.savedIndexOf(page.page)
+                positionStore.saveAnchor(
+                    cid,
+                    if (saved >= 0) anchor.copy(pageIndex = saved) else anchor,
+                    force = force,
+                )
             }
         } catch (_: Exception) {}
     }

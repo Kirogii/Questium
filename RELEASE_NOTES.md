@@ -35,3 +35,7 @@ files moved. See .github/scripts/release_notes.py.
 - **Fixed very tall pages failing to reload after the image cache was cleared or trimmed.** Cutting
   one needs the original image, which could be dropped while its pieces were kept, leaving the page
   permanently broken instead of re-fetching.
+- **Fixed chapters with a very tall page resuming on the wrong page.** Splitting a page into pieces
+  shifts the position of every page after it, but your place in the chapter was remembered as a
+  position in the pre-split list. Leaving and coming back could drop you a page or two further on —
+  or, on the GPU reader, past where you stopped.
