@@ -31,6 +31,33 @@ class AndroidDatabaseHandler(
 
     val suspendingTransactionId = ThreadLocal<Int>()
 
+    /**
+     * Folds the write-ahead log into the database file, on the writer dispatcher so it queues
+     * behind writes still in flight rather than racing them.
+     *
+     * `TRUNCATE` rather than `FULL` because the process is about to be replaced: leaving a partly
+     * reclaimed log behind would only be reclaimed again by the next process to open it. A checkpoint
+     * cannot run inside a transaction, which is why this bypasses [dispatch] and goes straight to the
+     * driver.
+     */
+    override suspend fun checkpoint() {
+        withContext(transactionDispatcher) {
+            runCatching {
+                // `value` is read because the statement is deferred: a QueryResult that is never
+                // consumed never runs. Parameters are explicit because the driver does not default them.
+                driver.execute(null, CHECKPOINT_PRAGMA, 0, null).value
+            }
+        }
+    }
+
+    private companion object {
+        /**
+         * Folds the WAL into the database and truncates it. Not a `Transaction`, so it runs straight
+         * through the driver rather than through [dispatch].
+         */
+        const val CHECKPOINT_PRAGMA = "PRAGMA wal_checkpoint(TRUNCATE)"
+    }
+
     override suspend fun <T> await(inTransaction: Boolean, block: suspend Database.() -> T): T {
         return dispatch(inTransaction, block)
     }

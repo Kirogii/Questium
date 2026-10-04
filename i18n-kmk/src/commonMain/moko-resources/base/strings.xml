@@ -149,6 +149,16 @@
     <string name="crop_zoom_in">Zoom in</string>
     <string name="crop_zoom_out">Zoom out</string>
     <!-- KMK <-->
+    <!-- KMK --> How long a cover stays cached after its manga leaves the library, so re-adding a
+         title does not download an image that is already on disk.
+    <string name="pref_removed_cover_retention">Keep removed covers</string>
+    <string name="pref_removed_cover_retention_summary">How long a cover is kept after you remove a manga from the library. Longer means re-adding it shows the cover instantly, at the cost of disk space.</string>
+    <string name="pref_removed_cover_retention_immediate">Delete immediately</string>
+    <string name="pref_removed_cover_retention_1_day">1 day</string>
+    <string name="pref_removed_cover_retention_3_days">3 days</string>
+    <string name="pref_removed_cover_retention_7_days">7 days</string>
+    <string name="pref_removed_cover_retention_30_days">30 days</string>
+    <!-- KMK <-->
     <!-- Extension section -->
     <string name="extensions_page_need_refresh">Refresh extension page to update list.</string>
     <string name="extensions_page_more">More extensions...</string>

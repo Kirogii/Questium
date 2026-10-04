@@ -19,6 +19,7 @@ import eu.kanade.domain.manga.interactor.MergeMangaBySmartSearch
 import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.presentation.components.SEARCH_DEBOUNCE_MILLIS
 import eu.kanade.presentation.library.components.LibraryToolbarTitle
 import eu.kanade.presentation.manga.DownloadAction
@@ -36,7 +37,7 @@ import eu.kanade.tachiyomi.ui.category.categorySortOrderOf
 import eu.kanade.tachiyomi.ui.library.handler.LibraryFilterHandler
 import eu.kanade.tachiyomi.util.chapter.applyScanlatorPriority
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
-import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.retainCovers
 import exh.favorites.FavoritesSyncHelper
 import exh.log.xLogE
 import exh.md.utils.FollowStatus
@@ -148,6 +149,7 @@ class LibraryScreenModel(
     private val preferences: BasePreferences = globalAppGraph.basePreferences,
     private val libraryPreferences: LibraryPreferences = globalAppGraph.libraryPreferences,
     private val coverCache: CoverCache = globalAppGraph.coverCache,
+    private val uiPreferences: UiPreferences = globalAppGraph.uiPreferences,
     private val sourceManager: SourceManager = globalAppGraph.sourceManager,
     private val downloadManager: DownloadManager = globalAppGraph.downloadManager,
     private val downloadCache: DownloadCache = globalAppGraph.downloadCache,
@@ -183,6 +185,7 @@ class LibraryScreenModel(
         mutableState.update { state ->
             state.copy(activeCategoryIndex = libraryPreferences.lastUsedCategory().get())
         }
+        pruneRetainedCovers()
         screenModelScope.launchIO {
             combine(
                 combine(
@@ -584,6 +587,32 @@ class LibraryScreenModel(
             }
         }
         // KMK <--
+    }
+
+    /**
+     * Drops covers that no library entry points at any more, once past the retention window.
+     *
+     * Runs from the library rather than from the cache because only the library knows which covers
+     * are still referenced - pruning on age alone would eventually delete the library's own covers
+     * and quietly re-download them.
+     *
+     * One pass per screen model, not per emission: the list re-emits on every preference change and
+     * a directory walk per emission is exactly the kind of small repeated work this avoids. Nothing
+     * is told to redraw either - what goes is a cover for a manga that is no longer in the library,
+     * so there is nothing on screen holding one.
+     */
+    private fun pruneRetainedCovers() {
+        screenModelScope.launchIO {
+            val referenced = buildSet {
+                getLibraryManga.await().forEach { libraryManga ->
+                    val manga = libraryManga.manga
+                    coverCache.libraryCoverKey(manga)?.let(::add)
+                    add(coverCache.customCoverKey(manga.id))
+                }
+            }
+            val retention = uiPreferences.removedCoverRetention().get().retentionMillis
+            coverCache.pruneOrphanedCovers(referenced, retention)
+        }
     }
 
     private fun Map<Category, List</* LibraryItem */ Long>>.applySort(
@@ -1122,7 +1151,7 @@ class LibraryScreenModel(
                 val toDelete = mangas
                     .distinctBy { it.id }
                     .map {
-                        it.removeCovers(coverCache)
+                        it.retainCovers(coverCache)
                         MangaUpdate(
                             favorite = false,
                             id = it.id,

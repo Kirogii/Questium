@@ -23,6 +23,9 @@ fun TrackSearch.toMangaMetadata(remoteId: Long): TrackMangaMetadata = TrackManga
     thumbnailUrl = cover_url,
     description = summary,
     authors = authors.joinToString(", ").ifBlank { null },
+    // Read from the same list the search result carries. Without it the edit dialog's artist field
+    // stayed empty on autofill, because it is fed from here and skips a blank value.
+    artists = artists.joinToString(", ").ifBlank { null },
     tags = tags,
     status = when (publishing_status) {
         "completed" -> SManga.COMPLETED.toLong()

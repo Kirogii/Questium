@@ -7,6 +7,16 @@ import kotlinx.coroutines.flow.Flow
 
 interface DatabaseHandler {
 
+    /**
+     * Folds the write-ahead log back into the database file.
+     *
+     * Committed work is durable either way, but until it is checkpointed it lives in the `-wal`
+     * sidecar. That matters when the process is about to be killed abruptly - the in-app updater
+     * handing off to the package installer is the one place the app does that on purpose - so this
+     * is called before handing off.
+     */
+    suspend fun checkpoint()
+
     suspend fun <T> await(inTransaction: Boolean = false, block: suspend Database.() -> T): T
 
     suspend fun <T : Any> awaitList(

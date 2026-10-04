@@ -73,6 +73,9 @@ class CoverCache(private val context: Context) {
     /**
      * Delete the cover files of the manga from the cache.
      *
+     * Not what a library removal wants any more - see [hasRetainedCover]. Kept for the paths that
+     * genuinely mean "this image should not be on disk", such as a source replacing a cover URL.
+     *
      * @param manga the manga.
      * @param deleteCustomCover whether the custom cover should be deleted.
      * @return number of files that were deleted.
@@ -86,6 +89,53 @@ class CoverCache(private val context: Context) {
 
         if (deleteCustomCover) {
             if (deleteCustomCover(manga.id)) ++deleted
+        }
+
+        return deleted
+    }
+
+    /**
+     * Whether a cover for [manga] is on disk, whether or not it is still in the library.
+     *
+     * Used on removal to decide whether anything is worth keeping, and whether the caller needs to
+     * bump `coverLastModified` so a visible cover redraws.
+     */
+    fun hasRetainedCover(manga: Manga): Boolean =
+        getCoverFile(manga.thumbnailUrl)?.exists() == true || getCustomCoverFile(manga.id).exists()
+
+    /** Cache key a library cover is stored under, for handing to [pruneOrphanedCovers]. */
+    fun libraryCoverKey(manga: Manga): String? = manga.thumbnailUrl?.let { DiskUtil.hashKeyForDisk(it) }
+
+    /** Cache key a custom cover is stored under, for handing to [pruneOrphanedCovers]. */
+    fun customCoverKey(mangaId: Long): String = DiskUtil.hashKeyForDisk(mangaId.toString())
+
+    /**
+     * Deletes covers that are both older than [retentionMillis] and named in neither [referencedKeys]
+     * nor anything the library still points at.
+     *
+     * The membership test is the whole point. Age alone cannot tell an orphan from a cover that has
+     * simply been on disk for months, and pruning by age would quietly re-download the library's own
+     * covers. [referencedKeys] is built from the library by the caller, which is the only place that
+     * knows it.
+     *
+     * @return how many files were deleted.
+     */
+    fun pruneOrphanedCovers(referencedKeys: Set<String>, retentionMillis: Long): Int {
+        val cutoff = System.currentTimeMillis() - retentionMillis
+        var deleted = 0
+
+        // The custom directory is nested inside the library one, so it is walked separately: a
+        // custom cover is keyed by manga id rather than by URL and would never appear in the
+        // library directory anyway, but listing the parent would walk it a second time.
+        cacheDir.listFiles()?.forEach { file ->
+            if (!file.isFile || file.name in referencedKeys) return@forEach
+            if (file.lastModified() >= cutoff) return@forEach
+            if (file.delete()) deleted++
+        }
+        customCoverCacheDir.listFiles()?.forEach { file ->
+            if (!file.isFile || file.name in referencedKeys) return@forEach
+            if (file.lastModified() >= cutoff) return@forEach
+            if (file.delete()) deleted++
         }
 
         return deleted

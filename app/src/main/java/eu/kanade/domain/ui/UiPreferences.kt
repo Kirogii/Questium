@@ -7,6 +7,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.domain.ui.model.NavigationRailAlignment
+import eu.kanade.domain.ui.model.RemovedCoverRetention
 import eu.kanade.domain.ui.model.StatsCoverStyle
 import eu.kanade.domain.ui.model.TabletUiMode
 import eu.kanade.domain.ui.model.ThemeMode
@@ -41,6 +42,11 @@ class UiPreferences(
     fun themeCoverBasedStyle() = preferenceStore.getEnum("pref_theme_cover_based_style_key", PaletteStyle.Vibrant)
 
     fun preloadLibraryColor() = preferenceStore.getBoolean("pref_preload_library_color_key", true)
+
+    // KMK --> Covers outlive a library removal by this much, so re-adding a title does not re-download
+    // an image already on disk. Three days covers the browse-then-add cycle this exists for, at a
+    // fraction of what a week would sit on disk. IMMEDIATE restores the old drop-it-now behaviour.
+    fun removedCoverRetention() = preferenceStore.getEnum("pref_removed_cover_retention_key", RemovedCoverRetention.THREE_DAYS)
     // KMK <--
 
     fun relativeTime() = preferenceStore.getBoolean("relative_time_v2", true)

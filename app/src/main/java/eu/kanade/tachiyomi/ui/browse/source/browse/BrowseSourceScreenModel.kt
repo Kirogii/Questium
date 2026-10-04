@@ -30,7 +30,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.source.online.all.MangaDex
-import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.retainCovers
 import exh.metadata.metadata.RaisedSearchMetadata
 import exh.source.EH_PACKAGE
 import exh.source.ExhPreferences
@@ -447,7 +447,7 @@ open class BrowseSourceScreenModel(
             )
 
             if (!new.favorite) {
-                new = new.removeCovers(coverCache)
+                new = new.retainCovers(coverCache)
             } else {
                 setMangaDefaultChapterFlags.await(manga)
                 addTracks.bindEnhancedTrackers(manga, source)

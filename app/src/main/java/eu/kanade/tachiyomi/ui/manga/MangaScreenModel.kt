@@ -69,7 +69,7 @@ import eu.kanade.tachiyomi.ui.manga.RelatedManga.Companion.sorted
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.util.chapter.applyScanlatorPriority
 import eu.kanade.tachiyomi.util.chapter.getNextUnread
-import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.retainCovers
 import eu.kanade.tachiyomi.util.system.toast
 import exh.log.xLogE
 import exh.md.utils.FollowStatus
@@ -873,7 +873,7 @@ class MangaScreenModel(
                 // Remove from library
                 if (updateManga.awaitUpdateFavorite(manga.id, false)) {
                     // Remove covers and update last modified in db
-                    if (manga.removeCovers() != manga) {
+                    if (manga.retainCovers() != manga) {
                         updateManga.awaitUpdateCoverLastModified(manga.id)
                     }
                     withUIContext { onRemoved() }
