@@ -16,3 +16,4 @@ files moved. See .github/scripts/release_notes.py.
 ### Improve
 
 ### Fix
+- Keep VR entry controls visible and recognize Meta/Oculus headsets that do not advertise Android’s head-tracking feature. Add a direct Enter VR action.

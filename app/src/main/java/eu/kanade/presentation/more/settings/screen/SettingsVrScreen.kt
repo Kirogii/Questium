@@ -1,7 +1,9 @@
 package eu.kanade.presentation.more.settings.screen
 
 // KMK -->
+import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
@@ -27,7 +29,15 @@ object SettingsVrScreen : SearchableSettings {
     @Composable
     override fun getPreferences(): List<Preference> {
         val context = LocalContext.current
-        return VrSettingsHost.definitions.toItems(context.appGraph.preferenceStore)
+        val supported = remember { context.isVrHeadset() }
+        return VrSettingsHost.definitions.toItems(context.appGraph.preferenceStore) +
+            Preference.PreferenceItem.TextPreference(
+                title = stringResource(KMR.strings.pref_vr_enter),
+                subtitle = stringResource(if (supported) KMR.strings.pref_vr_summary else KMR.strings.pref_vr_requires_quest),
+                enabled = supported,
+                grayOut = true,
+                onClick = { context.startActivity(Intent(context, VrActivity::class.java)) },
+            )
     }
 }
 
@@ -45,12 +55,13 @@ object VrSettingsHost : SettingHost {
             bind = { key -> getBoolean(key.key, key.default) },
             makeItem = { enabled, gate ->
                 val context = LocalContext.current
-                val supported = remember { context.packageManager.hasSystemFeature("android.hardware.vr.headtracking") }
+                val supported = remember { context.isVrHeadset() }
                 Preference.PreferenceItem.SwitchPreference(
                     preference = enabled,
                     title = stringResource(KMR.strings.pref_vr_enable),
                     subtitle = stringResource(if (supported) KMR.strings.pref_vr_summary else KMR.strings.pref_vr_requires_quest),
                     enabled = gate && supported,
+                    grayOut = true,
                     onValueChanged = { value ->
                         if (value) context.startActivity(Intent(context, VrActivity::class.java))
                         true
@@ -60,4 +71,9 @@ object VrSettingsHost : SettingHost {
         ),
     )
 }
+private fun Context.isVrHeadset(): Boolean =
+    packageManager.hasSystemFeature("android.hardware.vr.headtracking") ||
+        Build.MANUFACTURER.equals("Oculus", ignoreCase = true) ||
+        Build.MANUFACTURER.equals("Meta", ignoreCase = true) ||
+        Build.MODEL.contains("Quest", ignoreCase = true)
 // KMK <--

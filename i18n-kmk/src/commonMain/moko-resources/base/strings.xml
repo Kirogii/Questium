@@ -659,4 +659,5 @@
     <string name="vr_controls_right">right</string>
     <string name="vr_controls_meta_menu">Meta button: system menu</string>
     <string name="vr_controls_stick_help">Stick: left/right pages; left up/down distance; right up/down size</string>
+    <string name="pref_vr_enter">Enter VR</string>
 </resources>
