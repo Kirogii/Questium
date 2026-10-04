@@ -23,11 +23,14 @@ import mihon.app.di.globalAppGraph
  * scheme falls back to the app's own accent rather than to a fixed built-in theme, so
  * selecting "Monet" never silently means "some unrelated static theme".
  */
-internal class MonetColorScheme(context: Context) : BaseColorScheme() {
+internal class MonetColorScheme(context: Context, sampledSeed: Color? = null) : BaseColorScheme() {
 
     private val monet: BaseColorScheme = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> MonetSystemColorScheme(context)
-        else -> MonetCompatColorScheme(dynamicSeedOrDefault(context))
+        // A sampled wallpaper colour beats getWallpaperColors, which is null until the system has
+        // extracted the wallpaper and washed out on the ones it has. Null while the sample is still
+        // running, so the scheme still comes up immediately on the chain below.
+        else -> MonetCompatColorScheme(sampledSeed ?: dynamicSeedOrDefault(context))
     }
 
     override val darkScheme

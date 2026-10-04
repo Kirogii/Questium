@@ -53,6 +53,7 @@ import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.theme.colorscheme.WallpaperSeedSampler
 import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
@@ -253,6 +254,8 @@ interface AppGraph : ViewModelGraph {
     val context: Context
 
     val viewModelFactory: MetroViewModelFactory
+
+    val wallpaperSeedSampler: WallpaperSeedSampler
 
     // Preferences
     val basePreferences: BasePreferences

@@ -35,6 +35,7 @@ import eu.kanade.presentation.theme.colorscheme.TealTurqoiseColorScheme
 import eu.kanade.presentation.theme.colorscheme.TidalWaveColorScheme
 import eu.kanade.presentation.theme.colorscheme.YinYangColorScheme
 import eu.kanade.presentation.theme.colorscheme.YotsubaColorScheme
+import eu.kanade.presentation.theme.colorscheme.rememberWallpaperSeed
 import mihon.app.di.globalAppGraph
 
 @Composable
@@ -94,16 +95,21 @@ private fun BaseTachiyomiTheme(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isDark = isSystemInDarkTheme()
+    // Below Android 12 the wallpaper has to be sampled for a seed, and that runs off the main
+    // thread. Keying on it is what lets the scheme settle onto the wallpaper's own colours once the
+    // sample lands; without the key the first-composition fallback would stick for the session.
+    val wallpaperSeed = rememberWallpaperSeed()
     // Monet and CUSTOM are seeded from live system state (wallpaper colours, the user's
     // accent). Re-resolving only when the enum changed left the app showing the colours
     // captured at composition time, so a wallpaper or accent change stayed invisible
     // until the process restarted - the one thing a dynamic theme must not do.
-    val scheme = remember(configuration, appTheme, isDark, isAmoled) {
+    val scheme = remember(configuration, appTheme, isDark, isAmoled, wallpaperSeed) {
         getThemeColorScheme(
             context = context,
             appTheme = appTheme,
             isDark = isDark,
             isAmoled = isAmoled,
+            wallpaperSeed = wallpaperSeed,
         )
     }
     MaterialTheme(
@@ -117,10 +123,11 @@ private fun getThemeColorScheme(
     appTheme: AppTheme,
     isDark: Boolean,
     isAmoled: Boolean,
+    wallpaperSeed: Color? = null,
 ): ColorScheme {
     val colorScheme = when (appTheme) {
         AppTheme.MONET -> {
-            MonetColorScheme(context)
+            MonetColorScheme(context, wallpaperSeed)
         }
         // KMK -->
         AppTheme.CUSTOM -> {
