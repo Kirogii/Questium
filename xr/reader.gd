@@ -39,6 +39,7 @@ var preferred_hand := "right"
 var haptics := true
 var ui_hand := ""
 var passthrough_enabled := false
+var awaiting_head_pose := false
 var bindings := {"left:trigger_click": "Previous page", "right:trigger_click": "Next page", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
 
 
@@ -53,6 +54,7 @@ func _ready() -> void:
     xr = XRServer.find_interface("OpenXR")
     if xr and xr.is_initialized():
         get_viewport().use_xr = true
+        awaiting_head_pose = true
         var xr_camera := XRCamera3D.new()
         origin.add_child(xr_camera)
         camera = xr_camera
@@ -366,6 +368,11 @@ func _set_passthrough(enabled: bool) -> void:
         status.text = _label("Passthrough unavailable; using black")
 
 func _process(_delta: float) -> void:
+    if awaiting_head_pose and camera is XRCamera3D and camera.get_is_active():
+        awaiting_head_pose = false
+        recenter()
+        library_panel.global_position = camera.global_position - camera.global_basis.z * 1.1 + Vector3.UP * 0.08
+        library_panel.global_rotation.y = camera.global_rotation.y
     for hand in ["left", "right"]:
         if not tracked.has(hand):
             continue
