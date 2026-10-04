@@ -26,8 +26,8 @@ class VrActivity : GodotActivity() {
     }
 
     override fun getCommandLine(): MutableList<String> = super.getCommandLine().toMutableList().apply {
-        // Android's GL surface needs its own XR mode in addition to the engine flag.
-        addAll(listOf("--main-pack", "res://vr.pck", XRMode.OPENXR.cmdLineArg, "--xr-mode", "on"))
+        // Select the Android OpenXR render surface; project.godot enables OpenXR.
+        addAll(listOf("--main-pack", "res://vr.pck", XRMode.OPENXR.cmdLineArg))
     }
 
     override fun getHostPlugins(godot: Godot): Set<GodotPlugin> = setOf(
