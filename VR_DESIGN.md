@@ -49,7 +49,7 @@ Engine checks: `godot --headless --xr-mode off --path xr --editor --quit`, then 
 
 Desktop geometry/input preview: `godot --xr-mode off --path xr -- --pages=<image-directory>`. Arrow keys turn pages; the mouse operates spatial controls. Desktop checks do not verify Quest tracking, passthrough, Android lifecycle or headset performance.
 
-On Quest, launch the normal Android app and choose Settings → Virtual reality → Enable VR. Enable hand tracking in the headset settings. Pinch near an outside page edge to turn; pinch the spine to move the book. Touch controller triggers/grips use the same physical grab regions and rays select controls. Exit VR returns to the normal app after saving reading progress.
+On Quest, launch the normal Android app and choose Settings → Virtual reality → Enable VR or Enter VR. Quest detection accepts Meta/Oculus device identity as well as Android's head-tracking feature; unsupported devices show disabled entry controls with an explanation. Enable hand tracking in the headset settings. Pinch near an outside page edge to turn; pinch the spine to move the book. Touch controller triggers/grips use the same physical grab regions and rays select controls. Exit VR returns to the normal app after saving reading progress.
 
 ## Quest reader controls
 
@@ -57,4 +57,4 @@ The reader has a rounded title/seeker toolbar, a Book Options popup with a four-
 
 Controls, physical grab bars, settings construction, and input edge behavior are covered by `xr/tests/controls_check.gd`. Visuals are implemented with Godot rounded StyleBoxes and SVG icons; resemblance to the supplied references is verified with rendered previews, while exact visual parity and tactile feel require headset validation.
 
-Verified build: https://github.com/Kirogii/VR-Tachiyomi/actions/runs/37205328223. Output: `VR-Tachiyomi-Quest3-debug.apk` (277,175,127 bytes). Android Gradle exposes its APK directory through `SingleArtifact.APK`; `:app:stageNomtlDebugQuestApk` stages that directory for CI without assuming an output path.
+Verified build: https://github.com/Kirogii/VR-Tachiyomi/actions/runs/37209406250. Output: `VR-Tachiyomi-Quest3-debug.apk` (277,175,703 bytes). Android Gradle exposes its APK directory through `SingleArtifact.APK`; `:app:stageNomtlDebugQuestApk` stages that directory for CI without assuming an output path.
