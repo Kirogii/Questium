@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,14 +15,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.components.ComfortableGridItemShimmer
+import eu.kanade.presentation.components.CompactGridItemShimmer
+import eu.kanade.presentation.components.CoverShimmer
+import eu.kanade.presentation.components.LineShimmer
+import eu.kanade.presentation.components.SkeletonBox
 import tachiyomi.domain.library.model.LibraryDisplayMode
-import tachiyomi.presentation.core.components.shimmer
 
 /**
  * Loading placeholders that mirror each library/browse layout.
@@ -63,15 +63,15 @@ fun LibraryLayoutShimmer(
         }
 
         LibraryDisplayMode.CompactGrid -> gridShimmer(spaced, columns, itemCount) {
-            MangaCompactGridItemShimmer()
+            CompactGridItemShimmer()
         }
 
         LibraryDisplayMode.ComfortableGrid -> gridShimmer(spaced, columns, itemCount) {
-            MangaComfortableGridItemShimmer()
+            ComfortableGridItemShimmer()
         }
 
         LibraryDisplayMode.ComfortableGridPanorama -> gridShimmer(spaced, columns, itemCount) {
-            MangaComfortableGridItemShimmer(panorama = true)
+            ComfortableGridItemShimmer(panorama = true)
         }
 
         // Alternating heights so the eventual reflow is vertical only, which is what the real
@@ -96,30 +96,6 @@ private fun gridShimmer(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         items(itemCount) { item(it) }
-    }
-}
-
-@Composable
-private fun MangaCompactGridItemShimmer(modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(2.dp)) {
-        CoverShimmer(ratio = 2f / 3f, corner = 4.dp)
-        Spacer(Modifier.height(6.dp))
-        LineShimmer(0.7f)
-        Spacer(Modifier.height(4.dp))
-        LineShimmer(0.25f)
-    }
-}
-
-@Composable
-private fun MangaComfortableGridItemShimmer(panorama: Boolean = false, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(2.dp)) {
-        CoverShimmer(ratio = if (panorama) 3f / 2f else 2f / 3f, corner = 6.dp)
-        Spacer(Modifier.height(8.dp))
-        LineShimmer(0.85f)
-        Spacer(Modifier.height(6.dp))
-        LineShimmer(0.5f)
-        Spacer(Modifier.height(6.dp))
-        LineShimmer(0.3f)
     }
 }
 
@@ -168,39 +144,4 @@ private fun MangaListItemShimmer(modifier: Modifier = Modifier) {
             }
         }
     }
-}
-
-@Composable
-private fun CoverShimmer(
-    ratio: Float,
-    corner: Dp,
-    modifier: Modifier = Modifier,
-) {
-    SkeletonBox(
-        corner = corner,
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(ratio),
-    )
-}
-
-@Composable
-private fun LineShimmer(fraction: Float, modifier: Modifier = Modifier) {
-    SkeletonBox(height = 10.dp, modifier = modifier.fillMaxWidth(fraction))
-}
-
-@Composable
-private fun SkeletonBox(
-    modifier: Modifier = Modifier,
-    width: Dp? = null,
-    height: Dp? = null,
-    corner: Dp = 8.dp,
-) {
-    Box(
-        modifier = modifier
-            .then(if (width != null) Modifier.width(width) else Modifier)
-            .then(if (height != null) Modifier.height(height) else Modifier)
-            .clip(RoundedCornerShape(corner))
-            .shimmer(),
-    )
 }

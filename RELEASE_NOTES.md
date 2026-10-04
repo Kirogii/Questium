@@ -15,6 +15,10 @@ files moved. See .github/scripts/release_notes.py.
 - **Dynamic color now works below Android 12.** The Monet theme samples your wallpaper's own colours
   and builds the palette from them, instead of relying on the system palette that only exists on
   Android 12+. Changing your wallpaper re-themes the app straight away, without a restart.
+- **Source pages now show placeholders shaped like the results you are waiting for.** Opening a
+  source's cover grid left the screen blank — or briefly drew the list-style loading rows — until
+  the first page arrived, then snapped everything into place. The grid now fills with cover-shaped
+  placeholders on the same grid the real covers will land on, so nothing jumps when they arrive.
 
 ### Fix
 
