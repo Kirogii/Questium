@@ -400,7 +400,7 @@ func _process(_delta: float) -> void:
         else:
             valid = controller.get_is_active()
             tracked[hand].ray.visible = valid
-            pressed = ui.controller_input(hand, controller)
+            pressed = ui.controller_input(hand, controller) if valid else false
         ui_hand = hand
         _pointer(hand, tip, direction, pressed, valid, pointer_basis)
 
