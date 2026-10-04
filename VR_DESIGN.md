@@ -57,4 +57,6 @@ The reader has a rounded title/seeker toolbar, a Book Options popup with a four-
 
 Controls, physical grab bars, settings construction, and input edge behavior are covered by `xr/tests/controls_check.gd`. Visuals are implemented with Godot rounded StyleBoxes and SVG icons; resemblance to the supplied references is verified with rendered previews, while exact visual parity and tactile feel require headset validation.
 
-Verified build: https://github.com/Kirogii/VR-Tachiyomi/actions/runs/37209406250. Output: `VR-Tachiyomi-Quest3-debug.apk` (277,175,703 bytes). Android Gradle exposes its APK directory through `SingleArtifact.APK`; `:app:stageNomtlDebugQuestApk` stages that directory for CI without assuming an output path.
+Verified build: https://github.com/Kirogii/VR-Tachiyomi/actions/runs/37213188026. Output: `VR-Tachiyomi-Quest3-debug.apk` (278,388,183 bytes). Android Gradle exposes its APK directory through `SingleArtifact.APK`; `:app:stageNomtlDebugQuestApk` stages that directory for CI without assuming an output path.
+
+Android startup uses Godot 4.6.3 because the 4.6.0 Maven template rejects --main-pack. The immersive activity passes both the native --xr-mode on argument and XRMode.OPENXR.cmdLineArg for the Android GL surface, and uses singleTask to avoid duplicate engine startup when Horizon OS relaunches immersive activities.
