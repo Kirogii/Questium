@@ -33,7 +33,7 @@ jobs:
       - name: Verify formatting
         run: ./gradlew spotlessCheck
       - name: Build standalone Quest APK
-        run: ./gradlew assembleNomtlDebug -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
+        run: ./gradlew :app:stageNomtlDebugQuestApk -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
       - name: Stage Quest APK
         run: |
           python3 - <<'PY'
@@ -41,7 +41,9 @@ jobs:
           import shutil
           import zipfile
           candidates = []
-          for apk in Path('app/build/outputs/apk').rglob('*.apk'):
+          for metadata in Path('build/quest-raw').rglob('output-metadata.json'):
+              print(metadata, metadata.read_text())
+          for apk in Path('build/quest-raw').rglob('*.apk'):
               with zipfile.ZipFile(apk) as archive:
                   names = archive.namelist()
                   abis = {name.split('/')[1] for name in names if name.startswith('lib/')}
@@ -52,6 +54,16 @@ jobs:
           Path('quest-apk').mkdir(exist_ok=True)
           shutil.copy2(candidates[0], 'quest-apk/VR-Tachiyomi-Quest3-debug.apk')
           PY
+      - name: Preserve APK diagnostics if staging fails
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: APK-staging-diagnostics
+          path: |
+            build/quest-raw/**
+            app/build/outputs/**
+            app/build/intermediates/apk/**
+          if-no-files-found: warn
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: Quest-VR-debug-APK

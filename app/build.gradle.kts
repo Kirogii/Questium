@@ -1,3 +1,4 @@
+import com.android.build.api.artifact.SingleArtifact
 import mihon.buildlogic.Config
 import mihon.buildlogic.getBuildTime
 import mihon.buildlogic.getCommitCount
@@ -424,6 +425,15 @@ dependencies {
 }
 
 androidComponents {
+    // KMK --> Use AGP's artifact provider instead of assuming its APK directory.
+    onVariants(selector().withName("nomtlDebug")) { variant ->
+        tasks.register<Copy>("stageNomtlDebugQuestApk") {
+            from(variant.artifacts.get(SingleArtifact.APK))
+            include("*.apk", "output-metadata.json")
+            into(rootProject.layout.buildDirectory.dir("quest-raw"))
+        }
+    }
+    // KMK <--
     onVariants(selector().withFlavor("default" to "standard")) {
         // Only excluding in standard flavor because this breaks
         // Layout Inspector's Compose tree
