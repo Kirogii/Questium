@@ -75,16 +75,24 @@ private fun dynamicSeedOrDefault(context: Context): Color {
     return Color(globalAppGraph.uiPreferences.colorTheme().get())
 }
 
-private fun wallpaperSeed(context: Context): Color? = runCatching {
-    WallpaperManager.getInstance(context)
-        .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
-        ?.primaryColor
-        // android.graphics.Color -> Compose Color. androidx.core.graphics has no toArgb for
-        // this type (only androidx.compose.ui.graphics.toArgb, for the other direction), and
-        // Color::value is a ULong, not the ARGB int the Color(Int) factory takes.
-        ?.let { Color(android.graphics.Color.argb(it.alpha(), it.red(), it.green(), it.blue())) }
-}.getOrNull()
+private fun wallpaperSeed(context: Context): Color? {
+    // WallpaperManager.getWallpaperColors was added in API 27 and minSdk is 26.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return null
+    return runCatching {
+        WallpaperManager.getInstance(context)
+            .getWallpaperColors(WallpaperManager.FLAG_SYSTEM)
+            ?.primaryColor
+            // android.graphics.Color -> Compose Color. androidx.core.graphics has no toArgb for
+            // this type (only androidx.compose.ui.graphics.toArgb, for the other direction), and
+            // Color::value is a ULong, not the ARGB int the Color(Int) factory takes.
+            ?.let { Color(android.graphics.Color.argb(it.alpha(), it.red(), it.green(), it.blue())) }
+    }.getOrNull()
+}
 
-private fun systemAccentSeed(context: Context): Color? = runCatching {
-    Color(context.getColor(android.R.color.system_accent1_100))
-}.getOrNull()
+private fun systemAccentSeed(context: Context): Color? {
+    // system_accent1_* resources were added in API 31; resolving one below that throws.
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+    return runCatching {
+        Color(context.getColor(android.R.color.system_accent1_100))
+    }.getOrNull()
+}

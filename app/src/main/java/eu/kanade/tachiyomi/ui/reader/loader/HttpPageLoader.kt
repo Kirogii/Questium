@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.suspendCancellableCoroutine
+import logcat.LogPriority
 import mihon.app.di.globalAppGraph
 import mihon.core.concurrency.AppDispatchersHolder
 import tachiyomi.core.common.util.lang.launchIO
@@ -50,8 +51,16 @@ private const val SEGMENT_INDEX_BASE = 1 shl 28
  * slice of the same image always gets the same index. Deriving it from the length meant a second
  * split pass - which sees a longer list - produced a different index for the same slice, leaving
  * the previous copy live in every index-keyed page cache alongside the new one.
+ *
+ * The stride has to exceed the number of segments one page can produce, or two source pages
+ * share index space and the readers - which key their page cache on `PageKey.Reader(chapterId,
+ * index)` - hand back the wrong page. [tachiyomi.core.common.util.system.TallPageSplitter]
+ * bisects, so the count is a power of two bounded by `2 * ceil(height / maxSegmentHeight)`:
+ * at an 8192px segment limit that exceeds 16 for any strip over ~64k px, which long webtoon
+ * chapters do reach. 4096 covers strips up to ~33M px, and still leaves room for ~450k source
+ * pages per chapter inside the 27 bits [SEGMENT_INDEX_BASE] leaves above it.
  */
-private const val SEGMENT_INDEX_STRIDE = 16L
+private const val SEGMENT_INDEX_STRIDE = 1L shl 12
 
 /**
  * Loader used to load chapters from an online source.
@@ -398,10 +407,23 @@ internal class HttpPageLoader(
      * real page reaches, which keeps them unique - all the readers key their page cache on
      * `PageKey.Reader(chapterId, index)` and would hand back the wrong page on a collision.
      */
-    private fun segmentIndex(parent: ReaderPage, segmentNumber: Int): Int =
+    private fun segmentIndex(parent: ReaderPage, segmentNumber: Int): Int {
+        if (segmentNumber >= SEGMENT_INDEX_STRIDE) {
+            // Unreachable in practice, but a silent wrap here would alias two segments of the
+            // same page onto one cache key, so it is worth saying out loud.
+            logcat(LogPriority.ERROR) {
+                "Page ${parent.index} produced more than $SEGMENT_INDEX_STRIDE segments; " +
+                    "segment $segmentNumber collides with another page's index range"
+            }
+        }
         // SEGMENT_INDEX_STRIDE is a Long, so the sum widens; it stays inside Int for any
-        // real chapter (< 2^27 pages) because the base leaves 27 bits of headroom.
-        (SEGMENT_INDEX_BASE + parent.index.toLong().coerceAtLeast(0) * SEGMENT_INDEX_STRIDE + segmentNumber).toInt()
+        // real chapter (< 2^27 / 2^12 pages) because the base leaves 27 bits of headroom.
+        return (
+            SEGMENT_INDEX_BASE +
+                parent.index.toLong().coerceAtLeast(0) * SEGMENT_INDEX_STRIDE +
+                segmentNumber.coerceIn(0, SEGMENT_INDEX_STRIDE.toInt() - 1)
+            ).toInt()
+    }
 
     // EXH -->
     fun boostPage(page: ReaderPage) {

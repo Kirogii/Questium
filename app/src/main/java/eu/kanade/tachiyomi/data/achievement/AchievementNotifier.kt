@@ -130,6 +130,12 @@ class AchievementNotifier(
         }
         if (fresh.isEmpty()) return
 
+        // Before the bulk branch, deliberately: a webhook is a machine-readable record that the
+        // achievement happened, and the whole point of bulk mode is to collapse what the *user*
+        // sees - fifty toasts and fifty sounds - not to suppress the record. Returning above it
+        // silently dropped every webhook for the unlocks a restore performed.
+        sendWebhooks(fresh)
+
         if (isBulk()) {
             synchronized(lock) {
                 (bulkSummary ?: mutableListOf<String>().also { bulkSummary = it }).addAll(fresh)
@@ -140,7 +146,6 @@ class AchievementNotifier(
         val valid = fresh.mapNotNull(Achievements::forId)
         if (valid.isEmpty()) return
 
-        sendWebhooks(fresh)
         present(valid)
     }
 

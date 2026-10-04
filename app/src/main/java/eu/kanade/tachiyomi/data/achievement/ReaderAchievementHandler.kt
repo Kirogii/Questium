@@ -98,12 +98,16 @@ class ReaderAchievementHandler(
     }
 
     fun onMangaCompleted(status: Long, totalChapters: Long = 0L) {
+        // KMK --> Both branches count a cleared backlog entry themselves: onMangaFinished and
+        // onMangaCaughtUp each end in onBacklogClearedQuiet(). Calling onBacklogCleared(1) here
+        // as well used to be *how* the count happened; leaving it in after that refactor
+        // incremented the lifetime counter twice per completed manga and re-created the second
+        // toast batch the composition was meant to eliminate.
         step("manga completion") {
             if (achievementManager.isPermanentStatus(status)) {
                 achievementManager.onMangaFinished()
             } else {
                 achievementManager.onMangaCaughtUp()
-                achievementManager.onBacklogCleared(1)
                 mark("rotating_daily_backlog_clear_1")
                 mark("rotating_weekly_extra_4")
             }

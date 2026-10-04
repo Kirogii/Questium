@@ -89,17 +89,19 @@ class DatabaseExporter(
     }
 
     private fun maintenanceManager(): DatabaseMaintenanceManager {
-        val encrypted = securityPreferences.encryptDatabase().get()
+        val encrypted = isEncrypted()
         if (encrypted) System.loadLibrary("sqlcipher")
         return DatabaseMaintenanceManager(
             context = context,
-            databaseName = liveDatabaseName(),
+            databaseName = liveDatabaseName(encrypted),
             passphrase = if (encrypted) CbzCrypto.getDecryptedPasswordSql() else null,
         )
     }
 
-    private fun liveDatabaseName(): String =
-        if (securityPreferences.encryptDatabase().get()) CbzCrypto.DATABASE_NAME else PLAINTEXT_DATABASE_NAME
+    private fun isEncrypted(): Boolean = securityPreferences.encryptDatabase().get()
+
+    private fun liveDatabaseName(encrypted: Boolean = isEncrypted()): String =
+        if (encrypted) CbzCrypto.DATABASE_NAME else PLAINTEXT_DATABASE_NAME
 
     private companion object {
         const val PLAINTEXT_DATABASE_NAME = "tachiyomi.db"

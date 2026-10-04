@@ -108,7 +108,7 @@ data class MangaCover(
         private fun trimVibrantCoverColors() {
             val excess = vibrantCoverColorMap.size - MAX_VIBRANT_COLOR_ENTRIES / 2
             if (excess <= 0) return
-            vibrantCoverColorMap.keys.sorted().take(excess).forEach(vibrantCoverColorMap::remove)
+            vibrantCoverColorMap.keys.sorted().take(excess).forEach { vibrantCoverColorMap.remove(it) }
         }
 
         /**

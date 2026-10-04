@@ -147,11 +147,18 @@ class CustomMangaRepositoryImpl(
     /**
      * Imports the pre-migration `edits.json` exactly once.
      *
-     * Rows whose manga no longer exists are rejected by the foreign key, which is the
-     * right outcome: an edit with no entry to attach to can only ever be wrong. Existing
-     * rows win over file rows because a restored backup may already hold newer edits.
-     * The file is only renamed away once every row has been offered to the database, and
-     * that rename is what makes the import idempotent.
+     * Rows whose manga no longer exists are rejected by the foreign key, which is the right
+     * outcome: an edit with no entry to attach to can only ever be wrong. Existing rows win over
+     * file rows because a restored backup may already hold newer edits. The file is only renamed
+     * away once every row has been offered to the database, and that rename is what makes the
+     * import idempotent.
+     *
+     * One row at a time rather than in a transaction, because `foreign_keys = ON`
+     * (`AppBindings.providesSqlDriver`) makes a stale row abort a transaction outright. A single
+     * batch would mean one entry removed from the library since the file was written - a certainty,
+     * not an edge case, since the file outlives uninstalls - permanently blocks every other edit
+     * in the file, and because the file is only retired on success, every subsequent launch
+     * retries the same doomed batch. Per-row failures are counted and reported instead.
      */
     private fun migrateLegacyFile(database: Database) {
         val file = legacyFile?.takeIf { it.isFile } ?: return
@@ -164,48 +171,63 @@ class CustomMangaRepositoryImpl(
             logcat(LogPriority.ERROR, it) { "Could not parse legacy manga info edits" }
         }.getOrNull()
 
-        val rows = legacy?.mangas.orEmpty().mapNotNull { it.toCustomMangaInfoOrNull() }
+        val rows = legacy?.mangas.orEmpty()
+            .mapNotNull { it.toCustomMangaInfoOrNull() }
+            // An all-null row carries no deviation from the source, so it is not an edit. The
+            // file writer never emitted one, but `set` deletes such rows and the table documents
+            // them as meaningless - importing one would put the cache and the table out of step
+            // with that rule for the rest of the process.
+            .filterNot { it.isEmpty() }
         if (rows.isEmpty()) {
             // Nothing worth importing; still retire the file so it is not re-read forever.
             retireLegacyFile(file)
             return
         }
 
-        // Bound to a local because the lambda receiver of transactionWithResult is the
-        // transaction, not the queries object, so unqualified query names would not resolve.
         val queries = database.custom_manga_infoQueries
-        runCatching {
-            queries.transactionWithResult {
-                rows.forEach { info ->
-                    if (queries.selectByMangaId(info.id).executeAsOneOrNull() == null) {
-                        queries.upsert(
-                            mangaId = info.id,
-                            title = info.title,
-                            author = info.author,
-                            artist = info.artist,
-                            thumbnailUrl = info.thumbnailUrl,
-                            description = info.description,
-                            genre = info.genre,
-                            status = info.status,
-                        )
-                    }
-                }
+        val imported = mutableMapOf<Long, CustomMangaInfo>()
+        var rejected = 0
+        rows.forEach { info ->
+            // Existing rows win: a restored backup may already hold a newer edit.
+            if (queries.selectByMangaId(info.id).executeAsOneOrNull() != null) return@forEach
+            runCatching {
+                queries.upsert(
+                    mangaId = info.id,
+                    title = info.title,
+                    author = info.author,
+                    artist = info.artist,
+                    thumbnailUrl = info.thumbnailUrl,
+                    description = info.description,
+                    genre = info.genre,
+                    status = info.status,
+                )
+            }.onSuccess {
+                imported[info.id] = info
+            }.onFailure {
+                rejected++
             }
-        }.onSuccess {
-            cache.value = cache.value + rows.associateBy { it.id }
-            retireLegacyFile(file)
-            _changes.tryEmit(Unit)
-        }.onFailure {
-            // Leave the file in place so the import is retried on the next launch.
-            logcat(LogPriority.ERROR, it) { "Failed to import legacy manga info edits" }
         }
+
+        if (imported.isNotEmpty()) {
+            cache.value = cache.value + imported
+            _changes.tryEmit(Unit)
+        }
+        if (rejected > 0) {
+            logcat(LogPriority.WARN) {
+                "Skipped $rejected of ${rows.size} legacy manga info edits: no such manga"
+            }
+        }
+        retireLegacyFile(file)
     }
 
     private fun retireLegacyFile(file: File) {
-        runCatching {
-            file.renameTo(File(file.parentFile, "$LEGACY_FILE_NAME.imported"))
-        }.onFailure {
-            logcat(LogPriority.ERROR, it) { "Failed to retire legacy manga info edits" }
+        // File.renameTo signals failure by returning false; it does not throw, so runCatching
+        // alone cannot detect a refused rename.
+        val renamed = runCatching { file.renameTo(File(file.parentFile, "$LEGACY_FILE_NAME.imported")) }
+            .onFailure { logcat(LogPriority.ERROR, it) { "Failed to retire legacy manga info edits" } }
+            .getOrDefault(false)
+        if (!renamed) {
+            logcat(LogPriority.ERROR) { "Could not retire ${file.name}; it will be re-read next launch" }
         }
     }
 

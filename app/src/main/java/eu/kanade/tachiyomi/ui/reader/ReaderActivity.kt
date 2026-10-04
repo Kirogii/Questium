@@ -379,6 +379,10 @@ class ReaderActivity : BaseActivity() {
                         mangaId = state.manga?.id,
                         chapterId = state.currentChapter?.chapter?.id,
                         totalPages = state.totalPages,
+                        // The chip reports on the page on screen, so it needs that page's index.
+                        // currentPage is 1-based and -1 until a page is selected, in which case there
+                        // is nothing to report on yet.
+                        currentPageIndex = state.currentPage.takeIf { it > 0 }?.minus(1),
                         onRetry = {
                             state.viewer?.retryTranslation()
                         },
@@ -978,7 +982,9 @@ class ReaderActivity : BaseActivity() {
             // currentPage is 1-based (a stored position plus one), so the pages *before* the
             // current one are take(currentPage - 1). Counting from currentPage included the page
             // itself, which inverted the parity whenever the current page was a lone one.
-            val currentPage = viewModel.state.value.currentPage - 1
+            // ReaderState.currentPage defaults to -1 and reloadChapters can run before a page is
+            // selected, so the offset is clamped: List.take rejects a negative count outright.
+            val currentPage = (viewModel.state.value.currentPage - 1).coerceAtLeast(0)
             viewer.config.shiftDoublePage = (
                 currentPage + (currentChapter?.pages?.take(currentPage)?.count { it.fullPage || it.isolatedPage } ?: 0)
                 ) % 2 != 0

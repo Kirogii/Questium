@@ -129,13 +129,20 @@ object MangaCoverMetadata {
         } ?: return
 
         try {
-            if (mangaCover.isMangaFavorite) {
-                CoverPaletteExtractor.dominantColorOf(bitmap)?.let { (rgb, textColor) ->
-                    mangaCover.dominantCoverColors = rgb to textColor
+            // One palette build for both swatches: quantising the cover is the expensive half,
+            // and reading two fields out of it used to mean paying for it twice per cover.
+            // Not an early return - the ratio below is derived from `options`, not the bitmap,
+            // so it stays worth computing even when the cover itself cannot be sampled.
+            val colors = CoverPaletteExtractor.colorsOf(bitmap)
+            if (colors != null) {
+                if (mangaCover.isMangaFavorite) {
+                    colors.dominant?.let { (rgb, textColor) ->
+                        mangaCover.dominantCoverColors = rgb to textColor
+                    }
                 }
-            }
-            CoverPaletteExtractor.vibrantColorOf(bitmap)?.let { color ->
-                mangaCover.vibrantCoverColor = color
+                colors.vibrant?.let { color ->
+                    mangaCover.vibrantCoverColor = color
+                }
             }
         } finally {
             // Covers come from the shared bitmap pool; leaking here is what eventually

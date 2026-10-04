@@ -17,7 +17,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.flowWithLifecycle
 import cafe.adriel.voyager.core.model.StateScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
-import coil3.BitmapImage
 import coil3.Image
 import eu.kanade.core.preference.asState
 import eu.kanade.core.util.insertSeparators
@@ -603,28 +602,35 @@ class MangaScreenModel(
 
     // KMK -->
     /**
-     * Seeds the cover-based theme from the bitmap the details header has already decoded.
+     * Seeds the cover-based theme from the image the details header has already decoded.
      *
      * This used to fire a *second* Coil request per details-screen open purely to sample
      * the palette, which failed whenever the cover could not be re-fetched (offline,
      * cache-only policy, expired URL) and left the screen permanently untinted. The cover
      * is already in memory here, so there is nothing left to fetch.
+     *
+     * Returns immediately and samples on an IO dispatcher: the caller is Coil's
+     * `SubcomposeAsyncImage` success callback, which is invoked from composition on the main
+     * thread, and `Palette.generate()` quantises and scores the image - tens of milliseconds on
+     * the cover sizes a panorama header produces. The previous version wrapped this in
+     * `launchIO`; doing it inline put a guaranteed frame drop on every details-screen open.
      */
     fun onCoverPaletteAvailable(mangaCover: MangaCover, image: Image) {
         if (!themeCoverBased && !mangaCover.isMangaFavorite) return
-
-        val vibrantColor = CoverPaletteExtractor.vibrantColorOf(image) ?: return
-        mangaCover.vibrantCoverColor = vibrantColor
-
-        if (mangaCover.isMangaFavorite) {
-            CoverPaletteExtractor.dominantColorOf((image as? BitmapImage)?.bitmap)?.let { (rgb, textColor) ->
-                mangaCover.dominantCoverColors = rgb to textColor
+        val isFavorite = mangaCover.isMangaFavorite
+        screenModelScope.launchIO {
+            val colors = CoverPaletteExtractor.colorsOf(image) ?: return@launchIO
+            val vibrantColor = colors.vibrant ?: return@launchIO
+            mangaCover.vibrantCoverColor = vibrantColor
+            if (isFavorite) {
+                colors.dominant?.let { (rgb, textColor) ->
+                    mangaCover.dominantCoverColors = rgb to textColor
+                }
             }
-        }
-
-        val seed = Color(vibrantColor)
-        updateSuccessState { state ->
-            if (state.seedColor == seed) state else state.copy(seedColor = seed)
+            val seed = Color(vibrantColor)
+            updateSuccessState { state ->
+                if (state.seedColor == seed) state else state.copy(seedColor = seed)
+            }
         }
     }
 

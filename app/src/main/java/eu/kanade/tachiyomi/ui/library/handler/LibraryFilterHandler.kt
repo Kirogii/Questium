@@ -62,7 +62,7 @@ class LibraryFilterHandler(
             if (!applyTriState(item.libraryManga.manga.status.toInt() == SManga.COMPLETED, preferences.filterCompleted)) return@filter false
             if (skipOutside && !applyTriState(item.libraryManga.manga.fetchInterval < 0, preferences.filterIntervalCustom)) return@filter false
             if (!applyTriState(item.libraryManga.manga.isLewd(), preferences.filterLewd)) return@filter false
-            if (!trackerFilter.matches(item.id, trackMap[item.id], trackedOverall)) return@filter false
+            if (!trackerFilter.matches(trackMap[item.id], trackedOverall)) return@filter false
             if (!applyCategoryFilter(item, filterCategories, includedCategories, excludedCategories)) return@filter false
             true
         }
@@ -94,7 +94,7 @@ class LibraryFilterHandler(
         private val included: Set<Long>,
         private val excluded: Set<Long>,
     ) {
-        fun matches(mangaId: Long, tracks: List<Track>?, trackedOverall: TriState): Boolean {
+        fun matches(tracks: List<Track>?, trackedOverall: TriState): Boolean {
             val entries = tracks.orEmpty()
             when (trackedOverall) {
                 TriState.ENABLED_IS -> if (entries.isEmpty()) return false
