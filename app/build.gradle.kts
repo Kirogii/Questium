@@ -254,7 +254,7 @@ configurations.all {
 
 dependencies {
     // KMK --> Native Quest renderer, embedded in the existing app.
-    implementation("org.godotengine:godot:4.6.0.stable")
+    implementation("org.godotengine:godot:4.6.3.stable")
     implementation(files("libs/vr/godotopenxr-meta-release.aar"))
     // KMK <--
     implementation(projects.i18n)

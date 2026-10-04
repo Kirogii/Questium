@@ -72,6 +72,8 @@
         <activity
             android:name=".ui.vr.VrActivity"
             android:exported="false"
+            android:launchMode="singleTask"
+            android:resizeableActivity="false"
             android:screenOrientation="landscape"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|uiMode|density"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
@@ -79,6 +81,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="org.khronos.openxr.intent.category.IMMERSIVE_HMD" />
             </intent-filter>
         </activity>
 

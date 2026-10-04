@@ -16,4 +16,6 @@ files moved. See .github/scripts/release_notes.py.
 ### Improve
 
 ### Fix
+- Update the Android VR runtime to Godot 4.6.3 so it can load the embedded reader pack instead of aborting at a black screen.
+- Initialize the Quest reader with an OpenXR render surface and reuse its immersive activity instead of starting duplicate VR engines.
 - Keep VR entry controls visible and recognize Meta/Oculus headsets that do not advertise Android’s head-tracking feature. Add a direct Enter VR action.

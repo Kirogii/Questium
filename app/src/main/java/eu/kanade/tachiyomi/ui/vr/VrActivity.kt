@@ -13,6 +13,7 @@ import mihon.app.di.appGraph
 import org.godotengine.godot.Godot
 import org.godotengine.godot.GodotActivity
 import org.godotengine.godot.plugin.GodotPlugin
+import org.godotengine.godot.xr.XRMode
 
 class VrActivity : GodotActivity() {
     private val readers = ViewModelStore()
@@ -24,8 +25,9 @@ class VrActivity : GodotActivity() {
         appGraph.preferenceStore.getBoolean(VrSettingKeys.ENABLED.key).set(true)
     }
 
-    override fun getCommandLine(): MutableList<String> = super.getCommandLine().apply {
-        addAll(listOf("--main-pack", "res://vr.pck", "--xr-mode", "on"))
+    override fun getCommandLine(): MutableList<String> = super.getCommandLine().toMutableList().apply {
+        // Android's GL surface needs its own XR mode in addition to the engine flag.
+        addAll(listOf("--main-pack", "res://vr.pck", XRMode.OPENXR.cmdLineArg, "--xr-mode", "on"))
     }
 
     override fun getHostPlugins(godot: Godot): Set<GodotPlugin> = setOf(
