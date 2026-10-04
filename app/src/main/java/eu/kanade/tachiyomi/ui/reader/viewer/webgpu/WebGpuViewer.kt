@@ -344,6 +344,53 @@ open class WebGpuViewer(
     /** Check if a page is in the cache by identity. O(1) via key lookup. */
     internal fun pageInCache(page: ViewerPage): Boolean = pageCache[pageKey(page)] === page
 
+    /**
+     * Drops cached shells for pages a split has replaced, and moves off one if it was on screen.
+     *
+     * A page too tall for the decoder is replaced by its segments after this viewer has already
+     * built its page graph. The parent shell stays cached under its own [PageKey.Reader] and keeps
+     * rendering the segment its stream now points at, while the chapter's list also holds that
+     * segment - so the strip was drawn twice, the whole and the pieces overlapping. Nothing else
+     * evicts it: it is not idle, not farthest, and its key still looks valid.
+     *
+     * Returns true when the viewer was showing a page that no longer exists, so the caller can
+     * re-anchor.
+     */
+    internal fun evictReplacedPages(): Boolean {
+        var droppedCurrent = false
+        synchronized(lock) {
+            val orphaned = pageCache.values.filterIsInstance<ViewerReaderPage>()
+                .filter { it.page.supersededBySplit }
+            if (orphaned.isEmpty()) return false
+            orphaned.forEach { shell ->
+                pageCache.remove(pageKey(shell))
+                decodeQueue.remove(shell)
+                runCatching {
+                    shell.spreadPage?.cleanup()
+                    shell.spreadBytes = null
+                    shell.imagePage.cleanup()
+                }
+            }
+            droppedCurrent = orphaned.any { it === currentPage }
+            if (droppedCurrent) currentPage = null
+        }
+        return droppedCurrent
+    }
+
+    /** Last [ReaderChapter.pageListVersion] this viewer reconciled against. */
+    private var seenPageListVersion = -1
+
+    /**
+     * Reconciles against a page list the loader replaced underneath us. Cheap when nothing changed:
+     * one volatile int compare.
+     */
+    internal fun syncPageList(chapters: ViewerChapters): Boolean {
+        val version = chapters.currChapter.pageListVersion
+        if (version == seenPageListVersion) return false
+        seenPageListVersion = version
+        return evictReplacedPages()
+    }
+
     init {
         // KMK --> Shed off-screen decoded pages on system memory pressure.
         try {
@@ -1254,6 +1301,10 @@ open class WebGpuViewer(
         // KMK <--
 
         this.viewerChapters = chapters
+
+        // Baseline for syncPageList: it exists to catch pages replaced after this point, and
+        // without recording the current version the initial load reads as a change.
+        seenPageListVersion = chapters.currChapter.pageListVersion
 
         val chapterId = chapters.currChapter.chapter.id
         val stored = if (chapterId != null && chapterId != -1L) positionStore.load(chapterId) else null

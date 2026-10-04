@@ -19,6 +19,32 @@ data class ReaderChapter(val chapter: Chapter) {
         get() = (state as? State.Loaded)?.pages
 
     /**
+     * Bumped every time the loaded page list is replaced wholesale.
+     *
+     * The loader grows this list after the viewers have already built theirs: a page too tall for
+     * the decoder is cut into segments and the result swapped in mid-session, which is long after
+     * `setChapters` snapshotted it. Both viewers enumerate pages by walking that snapshot, so
+     * without a signal they never learn the list changed - the split is simply invisible, and the
+     * pages the viewer is still holding for the removed parent stay laid out next to the segments
+     * that replaced it.
+     *
+     * Identity rather than a hash of the list, so it is a cheap read on the render path and cannot
+     * collide. Callers compare it against the value they last built from.
+     */
+    @Volatile
+    var pageListVersion: Int = 0
+        private set
+
+    /**
+     * Replaces the loaded page list and announces it. Every writer that changes the list's contents
+     * or length must go through here, or the viewers will keep rendering the previous one.
+     */
+    fun replacePages(newPages: List<ReaderPage>) {
+        state = State.Loaded(newPages)
+        pageListVersion++
+    }
+
+    /**
      * Position of [page] in the current page list, or -1 when it is not in it.
      *
      * [Page.index] cannot answer this: it is assigned when the list is built and is immutable,

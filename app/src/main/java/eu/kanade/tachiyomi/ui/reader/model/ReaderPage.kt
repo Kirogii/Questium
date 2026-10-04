@@ -36,11 +36,13 @@ open class ReaderPage(
     var splitSegment: Boolean = false
 
     /**
-     * How many segments this page's image was split into, or 0 while it is still one image.
+     * True once this page has been replaced by the segments of its own split.
      *
-     * Set on the page the split started from, which keeps the split from being redone - and its
-     * extra pages re-added to the chapter - every time the page is queued or reloaded.
+     * A superseded page is no longer in its chapter's list, but a viewer may still be holding it
+     * with a decoded surface attached, which is what draws the old strip over its replacement.
+     * Recording the state on the page itself lets a viewer reject one without having to go back to
+     * the chapter to ask whether it is still real.
      */
-    var splitSegmentCount: Int = 0
+    var supersededBySplit: Boolean = false
     // KMK <--
 }

@@ -139,6 +139,12 @@ class PagerViewerAdapter(
         if (insertPageLastPage != null) {
             viewer.moveToPage(insertPageLastPage)
         }
+
+        // A full set is the baseline: syncPageList exists to catch pages replaced *after* this
+        // point, and without recording it the initial load would read as a change and re-anchor
+        // the reader for no reason. Retained so a re-set can reuse the adjacent chapters.
+        lastPageListVersion = chapters.currChapter.pageListVersion
+        lastChapters = chapters
     }
 
     /**
@@ -236,6 +242,31 @@ class PagerViewerAdapter(
     fun refresh() {
         readerThemedContext = viewer.activity.createReaderThemeContext()
     }
+
+    /**
+     * Rebuilds the item list if the chapter's page list was replaced since we last read it.
+     *
+     * The loader swaps in a taller page's segments after the adapter has already snapshotted the
+     * chapter's pages, and it does so by removing the page the viewer is currently showing. Without
+     * this the adapter keeps serving the replaced page and the segments never appear, so a long
+     * strip renders as its first slice and the viewer's holder for the removed page stays live.
+     *
+     * Returns true when the list changed, so the caller can re-resolve where it was.
+     */
+    fun syncPageList(chapter: ReaderChapter): Boolean {
+        val version = chapter.pageListVersion
+        if (version == lastPageListVersion) return false
+        // Re-set with the chapters as they were last given. Rebuilding a ViewerChapters from the
+        // current chapter alone would drop the adjacent chapters and the transitions between them.
+        // setChapters records the new baseline, so the version is not latched before that succeeds.
+        val chapters = lastChapters ?: return false
+        setChapters(chapters, forceTransition = viewer.config.alwaysShowChapterTransition)
+        return true
+    }
+
+    private var lastPageListVersion = -1
+
+    private var lastChapters: ViewerChapters? = null
 
     // SY -->
     private fun setJoinedItems(useSecondPage: Boolean = false) {

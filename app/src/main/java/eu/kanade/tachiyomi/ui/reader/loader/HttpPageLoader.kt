@@ -295,35 +295,51 @@ internal class HttpPageLoader(
      */
     private fun loadSegment(page: ReaderPage, imageUrl: String) {
         val index = page.imageUrl!!.substringAfter(SEGMENT_KEY_SUFFIX, "").toIntOrNull() ?: 0
-        val key = ensureSegment(imageUrl, index)
+        // Falls back to the whole image when the cut no longer produces this segment, which happens
+        // if the segment height changed or the source image was replaced by a shorter one after the
+        // page was injected. Reading the derived key anyway would hand the decoder a missing file.
+        val key = ensureSegment(imageUrl, index) ?: imageUrl
         page.stream = { chapterCache.getImageFile(key).inputStream() }
         page.status = Page.State.Ready
     }
 
     /**
-     * Cache key for segment [index] of [imageUrl], re-cutting that one segment if it was evicted.
-     *
-     * The cut is driven by the image height and the segment limit, so it always produces the same
-     * number of segments in the same order - which is what makes a derived key stable enough to
-     * rebuild from.
+     * Cache key for segment [index] of [imageUrl], re-cutting if it was evicted. Null when the cut
+     * does not produce that segment, so the caller can fall back to the whole image instead of
+     * pointing at a file that is not there.
      */
-    private fun ensureSegment(imageUrl: String, index: Int): String {
+    private fun ensureSegment(imageUrl: String, index: Int): String? {
         val key = segmentKey(imageUrl, index)
         if (chapterCache.isImageInCache(key)) return key
 
-        TallPageSplitter.split(
+        // The cut produces every segment, and all of them are written rather than just the one
+        // asked for: the cache is an LRU, so segments are evicted one at a time, and restoring only
+        // the requested one would cost a full re-split for each of them in turn.
+        var produced = 0
+        val split = TallPageSplitter.split(
             imageFile = chapterCache.getImageFile(imageUrl),
             maxSegmentHeight = maxSegmentHeight,
         ) { i, bytes ->
-            if (i == index) chapterCache.putImageToCache(key, bytes)
+            produced = i + 1
+            chapterCache.putImageToCache(segmentKey(imageUrl, i), bytes)
         }
+        if (!split || index >= produced) return null
+
+        // Anything past what this cut produced belongs to an earlier, longer split of the same
+        // image. Left in the cache it still answers isImageInCache, so a segment page from that
+        // older split would decode an image that no longer matches its position.
+        var stale = produced
+        while (chapterCache.removeImageFromCache(segmentKey(imageUrl, stale))) {
+            stale++
+        }
+
         return key
     }
 
     /**
-     * Replaces a page too tall for the decoder with cached vertical segments, adding the segments
-     * past the first as extra pages of the chapter, and returns the cache key [page] itself now
-     * reads. Returns null when the image fits as-is.
+     * Replaces a page too tall for the decoder with cached vertical segments, taking the parent's
+     * place in the chapter's page list, and returns the cache key of its first segment. Returns null
+     * when the image fits as-is.
      *
      * The segments are new [ReaderPage]s rather than extra entries on [page] because a page holds a
      * single image; the chapter's list grows instead, which the viewers pick up because they
@@ -341,16 +357,9 @@ internal class HttpPageLoader(
             val position = page.chapter.positionOf(page)
             if (position < 0) return null
 
-            // Already cut once: the extra pages are in the chapter's list, so re-adding them would
-            // duplicate every segment and only the first segment's key is needed again.
-            //
-            // The chapter's own page list is the authority, not `page.splitSegmentCount`. That
-            // flag lives on one ReaderPage instance, and `ReaderChapter.unref` discards the loaded
-            // list when the chapter scrolls out of range, so a later load hands back fresh pages
-            // carrying a zero count - and the split ran a second time.
-            if (page.splitSegmentCount > 0 || chapterPages.hasSegmentsOf(imageUrl)) {
-                return ensureSegment(imageUrl, 0)
-            }
+            // A page still in the list is uncut: the split removes this instance as it inserts the segments.
+// Identity is therefore the whole test. A flag on the page, or its source URL, would be coarser -
+// a second live page sharing that image could then claim the first one's segments.
 
             val keys = mutableListOf<String>()
             val split = TallPageSplitter.split(
@@ -363,10 +372,18 @@ internal class HttpPageLoader(
             }
             if (!split || keys.isEmpty()) return null
 
-            page.splitSegmentCount = keys.size
-
-            val extras = keys.drop(1).mapIndexed { offset, key ->
-                ReaderPage(index = segmentIndex(page, offset), url = page.url, imageUrl = key).apply {
+            // The parent is REPLACED by its segments, not kept alongside them. Keeping it and
+            // repointing its stream at segment 0 left the original page object alive in every
+            // viewer's cache under PageKey.Reader(chapterId, parentIndex) while the segments were
+            // also laid out - so the strip was drawn twice, once whole and once in pieces, which is
+            // what the long-strip reader was showing. Removing it means a split page has exactly
+            // one representation.
+            //
+            // Segment numbering is the real one (0..k-1), matching both segmentKey and the index
+            // loadSegment recovers from the key, so a segment page resolves to the same segment
+            // whichever path re-reads it.
+            val segments = keys.mapIndexed { segmentNumber, key ->
+                ReaderPage(index = segmentIndex(page, segmentNumber), url = page.url, imageUrl = key).apply {
                     chapter = page.chapter
                     splitSegment = true
                     status = Page.State.Ready
@@ -374,29 +391,22 @@ internal class HttpPageLoader(
                 }
             }
 
-            val updated = ArrayList<ReaderPage>(chapterPages.size + extras.size).apply {
+            val updated = ArrayList<ReaderPage>(chapterPages.size - 1 + segments.size).apply {
                 addAll(chapterPages)
-                extras.forEachIndexed { offset, extra -> add(position + 1 + offset, extra) }
+                removeAt(position)
+                segments.forEachIndexed { offset, segment -> add(position + offset, segment) }
             }
-            page.chapter.state = ReaderChapter.State.Loaded(updated)
+            page.chapter.replacePages(updated)
+
+            // Marked only once the chapter no longer lists it, so a viewer can never see the page
+            // as dead while the loader would still hand it back.
+            page.supersededBySplit = true
 
             logcat { "Split page ${page.index} (${keys.size} segments), chapter now ${updated.size} pages" }
             return keys.first()
         }
 
     private fun segmentKey(imageUrl: String, index: Int) = "$imageUrl$SEGMENT_KEY_SUFFIX$index"
-
-    /**
-     * Whether [pages] already carries segments of [imageUrl].
-     *
-     * Matched on the derived segment key rather than on a page's own flags, because a rebuilt
-     * page list produces segment pages whose `splitSegment` flag has been reset along with
-     * everything else about them.
-     */
-    private fun List<ReaderPage>.hasSegmentsOf(imageUrl: String): Boolean {
-        val prefix = "$imageUrl$SEGMENT_KEY_SUFFIX"
-        return any { it.imageUrl?.startsWith(prefix) == true }
-    }
 
     /**
      * Index handed to an injected segment page.

@@ -77,6 +77,12 @@ abstract class PagerViewer(
     private var awaitingIdleViewerChapters: ViewerChapters? = null
 
     /**
+     * The chapters currently set on this viewer, or null before the first [setChapters].
+     */
+    var viewerChapters: ViewerChapters? = null
+        private set
+
+    /**
      * Whether the view pager is currently in idle mode. It sets the awaiting chapters if setting
      * this field to true.
      */
@@ -197,6 +203,15 @@ abstract class PagerViewer(
      * Called when a new page (either a [ReaderPage] or [ChapterTransition]) is marked as active
      */
     fun onPageChange(position: Int) {
+        // A page too tall for the decoder was replaced by its segments after this viewer built its
+        // item list. Re-sync first so the position below is resolved against the current list
+        // rather than the snapshot the split invalidated.
+        viewerChapters?.currChapter?.let { chapter ->
+            if (adapter.syncPageList(chapter)) {
+                reanchorAfterPageListChange()
+                return
+            }
+        }
         val pagePair = adapter.joinedItems.getOrNull(position)
         val page = pagePair?.first
         if (page != null && currentPage != page) {
@@ -221,6 +236,40 @@ abstract class PagerViewer(
                 is ChapterTransition -> onTransitionSelected(page)
             }
         }
+    }
+
+    /**
+     * Re-establishes where the reader is after the chapter's page list was replaced under it.
+     *
+     * A split removes the page that was on screen and puts its segments in that slot, so the pager's
+     * item count changes while it is sitting on that position. Holding the position is deliberate:
+     * the replacement occupies the same slot, so the reader lands on the first segment and carries
+     * on. Holders for pages the split removed are destroyed, otherwise their decoded bitmap stays
+     * attached to a position that now holds something else.
+     */
+    private fun reanchorAfterPageListChange() {
+        val chapter = viewerChapters?.currChapter ?: return
+
+        // A holder for a page the split replaced keeps its decoded bitmap attached to a position
+        // that now holds a segment, which is what laid the old strip over its own replacement.
+        val stale = pager.children
+            .filterIsInstance<PagerPageHolder>()
+            .filter { it.page.supersededBySplit }
+        stale.forEach { holder -> runCatching { pager.removeView(holder) } }
+
+        // The pager may now be past the end if pages were removed rather than only added.
+        val lastIndex = maxOf(0, adapter.getCount() - 1)
+        val target = pager.currentItem.coerceIn(0, lastIndex)
+        if (target != pager.currentItem) {
+            pager.setCurrentItem(target, false)
+        }
+
+        // Resolved against the rebuilt item list, so this reports the page now in that slot rather
+        // than the one the split removed.
+        currentPage = null
+        onPageChange(target)
+
+        logcat { "Re-anchored after page list change: ${chapter.pages?.size} pages" }
     }
 
     private fun checkAllowPreload(page: ReaderPage?): Boolean {
@@ -299,6 +348,8 @@ abstract class PagerViewer(
      * Sets the active [chapters] on this pager.
      */
     internal fun setChaptersInternal(chapters: ViewerChapters) {
+        this.viewerChapters = chapters
+
         // Remove listener so the change in item doesn't trigger it
         // since we're about to change the size of the items
         // If we don't the size change could put us on a new chapter
