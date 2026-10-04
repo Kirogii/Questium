@@ -9,6 +9,7 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Quest reader: rounded book toolbar and Book Options popup, configurable controller buttons with labeled Touch Plus diagrams, hand switching, haptic feedback, and white page grab bars.
 
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 

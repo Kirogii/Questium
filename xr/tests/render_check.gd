@@ -7,6 +7,17 @@ func _render() -> void:
     var reader = load("res://reader.tscn").instantiate()
     root.add_child(reader)
     for argument in OS.get_cmdline_user_args():
+        if argument == "--options":
+            reader.camera.position.z = 0.65
+            reader.camera.fov = 40
+            reader.camera.rotation.x = 0.12
+            reader.ui.toggle()
+        if argument == "--controllers":
+            reader.camera.position.z = 0.65
+            reader.camera.fov = 40
+            reader.camera.rotation.x = 0.12
+            reader.ui.toggle()
+            reader.ui.show_controllers()
         if argument == "--turn":
             assert(reader.book.begin_turn(1))
             reader.book.set_turn_progress(0.5)

@@ -290,7 +290,7 @@
             tools:node="merge" />
 
         <provider
-            android:name="androidx.core.content.FileProvider"
+            android:name=".util.system.AppFileProvider"
             android:authorities="${applicationId}.provider"
             android:exported="false"
             android:grantUriPermissions="true">

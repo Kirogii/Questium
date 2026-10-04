@@ -50,3 +50,9 @@ Engine checks: `godot --headless --xr-mode off --path xr --editor --quit`, then 
 Desktop geometry/input preview: `godot --xr-mode off --path xr -- --pages=<image-directory>`. Arrow keys turn pages; the mouse operates spatial controls. Desktop checks do not verify Quest tracking, passthrough, Android lifecycle or headset performance.
 
 On Quest, launch the normal Android app and choose Settings → Virtual reality → Enable VR. Enable hand tracking in the headset settings. Pinch near an outside page edge to turn; pinch the spine to move the book. Touch controller triggers/grips use the same physical grab regions and rays select controls. Exit VR returns to the normal app after saving reading progress.
+
+## Quest reader controls
+
+The reader has a rounded title/seeker toolbar, a Book Options popup with a four-icon navigation rail, and a settings page with labeled ringless Touch Plus diagrams and persistent button remapping. Right trigger advances, left trigger goes back, A/X selects with the active pointer hand, grips grab the spine or white page bars, B opens Book Options, Y toggles the library, right stick click recenters, left stick click switches pointer hands, and the left Menu button opens options. Meta remains reserved for the headset system menu. Stick horizontal input turns pages once per deflection; left vertical input adjusts distance and right vertical input adjusts size. Hand tracking retains pinch selection and physical page grabs. Controller buttons provide a short optional haptic pulse.
+
+Controls, physical grab bars, settings construction, and input edge behavior are covered by `xr/tests/controls_check.gd`. Visuals are implemented with Godot rounded StyleBoxes and SVG icons; resemblance to the supplied references is verified with rendered previews, while exact visual parity and tactile feel require headset validation.

@@ -19,3 +19,4 @@ runs:
         "$GODOT_BIN" --headless --xr-mode off --path xr --editor --quit
         "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/book_check.gd
         "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/input_check.gd
+        "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/controls_check.gd

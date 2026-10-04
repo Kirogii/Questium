@@ -34,6 +34,13 @@ var hold_basis := Basis.IDENTITY
 var pending_seek := -1
 var chapter_token := ""
 var local_pages: Array[String] = []
+var ui: RefCounted
+var preferred_hand := "right"
+var haptics := true
+var ui_hand := ""
+var passthrough_enabled := false
+var bindings := {"left:trigger_click": "Previous page", "right:trigger_click": "Next page", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
+
 
 func _ready() -> void:
     environment = WorldEnvironment.new()
@@ -95,6 +102,8 @@ func _ready() -> void:
         var translated = JSON.parse_string(bridge.call("labels"))
         if translated is Dictionary:
             labels = translated
+    ui = preload("res://reader_ui.gd").new(self)
+    ui.load_config()
     _build_toolbar()
     _build_library()
     if bridge:
@@ -116,7 +125,8 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     node.position = position
     var viewport := SubViewport.new()
     viewport.size = pixels
-    viewport.transparent_bg = false
+    viewport.transparent_bg = true
+    viewport.gui_embed_subwindows = true
     viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
     node.add_child(viewport)
     var surface := MeshInstance3D.new()
@@ -125,12 +135,13 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     surface.mesh = quad
     var material := StandardMaterial3D.new()
     material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
     material.albedo_texture = viewport.get_texture()
     material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
     surface.material_override = material
     node.add_child(surface)
-    var background := ColorRect.new()
-    background.color = Color(0.055, 0.06, 0.08)
+    var background := Panel.new()
+    background.add_theme_stylebox_override("panel", ui.style(Color(0.14, 0.15, 0.17), 32))
     background.size = Vector2(pixels)
     background.mouse_filter = Control.MOUSE_FILTER_IGNORE
     viewport.add_child(background)
@@ -138,7 +149,7 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     content.position = Vector2(16.0, 12.0)
     content.size = Vector2(pixels) - Vector2(32.0, 24.0)
     viewport.add_child(content)
-    var data := {"node": node, "viewport": viewport, "size": size, "pixels": pixels, "content": content}
+    var data := {"node": node, "viewport": viewport, "size": size, "pixels": pixels, "content": content, "background": background}
     panels.append(data)
     return data
 
@@ -148,62 +159,34 @@ func _button(row: Container, text: String, callback: Callable) -> Button:
     button.custom_minimum_size = Vector2(72.0, 48.0)
     button.add_theme_font_size_override("font_size", 22)
     row.add_child(button)
-    button.pressed.connect(callback)
+    button.add_theme_stylebox_override("normal", ui.style(Color(0.25, 0.27, 0.30), 20))
+    button.add_theme_stylebox_override("hover", ui.style(Color(0.36, 0.39, 0.44), 20))
+    button.add_theme_stylebox_override("pressed", ui.style(Color(0.46, 0.41, 0.56), 20))
+    button.pressed.connect(func():
+        ui.haptic(ui_hand)
+        callback.call()
+    )
     return button
 
 func _build_toolbar() -> void:
-    var panel := _panel(book, Vector2(0.60, 0.19), Vector2i(1000, 316), Vector3(0.0, -0.32, 0.025))
-    toolbar_view = panel.viewport
-    var content: VBoxContainer = panel.content
-    title = Label.new()
-    title.text = "VR Komikku"
-    title.add_theme_font_size_override("font_size", 24)
-    content.add_child(title)
-    var row := HBoxContainer.new()
-    content.add_child(row)
-    _button(row, "Library", func(): library_panel.visible = not library_panel.visible)
-    _button(row, "<", func(): _turn(-1))
-    seeker = HSlider.new()
-    seeker.custom_minimum_size = Vector2(450.0, 48.0)
-    seeker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    seeker.step = 1.0
-    row.add_child(seeker)
-    seeker.drag_ended.connect(func(changed: bool):
-        if changed:
-            _seek(int(seeker.value))
-    )
-    _button(row, ">", func(): _turn(1))
-    _button(row, "Center", recenter)
-    var options := HBoxContainer.new()
-    content.add_child(options)
-    _button(options, "Black", func(): _set_passthrough(false))
-    _button(options, "See through", func(): _set_passthrough(true))
-    _button(options, "LTR / RTL", func():
-        book.cancel_turn()
-        book.rtl = not book.rtl
-        book._refresh()
-    )
-    _button(options, "Exit VR", func(): _request("exit"))
-    var adjustments := HBoxContainer.new()
-    content.add_child(adjustments)
-    _slider(adjustments, "Size", 0.5, 2.5, 1.0, func(value: float): book.scale = Vector3.ONE * value)
-    _slider(adjustments, "Distance", 0.35, 2.0, 0.75, func(value: float): book.position = camera.global_position - camera.global_basis.z * value)
-    _slider(adjustments, "Tilt", -60.0, 45.0, -12.0, func(value: float): book.rotation.x = deg_to_rad(value))
-    status = Label.new()
-    status.text = _label("Loading library…")
-    status.add_theme_font_size_override("font_size", 20)
-    content.add_child(status)
+    ui.build()
 
 func _slider(row: Container, caption: String, minimum: float, maximum: float, value: float, callback: Callable) -> void:
-    var label := Label.new()
-    label.text = _label(caption)
-    row.add_child(label)
+    var icon := TextureRect.new()
+    icon.texture = load("res://icons/" + {"Size": "size", "Tilt": "tilt", "Distance": "eye"}[caption] + ".svg")
+    icon.custom_minimum_size = Vector2(48, 48)
+    icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+    icon.tooltip_text = _label(caption)
+    row.add_child(icon)
     var slider := HSlider.new()
     slider.min_value = minimum
     slider.max_value = maximum
     slider.step = 0.01
     slider.value = value
-    slider.custom_minimum_size = Vector2(185.0, 45.0)
+    slider.custom_minimum_size = Vector2(185.0, 70.0)
+    slider.add_theme_icon_override("grabber", preload("res://icons/knob.svg"))
+    slider.add_theme_icon_override("grabber_highlight", preload("res://icons/knob.svg"))
     slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(slider)
     slider.value_changed.connect(callback)
@@ -296,6 +279,7 @@ func _response(json: String) -> void:
         return
     match data.get("kind", ""):
         "error":
+            status.visible = true
             status.text = str(data.get("message", _label("Unable to load content")))
         "library", "chapters":
             library_mode = str(data.kind)
@@ -323,7 +307,9 @@ func _response(json: String) -> void:
             chapter_token = str(data.token)
             book.set_chapter(int(data.count), int(data.start), bool(data.get("rtl", false)))
             seeker.max_value = maxi(0, book.page_count - 1)
+            ui.update_pages(book.first_page)
             title.text = str(data.title)
+            ui.update_title()
             library_panel.visible = false
             pending_seek = book.first_page
             _preload(book.first_page)
@@ -353,6 +339,7 @@ func _seek(index: int) -> void:
 
 func _spread_changed(index: int) -> void:
     seeker.value = index
+    ui.update_pages(index)
     status.text = "%s %s–%s / %s" % [_label("Pages"), index + 1, mini(index + 2, book.page_count), book.page_count]
     _request("progress", {"token": chapter_token, "index": mini(index + 1, book.page_count - 1)})
     _preload(index)
@@ -370,6 +357,7 @@ func _turn(direction: int) -> void:
 func _set_passthrough(enabled: bool) -> void:
     var supported := xr and xr.get_supported_environment_blend_modes().has(XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND)
     var active: bool = enabled and supported
+    passthrough_enabled = active
     get_viewport().transparent_bg = active
     environment.environment.background_color = Color(0.0, 0.0, 0.0, 0.0 if active else 1.0)
     if xr:
@@ -394,6 +382,8 @@ func _process(_delta: float) -> void:
             var required := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
             valid = (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
             if valid:
+                tracked[hand].can_grab = true
+                tracked[hand].can_ui = true
                 tracked[hand].hand_root.visible = true
                 tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP).origin
                 pointer_basis = origin.global_basis * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).basis
@@ -403,7 +393,8 @@ func _process(_delta: float) -> void:
         else:
             valid = controller.get_is_active()
             tracked[hand].ray.visible = valid
-            pressed = controller.is_button_pressed("trigger_click") or controller.is_button_pressed("grip_click")
+            pressed = ui.controller_input(hand, controller)
+        ui_hand = hand
         _pointer(hand, tip, direction, pressed, valid, pointer_basis)
 
 func _notification(what: int) -> void:
@@ -418,6 +409,8 @@ func _cancel_interactions() -> void:
     ui_owner = ""
     for hand in tracked:
         tracked[hand].pressed = false
+        tracked[hand].buttons = {}
+        tracked[hand].stick_down = false
 
 func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, valid: bool, pointer_basis: Basis = Basis.IDENTITY) -> void:
     var previous: bool = tracked[hand].pressed
@@ -439,25 +432,41 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
                 book.release_turn()
             holder = ""
             moving = false
-    elif pressed and not previous and holder.is_empty() and ui_owner.is_empty() and valid:
+    elif pressed and not previous and holder.is_empty() and ui_owner.is_empty() and valid and tracked[hand].get("can_grab", true):
         var point := book.to_local(tip)
-        if absf(point.z) < 0.045 and absf(point.y) < SpatialBook.PAGE_HEIGHT / 2.0:
+        if absf(point.z) < 0.075 and absf(point.y) < SpatialBook.PAGE_HEIGHT / 2.0:
             if absf(point.x) < 0.04:
                 holder = hand
                 moving = true
                 hold_offset = book.global_position - tip
                 hold_basis = pointer_basis.inverse() * book.global_basis
-            elif absf(point.x) > SpatialBook.PAGE_WIDTH * 0.72 and absf(point.x) < SpatialBook.PAGE_WIDTH + 0.03:
+            elif absf(point.x) > SpatialBook.PAGE_WIDTH * 0.72 and absf(point.x) < SpatialBook.PAGE_WIDTH + 0.05:
                 if book.begin_turn(1 if point.x > 0.0 else -1):
                     holder = hand
-    if holder.is_empty() and (ui_owner.is_empty() or ui_owner == hand):
+                    ui.haptic(hand)
+    if holder.is_empty() and (ui_owner.is_empty() or ui_owner == hand) and (tracked[hand].get("can_ui", true) or ui_owner == hand):
         if valid or (previous and not pressed):
             var hit := _panel_input(tip, direction, pressed, previous)
             if hit and pressed and not previous:
                 ui_owner = hand
+            elif not hit and pressed and not previous:
+                _page_region(tip, direction, hand)
         if not pressed and ui_owner == hand:
             ui_owner = ""
     tracked[hand].pressed = pressed
+
+func _page_region(start: Vector3, direction: Vector3, hand: String) -> void:
+    var local_start := book.to_local(start)
+    var local_direction := book.global_basis.inverse() * direction
+    if absf(local_direction.z) < 0.0001:
+        return
+    var distance := -local_start.z / local_direction.z
+    if distance < 0 or distance > 5:
+        return
+    var point := local_start + local_direction * distance
+    if absf(point.y) < SpatialBook.PAGE_HEIGHT / 2 and absf(point.x) > SpatialBook.PAGE_WIDTH * 0.72 and absf(point.x) < SpatialBook.PAGE_WIDTH + 0.05:
+        _turn((1 if point.x > 0 else -1) * (-1 if book.rtl else 1))
+        ui.haptic(hand)
 
 func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: bool) -> bool:
     for panel in panels:
@@ -539,4 +548,5 @@ func _load_desktop_pages() -> void:
         if image.load(local_pages[index]) == OK:
             image.generate_mipmaps()
             book.supply_page(index, ImageTexture.create_from_image(image))
+    ui.update_pages(book.first_page)
     status.text = "Desktop validation: pass -- --pages=<directory> to load images"
