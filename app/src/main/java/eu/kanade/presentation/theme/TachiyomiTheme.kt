@@ -95,10 +95,10 @@ private fun BaseTachiyomiTheme(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val isDark = isSystemInDarkTheme()
-    // Below Android 12 the wallpaper has to be sampled for a seed, and that runs off the main
+    // Only Monet below Android 12 has to sample the wallpaper for a seed, and that runs off the main
     // thread. Keying on it is what lets the scheme settle onto the wallpaper's own colours once the
     // sample lands; without the key the first-composition fallback would stick for the session.
-    val wallpaperSeed = rememberWallpaperSeed()
+    val wallpaperSeed = rememberWallpaperSeed(appTheme)
     // Monet and CUSTOM are seeded from live system state (wallpaper colours, the user's
     // accent). Re-resolving only when the enum changed left the app showing the colours
     // captured at composition time, so a wallpaper or accent change stayed invisible

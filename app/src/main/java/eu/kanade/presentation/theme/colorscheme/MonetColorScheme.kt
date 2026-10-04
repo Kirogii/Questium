@@ -17,11 +17,11 @@ import mihon.app.di.globalAppGraph
 /**
  * Wallpaper-derived theming.
  *
- * Android 12+ exposes the system palette directly. Below that there is no such API, so
- * the seed is approximated from whatever live system colour we can still read - the
- * wallpaper's primary colour first, then the system accent. When neither is available the
- * scheme falls back to the app's own accent rather than to a fixed built-in theme, so
- * selecting "Monet" never silently means "some unrelated static theme".
+ * Android 12+ exposes the system palette directly. Below that there is no such API, so the seed is
+ * the wallpaper's own colours - sampled by [WallpaperSeedSampler] where that is possible, and read
+ * from `getWallpaperColors` while the sample is still running - and then the system accent. When
+ * none is available the scheme falls back to the app's own accent rather than to a fixed built-in
+ * theme, so selecting "Monet" never silently means "some unrelated static theme".
  */
 internal class MonetColorScheme(context: Context, sampledSeed: Color? = null) : BaseColorScheme() {
 

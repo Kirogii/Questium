@@ -13,18 +13,20 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.graphics.Color
-import androidx.core.graphics.drawable.toBitmap
+import androidx.core.graphics.drawable.toBitmapOrNull
 import androidx.palette.graphics.Palette
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import eu.kanade.domain.ui.model.AppTheme
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.app.di.globalAppGraph
 import mihon.core.concurrency.AppDispatchersHolder
 import tachiyomi.core.common.util.system.logcat
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Finds a seed colour from the wallpaper on releases that expose no system palette.
@@ -47,7 +49,7 @@ class WallpaperSeedSampler(private val context: Context) {
     private val _seed = mutableStateOf<Color?>(null)
     val seed: State<Color?> = _seed
 
-    private val scope = CoroutineScope(Job() + AppDispatchersHolder.get().io)
+    private val scope = CoroutineScope(SupervisorJob() + AppDispatchersHolder.get().io)
 
     private val lock = Any()
 
@@ -61,6 +63,8 @@ class WallpaperSeedSampler(private val context: Context) {
     private var sampledGeneration = -1L
 
     private var sampling = false
+
+    private val receiverRegistered = AtomicBoolean()
 
     private val wallpaperReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -79,18 +83,6 @@ class WallpaperSeedSampler(private val context: Context) {
         }
     }
 
-    init {
-        runCatching {
-            val filter = IntentFilter(Intent.ACTION_WALLPAPER_CHANGED)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.registerReceiver(wallpaperReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("UnspecifiedRegisterReceiverFlag")
-                context.registerReceiver(wallpaperReceiver, filter)
-            }
-        }
-    }
-
     /**
      * Samples the wallpaper unless its generation has already been sampled or is being sampled.
      *
@@ -99,7 +91,10 @@ class WallpaperSeedSampler(private val context: Context) {
      */
     fun ensureSampled() {
         // Android 12+ has a real system palette, so the wallpaper is not the source of truth there.
+        // Returning before registering matters: the receiver would otherwise be woken by every
+        // wallpaper change, call straight back into here, and do nothing - forever.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
+        registerReceiverOnce()
 
         val mine = synchronized(lock) {
             if (sampledGeneration == generation || sampling) return
@@ -109,71 +104,102 @@ class WallpaperSeedSampler(private val context: Context) {
 
         scope.launch {
             val sampled = runCatching { sample() }.getOrNull()
-            val current = synchronized(lock) {
+            val stale = synchronized(lock) {
                 sampling = false
-                generation
+                // Marked current under the same lock ensureSampled reads it with. Written outside it,
+                // the write can be missed by that reader and the next call re-samples a generation
+                // that is already done.
+                if (sampled != null && generation == mine) sampledGeneration = mine
+                generation != mine
             }
-            if (current != mine) {
+            when {
                 // The wallpaper changed while this ran, so the colour is for one that has already
-                // been replaced. Dropped, and the generation now on screen is sampled instead.
-                ensureSampled()
-                return@launch
-            }
-            if (sampled != null) {
-                sampledGeneration = mine
-                _seed.value = sampled
-            } else {
-                logcat(LogPriority.DEBUG) { "No seed could be sampled from the wallpaper" }
+                // been replaced. Dropped; its generation is unsampled now and picked up here.
+                stale -> ensureSampled()
+                sampled != null -> _seed.value = sampled
+                else -> logcat(LogPriority.DEBUG) { "No seed could be sampled from the wallpaper" }
             }
         }
     }
 
-    private fun sample(): Color? {
-        val drawable = runCatching {
-            WallpaperManager.getInstance(context).getDrawable(WallpaperManager.FLAG_SYSTEM)
-        }.getOrNull() ?: return null
+    private fun registerReceiverOnce() {
+        // Registered lazily rather than from init: this class is only reachable from the Monet theme
+        // on releases below Android 12, and registering eagerly would hold a receiver for the life of
+        // the process over a wallpaper that may never be sampled.
+        if (!receiverRegistered.compareAndSet(false, true)) return
+        runCatching {
+            val filter = IntentFilter(Intent.ACTION_WALLPAPER_CHANGED)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.registerReceiver(wallpaperReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("UnspecifiedRegisterReceiverFlag")
+                context.registerReceiver(wallpaperReceiver, filter)
+            }
+        }.onFailure { error ->
+            // Without the receiver the seed is still correct for this process; it just will not
+            // follow a wallpaper change until the app is next opened.
+            receiverRegistered.set(false)
+            logcat(LogPriority.WARN, error) { "Could not observe wallpaper changes" }
+        }
+    }
 
-        val bitmap = drawable.toSampledBitmap() ?: return null
+    private fun sample(): Color? {
+        val bitmap = decodeWallpaper() ?: return null
         val palette = runCatching {
             Palette.from(bitmap)
                 .clearFilters()
                 .maximumColorCount(32)
                 .generate()
         }.getOrNull()
-        bitmap.recycle()
+        // Deliberately not recycled. toBitmap can hand back a BitmapDrawable's own bitmap rather
+        // than a copy, and the decoded sample is a quarter of a megabyte - not worth risking a
+        // wallpaper the system still owns.
         palette ?: return null
 
         val swatch = palette.vibrantSwatch
             ?: palette.lightVibrantSwatch
             ?: palette.darkVibrantSwatch
             ?: palette.mutedSwatch
+            ?: palette.lightMutedSwatch
+            ?: palette.darkMutedSwatch
             ?: palette.dominantSwatch
             ?: return null
 
         return Color(swatch.rgb)
     }
+
+    private fun decodeWallpaper(): Bitmap? {
+        // getDrawable is the only public route - getBitmap is hidden from the SDK - and it answers
+        // for live and composed wallpapers too, which getWallpaperColors does not. The drawable is
+        // rendered straight to the sample size below, so no full-resolution copy is ever held.
+        val drawable = runCatching {
+            WallpaperManager.getInstance(context).getDrawable(WallpaperManager.FLAG_SYSTEM)
+        }.getOrNull() ?: return null
+        return drawable.toSampledBitmap()
+    }
 }
 
 /**
- * Decodes the wallpaper small enough for the quantiser. Palette is doing a full-image histogram,
- * so a full-resolution bitmap buys nothing and costs a lot of allocation on low-end devices.
+ * Renders the drawable straight into a bitmap small enough for the quantiser.
+ *
+ * Palette runs a full-image histogram, so a full-resolution bitmap buys nothing and costs a lot of
+ * allocation on low-end devices - a 1440x3120 ARGB buffer is ~18MB before the encoder has looked at
+ * a pixel. Rendering at the target size never materialises it, rather than materialising it and then
+ * scaling it down.
  */
 private fun Drawable.toSampledBitmap(): Bitmap? {
-    val source = runCatching { toBitmap() }.getOrNull() ?: return null
+    // Non-positive intrinsic size is the one case the scaling below cannot express, and it is
+    // answered here rather than rounded into a 1x1. Everything else toBitmapOrNull handles itself.
+    val width = intrinsicWidth
+    val height = intrinsicHeight
+    if (width <= 0 || height <= 0) return null
 
-    val longest = maxOf(source.width, source.height)
-    if (longest == 0) return null
-    if (longest <= MAX_SAMPLE_EDGE) return source
+    val longest = maxOf(width, height)
+    val scale = if (longest > MAX_SAMPLE_EDGE) MAX_SAMPLE_EDGE.toFloat() / longest else 1f
+    val targetWidth = (width * scale).toInt().coerceAtLeast(1)
+    val targetHeight = (height * scale).toInt().coerceAtLeast(1)
 
-    val scale = MAX_SAMPLE_EDGE.toFloat() / longest
-    val scaled = Bitmap.createScaledBitmap(
-        source,
-        (source.width * scale).toInt().coerceAtLeast(1),
-        (source.height * scale).toInt().coerceAtLeast(1),
-        true,
-    )
-    if (scaled !== source) source.recycle()
-    return scaled
+    return toBitmapOrNull(targetWidth, targetHeight, Bitmap.Config.ARGB_8888)
 }
 
 private const val MAX_SAMPLE_EDGE = 256
@@ -183,8 +209,12 @@ private const val MAX_SAMPLE_EDGE = 256
  * `remember` on it and rebuild the scheme once the sample lands.
  */
 @Composable
-internal fun rememberWallpaperSeed(): Color? {
+internal fun rememberWallpaperSeed(appTheme: AppTheme): Color? {
+    // Only Monet reads a wallpaper seed, and Android 12+ has a real system palette, so neither needs
+    // the sampler. Returning before the accessor is resolved keeps the graph from creating it - and
+    // its receiver - for a wallpaper nothing will ever sample.
+    if (appTheme != AppTheme.MONET || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return null
     val sampler = globalAppGraph.wallpaperSeedSampler
-    LaunchedEffect(Unit) { sampler.ensureSampled() }
+    LaunchedEffect(sampler) { sampler.ensureSampled() }
     return sampler.seed.value
 }
