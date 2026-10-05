@@ -22,7 +22,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -32,6 +32,7 @@ jobs:
     name: Build app
     runs-on: 'ubuntu-24.04'
     environment: Primary
+    timeout-minutes: 60
 
     steps:
       - name: Clone repo
@@ -173,6 +174,7 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx3g
 
       - name: Build app (nomtl)
         run: ./gradlew assembleNomtlPreview -Pinclude-telemetry -Penable-updater --build-cache --parallel
@@ -180,6 +182,7 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx3g
 
       - name: Run unit tests
         id: unit_tests

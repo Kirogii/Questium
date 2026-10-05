@@ -23,7 +23,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -31,6 +31,7 @@ permissions:
 jobs:
   prepare-build:
     runs-on: 'ubuntu-24.04'
+    timeout-minutes: 10
     outputs:
       VERSION_TAG: ${{ steps.get_tag.outputs.VERSION_TAG }}
       CURRENT_SHA: ${{ steps.current_commit.outputs.CURRENT_SHA }}
@@ -146,6 +147,7 @@ jobs:
     needs: prepare-build
     environment: Primary
     if: github.ref == 'refs/heads/master'
+    timeout-minutes: 60
     steps:
       - name: Clone Repository (${{ needs.prepare-build.outputs.VERSION_TAG }} - ${{ needs.prepare-build.outputs.TAG_NAME }})
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -286,6 +288,7 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx3g
 
       - name: Build app (nomtl)
         run: ./gradlew assembleNomtlPreview -Pinclude-telemetry -Penable-updater --build-cache --parallel
@@ -293,6 +296,7 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx3g
 
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --build-cache --parallel

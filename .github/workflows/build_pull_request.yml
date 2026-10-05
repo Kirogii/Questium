@@ -26,7 +26,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -36,12 +36,13 @@ jobs:
     name: Build app
     runs-on: 'ubuntu-24.04'
     environment: Primary
+    timeout-minutes: 45
 
     steps:
       - name: Clone repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           # external/llamatik nests llama.cpp as a submodule of its own, so the checkout must be recursive.
           submodules: recursive
 
@@ -189,6 +190,7 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx3g
 
       - name: Build app
         if: github.repository != github.event.pull_request.head.repo.full_name
@@ -197,6 +199,7 @@ jobs:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx3g
 
       - name: Run unit tests
         id: unit_tests
