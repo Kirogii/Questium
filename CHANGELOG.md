@@ -37,6 +37,23 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.5] - 2026-10-05
+### New
+- **Removed covers can now be kept for a while.** Taking a manga out of the library used to delete
+### Improve
+- **Filling a series in from MangaBaka now brings the artist across.** Only the title was carried
+- **Dynamic color now works below Android 12.** The Monet theme samples your wallpaper's own colours
+- **Source pages now show placeholders shaped like the results you are waiting for.** Opening a
+### Fix
+- **Fixed losing your place in a chapter after updating the app.** Installing the update shut the app
+- **Fixed very tall pages rendering on top of themselves.** An image too tall for the decoder is cut
+- **Fixed very tall pages breaking a chapter after you left and came back.** A cut page was
+- **Fixed the reader getting stuck on very tall pages.** Where a page was cut, the reader's page
+- **Fixed the GPU reader jumping to the wrong page after a very tall page was cut.** It could send
+- **Fixed very tall pages failing to reload after the image cache was cleared or trimmed.** Cutting
+- **Fixed chapters with a very tall page resuming on the wrong page.** Splitting a page into pieces
+
+
 ## [v1.23.4] - 2026-10-04
 ### New
 - This release is dedicated to my ex-friend **Juliana**, slinger of slurs and the core reason our world doesn't have gender equality yet. If it wasn't for her pissing me off so much, this release would've taken a lot longer.
