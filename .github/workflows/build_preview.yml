@@ -294,32 +294,6 @@ jobs:
       # Split flavors into sequential steps: with --parallel a single invocation can
       # overlap both flavors' R8 minify tasks (preview initWith release, shrink on),
       # doubling peak heap and OOMing the runner. Sequential steps peak at one R8.
-      # Native builds are split into their own steps so each can be retried
-      # independently and memory usage is bounded per step.
-      - name: Build native (llamatik)
-        run: ./gradlew :llamatik-native:buildCMakeRelWithDebInfo --build-cache --max-workers=4
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx4g
-
-      - name: Build native (imagedecoder)
-        run: ./gradlew :imagedecoder:buildCMakeDebug --build-cache --max-workers=4
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx4g
-
-      - name: Build native (webgpuviewer)
-        run: ./gradlew :webgpuviewer:buildCMakeDebug --build-cache --max-workers=4
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx4g
-
       - name: Build app (mtl)
         run: ./gradlew assembleMtlPreview -Pinclude-telemetry -Penable-updater --build-cache --max-workers=4
         env:

@@ -361,30 +361,6 @@ jobs:
       - name: Check code format
         run: ./gradlew spotlessCheck --build-cache
 
-      - name: Build native (llamatik)
-        run: ./gradlew :llamatik-native:buildCMakeRelWithDebInfo --build-cache --max-workers=4
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx4g
-
-      - name: Build native (imagedecoder)
-        run: ./gradlew :imagedecoder:buildCMakeDebug --build-cache --max-workers=4
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx4g
-
-      - name: Build native (webgpuviewer)
-        run: ./gradlew :webgpuviewer:buildCMakeDebug --build-cache --max-workers=4
-        env:
-          CCACHE_DIR: /home/runner/.ccache
-          CMAKE_C_COMPILER_LAUNCHER: ccache
-          CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx4g
-
       - name: Build app (mtl)
         run: ./gradlew assembleMtlRelease -Pinclude-telemetry -Penable-updater --build-cache --max-workers=4
         env:
