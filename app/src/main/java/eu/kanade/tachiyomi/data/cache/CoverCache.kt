@@ -103,6 +103,30 @@ class CoverCache(private val context: Context) {
     fun hasRetainedCover(manga: Manga): Boolean =
         getCoverFile(manga.thumbnailUrl)?.exists() == true || getCustomCoverFile(manga.id).exists()
 
+    /**
+     * Stamps this manga's cached covers with [timestamp] so their retention window starts now.
+     *
+     * [pruneOrphanedCovers] has only the file to go on, so the file's mtime *is* the clock the
+     * window is measured against. Without this stamp a cover that was written months before the
+     * manga left the library is already "too old" the moment it is retained, and every duration
+     * from one day to thirty behaves exactly like deleting immediately.
+     *
+     * Only files that already exist are touched: a missing cover must not be conjured into an
+     * empty file just to carry a timestamp.
+     *
+     * @return whether any cover was stamped.
+     */
+    fun markRetained(manga: Manga, timestamp: Long = System.currentTimeMillis()): Boolean {
+        var stamped = false
+        getCoverFile(manga.thumbnailUrl)?.let { file ->
+            if (file.exists() && file.setLastModified(timestamp)) stamped = true
+        }
+        getCustomCoverFile(manga.id).let { file ->
+            if (file.exists() && file.setLastModified(timestamp)) stamped = true
+        }
+        return stamped
+    }
+
     /** Cache key a library cover is stored under, for handing to [pruneOrphanedCovers]. */
     fun libraryCoverKey(manga: Manga): String? = manga.thumbnailUrl?.let { DiskUtil.hashKeyForDisk(it) }
 

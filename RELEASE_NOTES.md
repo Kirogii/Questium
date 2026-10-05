@@ -10,7 +10,18 @@ files moved. See .github/scripts/release_notes.py.
 
 ### New
 
+### New
+
+- **Removed covers can now be kept for a while.** Taking a manga out of the library used to delete
+  its cover straight away, so browsing and adding it back meant re-downloading an image that was
+  already on the device. Covers are now kept after removal and cleaned up later, and you choose how
+  long to keep them — immediately, a day, three days, a week, or a month — under
+  More → Advanced → Data. Covers still belonging to your library are never touched.
+
 ### Improve
+
+- **Filling a series in from MangaBaka now brings the artist across.** Only the title was carried
+  over, so a manga added this way lost its author and looked unlike the same series elsewhere.
 
 - **Dynamic color now works below Android 12.** The Monet theme samples your wallpaper's own colours
   and builds the palette from them, instead of relying on the system palette that only exists on
@@ -22,6 +33,9 @@ files moved. See .github/scripts/release_notes.py.
 
 ### Fix
 
+- **Fixed losing your place in a chapter after updating the app.** Installing the update shut the app
+  down without first writing out your recent reading position, so a chapter you had part-way through
+  could come back marked unread. Your progress is now saved before the updater hands off.
 - **Fixed very tall pages rendering on top of themselves.** An image too tall for the decoder is cut
   into segments, and the reader could end up drawing the whole strip and its segments at the same
   time. Either the strip or its replacement could also linger as a blank or stale page when you

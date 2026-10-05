@@ -19,14 +19,17 @@ import java.time.Instant
  *
  * The returned copy bumps `coverLastModified` when a cover was actually there, so a cover visible
  * behind the removal redraws instead of lingering - which is the only reason this returns anything.
+ *
+ * The files are stamped for a second, independent reason: [CoverCache.pruneOrphanedCovers] ages
+ * covers by mtime, so a cover written months before this point would read as overdue the moment it
+ * was retained. See [CoverCache.markRetained].
  */
 fun Manga.retainCovers(coverCache: CoverCache = globalAppGraph.coverCache): Manga {
     if (isLocal()) return this
-    return if (coverCache.hasRetainedCover(this)) {
-        copy(coverLastModified = Instant.now().toEpochMilli())
-    } else {
-        this
-    }
+    if (!coverCache.hasRetainedCover(this)) return this
+    val now = Instant.now().toEpochMilli()
+    coverCache.markRetained(this, now)
+    return copy(coverLastModified = now)
 }
 
 suspend fun Manga.editCover(
