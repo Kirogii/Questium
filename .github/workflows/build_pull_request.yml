@@ -185,21 +185,21 @@ jobs:
 
       - name: Build app
         if: github.repository == github.event.pull_request.head.repo.full_name
-        run: ./gradlew assembleMtlPreview -Pinclude-telemetry -Penable-updater --build-cache --parallel
+        run: ./gradlew assembleMtlPreview -Pinclude-telemetry -Penable-updater --build-cache --max-workers=2
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx3g
+          JAVA_TOOL_OPTIONS: -Xmx2g
 
       - name: Build app
         if: github.repository != github.event.pull_request.head.repo.full_name
-        run: ./gradlew assembleMtlPreview --build-cache --parallel
+        run: ./gradlew assembleMtlPreview --build-cache --max-workers=2
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx3g
+          JAVA_TOOL_OPTIONS: -Xmx2g
 
       - name: Run unit tests
         id: unit_tests

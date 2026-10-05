@@ -254,20 +254,20 @@ jobs:
       # overlap both flavors' R8 minify tasks (release has shrink on), doubling peak
       # heap and OOMing the runner. Sequential steps peak at one R8.
       - name: Build app (mtl)
-        run: ./gradlew assembleMtlRelease -Pinclude-telemetry -Penable-updater --build-cache --parallel
+        run: ./gradlew assembleMtlRelease -Pinclude-telemetry -Penable-updater --build-cache --max-workers=2
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx3g
+          JAVA_TOOL_OPTIONS: -Xmx2g
 
       - name: Build app (nomtl)
-        run: ./gradlew assembleNomtlRelease -Pinclude-telemetry -Penable-updater --build-cache --parallel
+        run: ./gradlew assembleNomtlRelease -Pinclude-telemetry -Penable-updater --build-cache --max-workers=2
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx3g
+          JAVA_TOOL_OPTIONS: -Xmx2g
 
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --build-cache --parallel

@@ -179,12 +179,12 @@ jobs:
         run: ./gradlew spotlessCheck --build-cache
 
       - name: Build app
-        run: ./gradlew assembleMtlBenchmark --build-cache --parallel
+        run: ./gradlew assembleMtlBenchmark --build-cache --max-workers=2
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
-          JAVA_TOOL_OPTIONS: -Xmx3g
+          JAVA_TOOL_OPTIONS: -Xmx2g
 
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --build-cache --parallel
