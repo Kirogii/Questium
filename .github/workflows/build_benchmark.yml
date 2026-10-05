@@ -120,10 +120,14 @@ jobs:
 
       - name: Add swap space (8GB)
         run: |
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          if swapon --show | grep -q /swapfile; then
+            echo "Swap already active"
+          else
+            sudo fallocate -l 8G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
           free -h
 
       - name: Install Android SDK CMake 3.22.1
