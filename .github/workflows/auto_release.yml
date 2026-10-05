@@ -218,6 +218,7 @@ jobs:
     runs-on: 'ubuntu-24.04'
     needs: prepare-build
     environment: Primary
+    timeout-minutes: 120
     steps:
       - name: Clone repo
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -266,6 +267,14 @@ jobs:
           pkg-config --version
           nasm --version
           ccache --version
+
+      - name: Add swap space (8GB)
+        run: |
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
 
       - name: Install Android SDK CMake 3.22.1
         run: |
@@ -348,16 +357,48 @@ jobs:
       - name: Check code format
         run: ./gradlew spotlessCheck --build-cache
 
-
-      - name: Build app
-        run: ./gradlew assembleMtlRelease assembleNomtlRelease -Pinclude-telemetry -Penable-updater --build-cache --parallel
+      - name: Build native (llamatik)
+        run: ./gradlew :llamatik-native:buildCMakeRelWithDebInfo --build-cache --max-workers=4
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx4g
+
+      - name: Build native (imagedecoder)
+        run: ./gradlew :imagedecoder:buildCMakeDebug --build-cache --max-workers=4
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx4g
+
+      - name: Build native (webgpuviewer)
+        run: ./gradlew :webgpuviewer:buildCMakeDebug --build-cache --max-workers=4
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx4g
+
+      - name: Build app (mtl)
+        run: ./gradlew assembleMtlRelease -Pinclude-telemetry -Penable-updater --build-cache --max-workers=4
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx4g
+
+      - name: Build app (nomtl)
+        run: ./gradlew assembleNomtlRelease -Pinclude-telemetry -Penable-updater --build-cache --max-workers=4
+        env:
+          CCACHE_DIR: /home/runner/.ccache
+          CMAKE_C_COMPILER_LAUNCHER: ccache
+          CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx4g
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --build-cache --parallel
+        run: ./gradlew testDebugUnitTest --build-cache --max-workers=4
 
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
