@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import dev.icerock.moko.resources.StringResource
+import eu.kanade.presentation.browse.components.FeedListShimmer
 import eu.kanade.presentation.browse.components.GlobalSearchCardRow
 import eu.kanade.presentation.browse.components.GlobalSearchErrorResultItem
 import eu.kanade.presentation.browse.components.GlobalSearchLoadingResultItem
@@ -39,7 +40,6 @@ import tachiyomi.presentation.core.components.ScrollbarLazyColumn
 import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.plus
 
 sealed class SourceFeedUI {
@@ -179,7 +179,10 @@ fun SourceFeedScreen(
     ) { paddingValues ->
         Crossfade(targetState = isLoading, label = "source_feed") { state ->
             when (state) {
-                true -> LoadingScreen()
+                // KMK --> Layout-shaped placeholder: this screen renders the same feed card rows
+                // as FeedScreen, so it gets the same strip at the same fixed card widths.
+                // KMK <--
+                true -> FeedListShimmer(contentPadding = paddingValues)
                 false -> {
                     SourceFeedList(
                         items = items,

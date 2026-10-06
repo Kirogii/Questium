@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.browse.components.FeedOrderListItem
+import eu.kanade.presentation.browse.components.FeedOrderListShimmer
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarTitle
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedState
@@ -26,7 +27,6 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
-import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.plus
 
 @Composable
@@ -49,7 +49,9 @@ fun SourceFeedOrderScreen(
         },
     ) { paddingValues ->
         when {
-            state.isLoading -> LoadingScreen()
+            // KMK --> Layout-shaped placeholder matching these screens' draggable rows.
+            // KMK <--
+            state.isLoading -> FeedOrderListShimmer(contentPadding = paddingValues)
             state.items
                 .filterIsInstance<SourceFeedUI.SourceSavedSearch>()
                 .isEmpty() -> EmptyScreen(

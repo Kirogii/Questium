@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import eu.kanade.presentation.browse.components.FeedListShimmer
 import eu.kanade.presentation.browse.components.GlobalSearchCardRow
 import eu.kanade.presentation.browse.components.GlobalSearchErrorResultItem
 import eu.kanade.presentation.browse.components.GlobalSearchLoadingResultItem
@@ -48,6 +49,7 @@ import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.delay
+import mihon.app.di.globalAppGraph
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.model.FeedSavedSearch
@@ -60,7 +62,7 @@ import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.EmptyScreen
-import tachiyomi.presentation.core.screens.LoadingScreen
+import tachiyomi.presentation.core.util.collectAsState
 import tachiyomi.presentation.core.util.plus
 import kotlin.time.Duration.Companion.seconds
 import tachiyomi.domain.source.model.Source as DomainSource
@@ -96,7 +98,15 @@ fun FeedScreen(
     getMangaState: @Composable (Manga) -> State<Manga>,
 ) {
     when {
-        state.isLoading -> LoadingScreen()
+        // KMK --> Layout-shaped placeholder instead of a centred spinner: a feed's first load is
+        // a network round-trip per source, and the spinner left the screen empty for all of it. The
+        // strip is built at the same fixed card widths the real rows use, so it does not re-flow
+        // horizontally when the results land.
+        // KMK <--
+        state.isLoading -> FeedListShimmer(
+            contentPadding = contentPadding,
+            panorama = globalAppGraph.uiPreferences.usePanoramaCoverFlow().collectAsState().value,
+        )
         state.isEmpty -> EmptyScreen(
             SYMR.strings.feed_tab_empty,
             modifier = Modifier.padding(contentPadding),
