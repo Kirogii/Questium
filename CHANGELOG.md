@@ -37,6 +37,27 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.7] - 2026-10-06
+### Improve
+- **The reader no longer wakes the processor every quarter-second while you are not waiting for a
+- **Backup sync now waits for a low battery to charge, like the other scheduled jobs do.** Sync was
+- **Cover images no longer fade in when you have turned animations off system-wide.** The fade still
+- **The feed tabs now show a layout-shaped placeholder while loading** instead of a spinner. The
+### Fix
+- **Fixed pages in the long-strip reader loading forever.** A page could end up marked as still being
+- **Fixed already-loaded pages unloading themselves in the long-strip reader.** Scrolling out of a
+- **Fixed the cover preview freezing when it opened.** Building the preview image generated its whole
+- **Fixed a transparent strip down the right and bottom edge of upscaled pages on the NPU path.** The
+- **Fixed upscaled pages occasionally coming back partly grey or not displaying at all.** A cached page
+- **Fixed upscaling silently giving up for the rest of the session on devices where a model cannot
+- **Fixed the app closing on very large pages when upscaling.** Two size checks in the native upscaler
+- **Fixed upscaled pages running out of memory on large or long pages.** Encoding a page back to an
+- **Fixed the library re-saving every cover colour on every pause.** Switching away from the app, opening
+- **Fixed titles disappearing from library covers in rare cases.** A stored colour whose text-colour half
+- **Fixed mangled library covers on rare covers whose header decodes oddly.** Such a cover could store a
+- **Fixed library covers losing their colours when opening a series.** The grid colours were being
+
+
 ## [v1.23.6] - 2026-10-06
 ### Improve
 - **The long-strip reader now loads pages in the order you read them.** Pages behind the current one
