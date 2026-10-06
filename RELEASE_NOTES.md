@@ -12,6 +12,16 @@ files moved. See .github/scripts/release_notes.py.
 
 ### Improve
 
+- **The reader no longer wakes the processor every quarter-second while you are not waiting for a
+  page.** The animation that spins while a page loads used to keep ticking for the whole reading
+  session, even with nothing to animate — four wakeups a second, most of a chapter's worth of reading.
+  It now waits for a page that actually needs it and sleeps the rest of the time.
+- **Backup sync now waits for a low battery to charge, like the other scheduled jobs do.** Sync was
+  the only background job that did not hold off on a low battery, and the only one that would wake up
+  with no connection available just to discover that.
+- **Cover images no longer fade in when you have turned animations off system-wide.** The fade still
+  ran for every image, with a zero-length duration, which cost frames across a library scroll for
+  something you had asked to have turned off.
 - **The feed tabs now show a layout-shaped placeholder while loading** instead of a spinner. The
   Feed tab, the per-source feed, the multi-feed tab and the two feed-ordering screens all used to sit
   on a centred spinner while their first load — a separate network round-trip for every source —
