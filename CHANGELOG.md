@@ -37,6 +37,17 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.6] - 2026-10-06
+### Improve
+- **The long-strip reader now loads pages in the order you read them.** Pages behind the current one
+- **Library loading placeholders line up with the real grid.** The skeletons used wider spacing than
+### Fix
+- **Fixed duplicated and misnumbered pages around chapter boundaries in the long-strip reader.** When
+- **Fixed the seek bar when reading between chapters.** The page list is now watched for all three
+- **Fixed "pure black dark mode" on the Dynamic theme below Android 12.** The black override reached
+- **Fixed cover-based theming below Android 12.** That release has no system palette to read a theme
+
+
 ## [v1.23.5] - 2026-10-05
 ### New
 - **Removed covers can now be kept for a while.** Taking a manga out of the library used to delete
