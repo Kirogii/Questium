@@ -57,6 +57,8 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.app.di.globalAppGraph
@@ -599,12 +601,26 @@ open class WebGpuViewer(
             while (!isDestroyed) {
                 try {
                     val progress = currentPage?.imagePage as? ProgressPage
-                    progress?.invalidate()
-                    // Animate at ~30fps only while a progress page is current; poll
-                    // slowly otherwise so the viewer does not wake every 33ms idle.
-                    delay(if (progress != null) 33.milliseconds else 250.milliseconds)
+                    if (progress == null) {
+                        // Nothing to animate: suspend until a ProgressPage becomes current, rather
+                        // than waking every 250ms for the rest of the session - 4 CPU wakeups a
+                        // second the reader cannot use, for most of a long reading session. The
+                        // flow emission wakes this on its own.
+                        if (config.perfHud) syncPerfHud()
+                        // Suspends without consuming CPU until a page whose image is a ProgressPage
+                        // becomes current. first{} also passes straight through if the current page
+                        // already qualifies, so the spin starts on the same iteration.
+                        currentPageFlow.first { (it as? ViewerReaderPage)?.imagePage is ProgressPage }
+                        continue
+                    }
+                    progress.invalidate()
+                    delay(33.milliseconds)
                     if (config.perfHud) syncPerfHud()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) {
+                    // A failed spin frame must not kill the loop, or the indicator freezes forever.
+                    delay(250.milliseconds)
                 }
             }
         }
@@ -651,8 +667,18 @@ open class WebGpuViewer(
 
     val pages: List<ReaderPage>? get() = (currentPage as? ViewerReaderPage)?.page?.chapter?.pages
 
+    /** Mirrors [currentPage] so a coroutine can suspend on it instead of polling. */
+    internal var currentPageFlow = MutableStateFlow<ViewerPage?>(null)
+
+    /** The page the reader is on. Mirrored into [currentPageFlow] so observers can suspend on it. */
     @Volatile
     var currentPage: ViewerPage? = null
+        set(value) {
+            field = value
+            // Every writer already sets this under the viewer's lock, so mirroring here keeps the
+            // flow and the field consistent without each call site having to do both.
+            currentPageFlow.value = value
+        }
 
     // KMK --> User-tunable preload window; continuous takes max() with live reach.
     open val preloadAhead get() = config.preloadAhead
