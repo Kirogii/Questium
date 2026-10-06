@@ -438,7 +438,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                     .build(),
             )
 
-            crossfade((300 * this@App.animatorDurationScale).toInt())
+            // With system animations off the scale is 0, which turns the crossfade into a
+            // zero-duration transition that still allocates and drives an animation per image load -
+            // across a library scroll that is a lot of wasted frames for something the user asked
+            // to have no animation. Omitting crossfade entirely is also what the platform does.
+            val imageAnimatorScale = animatorDurationScale
+            if (imageAnimatorScale > 0f) {
+                crossfade((300 * imageAnimatorScale).toInt())
+            }
             allowRgb565(isLowRam)
             // KMK -->
             if (EHLogLevel.isExtraLogging()) logger(DebugLogger())
