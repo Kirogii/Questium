@@ -21,6 +21,9 @@ class UpscaleCacheManager(cacheRoot: File) {
         private const val TMP_GRACE_MILLIS = 60L * 60 * 1000
         const val MAX_CACHE_BYTES = 200L * 1024 * 1024
         const val TTL_DAYS = 30L
+        private const val JPEG_SOI_0 = 0xFF
+        private const val JPEG_SOI_1 = 0xD8
+        private const val JPEG_MARKER_3 = 0xFF
 
         fun formatBytes(bytes: Long): String {
             if (bytes <= 0) return "0 MB"
@@ -100,14 +103,46 @@ class UpscaleCacheManager(cacheRoot: File) {
         if (!isValidKey(key)) return null
         val file = synchronized(lock) { resolveCachedFileLocked(key) } ?: return null
         return try {
-            file.readBytes().also {
+            // Through a stream rather than File.readBytes(): the latter sizes its result from the
+            // file length and then reallocates as it reads, so an 18 MB entry costs 18 MB plus a
+            // second 18 MB array - on the reader path, where the caller's own copy of the page is
+            // still live.
+            val bytes = file.inputStream().buffered().use { it.readBytes() }
+            if (!hasCompleteImageHeader(bytes)) {
                 try {
-                    synchronized(lock) { file.setLastModified(System.currentTimeMillis()) }
+                    file.delete()
                 } catch (_: Exception) {}
+                return null
             }
+            try {
+                synchronized(lock) { file.setLastModified(System.currentTimeMillis()) }
+            } catch (_: Exception) {}
+            bytes
         } catch (_: Exception) {
             null
         }
+    }
+
+    /**
+     * One key can hold either PNG or WebP, because [UpscaleEngine.compressForCache] picks the
+     * format by encoded size, so the magic has to accept both. A file whose header is neither is
+     * a write that never finished - process death inside `compress`, or the OS reclaiming the
+     * file while the decoder still had it mapped - and handing those bytes to the reader as a
+     * finished page shows a half-decoded image until the 30-day TTL evicts it. Drop it instead.
+     */
+    private fun hasCompleteImageHeader(bytes: ByteArray): Boolean {
+        if (bytes.size >= 3 &&
+            bytes[0] == JPEG_SOI_0.toByte() &&
+            bytes[1] == JPEG_SOI_1.toByte() &&
+            bytes[2] == JPEG_MARKER_3.toByte()
+        ) {
+            return true
+        }
+        if (bytes.size < 12) return false
+        return bytes[0] == 'R'.code.toByte() && bytes[1] == 'I'.code.toByte() &&
+            bytes[2] == 'F'.code.toByte() && bytes[3] == 'F'.code.toByte() &&
+            bytes[8] == 'W'.code.toByte() && bytes[9] == 'E'.code.toByte() &&
+            bytes[10] == 'B'.code.toByte() && bytes[11] == 'P'.code.toByte()
     }
 
     private fun resolveCachedFileLocked(key: String): File? {

@@ -110,12 +110,16 @@ class UpscaleModelManager(
         const val MAX_MANIFEST_MODELS = 32
         const val MAX_ARTIFACT_BYTES = 512L * 1024L * 1024L
         const val MIN_ARTIFACT_BYTES = 256L
+        const val VERIFY_INTERVAL_MS = 6L * 60 * 60 * 1000
         val json = Json { ignoreUnknownKeys = true }
     }
 
     private val modelsDir: File = File(context.filesDir, "upscale_models").apply { mkdirs() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var downloadJob: Job? = null
+
+    @Volatile
+    private var lastVerifyAtMs = 0L
 
     @Volatile
     private var activeCall: Call? = null
@@ -131,7 +135,7 @@ class UpscaleModelManager(
     init {
         models = loadManifest()
         refresh()
-        verifyInstalled()
+        verifyInstalledThrottled()
     }
 
     fun catalog(): List<UpscaleModelSpec> = models
@@ -219,7 +223,7 @@ class UpscaleModelManager(
             val toFetch = selected.flatMap { spec -> artifactsFor(spec, format) }
                 .filterNot { hasValidSize(it) }
             if (toFetch.isEmpty()) {
-                verifyInstalled()
+                verifyInstalledThrottled()
                 return@launch
             }
 
@@ -349,6 +353,14 @@ class UpscaleModelManager(
         it.isFile && it.length() == artifact.size
     }
 
+    /**
+     * Size-checks every artifact and hashes the installed ones, deleting any that fail.
+     *
+     * Size is authoritative for readiness ([hasValidSize]) because a truncated download fails it,
+     * so the hash pass only has to catch a *size-correct* but corrupt file - silent bit rot, or a
+     * replacement that was never verified. That is rare enough that re-hashing up to 512 MB on
+     * every app start is not worth it, which is what [verifyInstalledThrottled] exists to avoid.
+     */
     private fun verifyInstalled() {
         scope.launch {
             val corrupt = mutableListOf<String>()
@@ -364,6 +376,19 @@ class UpscaleModelManager(
             }
             refresh()
         }
+    }
+
+    /**
+     * Re-verifies hashes at most once per [VERIFY_INTERVAL_MS] per process, but always after a
+     * completed download so a corrupt transfer is caught before it is used. The init-time pass is
+     * the expensive one - up to 512 MB of SHA-256 across all installed artifacts - and it is what
+     * would otherwise run on every cold start.
+     */
+    private fun verifyInstalledThrottled() {
+        val now = System.currentTimeMillis()
+        if (now - lastVerifyAtMs < VERIFY_INTERVAL_MS) return
+        lastVerifyAtMs = now
+        verifyInstalled()
     }
 
     private fun verifyHash(artifact: UpscaleArtifact): Boolean = runCatching {
