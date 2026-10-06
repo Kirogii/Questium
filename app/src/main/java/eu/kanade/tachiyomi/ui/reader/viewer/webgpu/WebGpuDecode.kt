@@ -151,11 +151,48 @@ internal fun WebGpuViewer.queueForDecode(page: ViewerReaderPage, prioritize: Boo
                 }
             }
 
-            PageState.LOADING, PageState.DECODING -> {
+            PageState.LOADING -> {
+                // KMK --> A LOADING page whose bytes are already on disk only needs decoding, so
+                // it can join the decode queue directly. Treating LOADING as "already being
+                // processed" and returning is what wedged pages forever: [startPageLoad]'s cleanup
+                // only resets LOADING -> IDLE while the page is still in the cache, so a shell
+                // evicted mid-load (or whose load coroutine was cancelled) kept the state, and
+                // re-entering it - getPage hands the same shell back - re-entered this branch,
+                // which did nothing. Nothing else in the viewer writes LOADING, so the page spun
+                // its ProgressPage indefinitely.
+                // KMK <--
+                if (page.page.status == Page.State.Ready) {
+                    page.state = PageState.QUEUED
+                    decodeQueue.addLast(page)
+                    lock.notify()
+                }
+            }
+
+            PageState.DECODING -> {
                 // Already being processed
             }
         }
     }
+}
+
+/**
+ * Releases a page the viewer believes is in flight but is not, so it can be worked on again.
+ *
+ * The recovery counterpart to [queueForDecode], which is deliberately conservative: it treats
+ * `LOADING`/`DECODING` as "someone is on it" and does nothing. That is right while the owning
+ * coroutine is alive and wrong the moment it is not, and because nothing else in the viewer can tell
+ * the difference, the page kept its state with no work behind it and spun forever. This is the only
+ * place that breaks the tie, and it does so only when the page is demonstrably not queued and not
+ * being decoded.
+ *
+ * Callers must hold [lock] - reentrant, so [queueForDecode] acquiring it again is fine.
+ */
+internal fun WebGpuViewer.requeueStuckPage(page: ViewerReaderPage) {
+    synchronized(lock) {
+        if (page.isDecoded || page.imagePage.destroyed) return
+        page.state = PageState.IDLE
+    }
+    queueForDecode(page, prioritize = currentPage?.let { pageKey(it) == pageKey(page) } ?: false)
 }
 
 /**
@@ -190,27 +227,40 @@ internal fun WebGpuViewer.evictFarthestPage(reference: ViewerPage? = null) {
     val anchor = reference ?: currentPage ?: pageCache.values.lastOrNull() ?: return
     val liveCurrent = currentPage
 
-    // A shell that never decoded still shows its placeholder, so dropping it is
-    // invisible and rebuilding it is cheap; dropping decoded content reverts a
-    // possibly half-visible page to a placeholder (flicker + re-decode). At equal
-    // distance the placeholder sorts as the farther victim.
-    fun isCheapPlaceholder(page: ViewerPage): Boolean =
-        page is ViewerReaderPage && !page.isDecoded
+    // KMK --> Decoded-but-far reads like "the pages I already loaded unloaded themselves".
+    // It is not: the continuous viewer keeps a window far larger than the screen, so scrolling out
+    // and back re-enters a page that was evicted while its neighbour was still a placeholder. Both
+    // halves of that cost the reader - the re-decode, and the placeholder it lands on.
+    //
+    // evictionCost generalises the old isCheapPlaceholder tiebreak into three tiers: a shell that
+    // never decoded is free to drop, a queued or in-flight decode costs the work not yet done, and
+    // decoded content costs a finished decode plus the placeholder the reader lands on. Ties on
+    // distance then drop the cheapest tier first.
+    //
+    // A page drawn on the last frame is already excluded below (isOnScreen), which matters here:
+    // the distance math is anchored on currentPage, which the continuous viewer tracks through the
+    // submodule's relative page deltas, so a lockstep disagreement mis-centres the window and
+    // distance alone would then destroy visible pages.
+    fun evictionCost(page: ViewerPage): Int = when {
+        page is ViewerReaderPage && !page.isDecoded -> 0
+        page.state == PageState.QUEUED || page.state == PageState.DECODING -> 1
+        else -> 2
+    }
 
-    // Higher rank sorts as the farther victim; ties prefer the cheap placeholder,
-    // then earliest insertion (strict > keeps the first encounter).
-    fun beats(rank: Int, cheap: Boolean, bestRank: Int, bestCheap: Boolean, hasBest: Boolean): Boolean {
+    // Higher rank sorts as the farther victim; ties prefer the cheaper page, then earliest
+    // insertion (strict > keeps the first encounter).
+    fun beats(rank: Int, cost: Int, bestRank: Int, bestCost: Int, hasBest: Boolean): Boolean {
         if (!hasBest) return true
         if (rank != bestRank) return rank > bestRank
-        return cheap && !bestCheap
+        return cost < bestCost
     }
 
     var bestIdle: ViewerPage? = null
     var bestIdleRank = Int.MIN_VALUE
-    var bestIdleCheap = false
+    var bestIdleCost = Int.MAX_VALUE
     var bestAny: ViewerPage? = null
     var bestAnyRank = Int.MIN_VALUE
-    var bestAnyCheap = false
+    var bestAnyCost = Int.MAX_VALUE
     var oldestIdle: ViewerPage? = null
     var oldestAny: ViewerPage? = null
     // Oldest non-anchor candidates the renderer did NOT draw last frame; preferred
@@ -247,15 +297,15 @@ internal fun WebGpuViewer.evictFarthestPage(reference: ViewerPage? = null) {
             // never completed (its queue entry is removed with it and the worker
             // skips out-of-cache pages) and fast scrolling arrived at placeholders.
             val rank = distance?.let { kotlin.math.abs(it) } ?: Int.MAX_VALUE
-            val cheap = isCheapPlaceholder(page)
-            if (isIdle && beats(rank, cheap, bestIdleRank, bestIdleCheap, bestIdle != null)) {
+            val cost = evictionCost(page)
+            if (isIdle && beats(rank, cost, bestIdleRank, bestIdleCost, bestIdle != null)) {
                 bestIdleRank = rank
-                bestIdleCheap = cheap
+                bestIdleCost = cost
                 bestIdle = page
             }
-            if (beats(rank, cheap, bestAnyRank, bestAnyCheap, bestAny != null)) {
+            if (beats(rank, cost, bestAnyRank, bestAnyCost, bestAny != null)) {
                 bestAnyRank = rank
-                bestAnyCheap = cheap
+                bestAnyCost = cost
                 bestAny = page
             }
         }
@@ -269,10 +319,10 @@ internal fun WebGpuViewer.evictFarthestPage(reference: ViewerPage? = null) {
     if (victim == null) {
         var edgeIdle: ViewerPage? = null
         var edgeIdleRank = Int.MIN_VALUE
-        var edgeIdleCheap = false
+        var edgeIdleCost = Int.MAX_VALUE
         var edgeAny: ViewerPage? = null
         var edgeAnyRank = Int.MIN_VALUE
-        var edgeAnyCheap = false
+        var edgeAnyCost = Int.MAX_VALUE
         for (page in pageCache.values) {
             if (page === anchor) continue
             if (liveCurrent != null && page === liveCurrent) continue
@@ -280,17 +330,17 @@ internal fun WebGpuViewer.evictFarthestPage(reference: ViewerPage? = null) {
             if (page.imagePage.isOnScreen) continue
             val distance = pageDistance(anchor, page) ?: continue
             val rank = kotlin.math.abs(distance)
-            val cheap = isCheapPlaceholder(page)
+            val cost = evictionCost(page)
             if (page.state == PageState.IDLE &&
-                beats(rank, cheap, edgeIdleRank, edgeIdleCheap, edgeIdle != null)
+                beats(rank, cost, edgeIdleRank, edgeIdleCost, edgeIdle != null)
             ) {
                 edgeIdleRank = rank
-                edgeIdleCheap = cheap
+                edgeIdleCost = cost
                 edgeIdle = page
             }
-            if (beats(rank, cheap, edgeAnyRank, edgeAnyCheap, edgeAny != null)) {
+            if (beats(rank, cost, edgeAnyRank, edgeAnyCost, edgeAny != null)) {
                 edgeAnyRank = rank
-                edgeAnyCheap = cheap
+                edgeAnyCost = cost
                 edgeAny = page
             }
         }
@@ -302,6 +352,9 @@ internal fun WebGpuViewer.evictFarthestPage(reference: ViewerPage? = null) {
     pageCache.remove(pageKey(toRemove))
     decodeQueue.remove(toRemove)
     toRemove.state = PageState.IDLE
+    // Removing a page from the queue is what can strand an unrelated in-flight page, so the sweep
+    // runs here rather than on a timer.
+    stuckSignal.trySend(Unit)
     // KMK -->
     (toRemove as? ViewerReaderPage)?.let {
         // An evicted anchor is terminal for its height-match: drop any coalesced retry
@@ -556,9 +609,18 @@ internal fun WebGpuViewer.startPageLoad(page: ViewerReaderPage) {
                 downloadProgressJob?.cancel()
             } catch (_: Exception) {
             }
+            // KMK --> Always clear LOADING, even for a page that left the cache. The old guard
+            // returned early on !pageInCache, which is exactly the eviction case that stranded the
+            // state: evictFarthestPage resets the shell it removes, but a shell evicted while this
+            // coroutine was mid-flight kept LOADING, and getPage hands that same shell back on
+            // re-entry. Resetting unconditionally costs nothing for an evicted page (nothing reads
+            // it) and is the whole difference between recoverable and permanently wedged.
+            // KMK <--
             synchronized(lock) {
-                if (isDestroyed || !pageInCache(page) || page.state != PageState.LOADING) return@synchronized
-                page.state = PageState.IDLE
+                if (page.state == PageState.LOADING) {
+                    page.state = PageState.IDLE
+                }
+                if (isDestroyed || !pageInCache(page)) return@synchronized
                 when (val s = page.page.status) {
                     Page.State.Ready -> {
                         if (!page.isDecoded) {

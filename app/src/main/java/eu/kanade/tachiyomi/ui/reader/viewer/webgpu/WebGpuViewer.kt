@@ -39,6 +39,7 @@ import ca.mpreg.webgpuviewer.transition.TransitionStackRight
 import ca.mpreg.webgpuviewer.transition.TransitionStackUp
 import ca.mpreg.webgpuviewer.viewer.ImagePage
 import com.google.android.material.color.MaterialColors
+import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -54,6 +55,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import logcat.LogPriority
@@ -193,6 +195,7 @@ open class WebGpuViewer(
         synchronized(lock) {
             if (isDestroyed) return
             decodeQueue.clear()
+            stuckSignal.trySend(Unit)
             val snapshot = pageCache.values.toList()
             snapshot.forEach {
                 it.state = PageState.IDLE
@@ -266,6 +269,13 @@ open class WebGpuViewer(
 
     // Decode queue - pages waiting to be decoded, processed LIFO (last = highest priority)
     internal val decodeQueue = ArrayDeque<ViewerReaderPage>()
+
+    /**
+     * Requests a stuck-page sweep. Conflated, so signalling during a burst of evictions costs one
+     * scan. Emitted from the sites that can strand a page in an in-flight state without work behind
+     * it; see the collector in `init`.
+     */
+    internal val stuckSignal = Channel<Unit>(Channel.CONFLATED)
 
     // KMK -->
     private val chapterPreloadGuard = ChapterPreloadGuard()
@@ -369,6 +379,7 @@ open class WebGpuViewer(
             orphaned.forEach { shell ->
                 pageCache.remove(pageKey(shell))
                 decodeQueue.remove(shell)
+                stuckSignal.trySend(Unit)
                 runCatching {
                     shell.spreadPage?.cleanup()
                     shell.spreadBytes = null
@@ -507,6 +518,24 @@ open class WebGpuViewer(
                                 page.state = PageState.IDLE
                             }
                         }
+                    } finally {
+                        // KMK --> DECODING must never outlive the attempt. The catch arms above all
+                        // end in an ErrorPage or an IDLE reset, but decodeReaderPage also returns
+                        // normally on several paths (destroyed viewer, stream unavailable, already
+                        // decoded, evicted mid-flight) - and a plain return skips every catch, so
+                        // the page kept DECODING with nothing left to move it. queueForDecode treats
+                        // DECODING as in-flight and ignores it, so the shell then spun forever.
+                        // Resetting here makes "the worker is not on this page anymore" the single
+                        // invariant every exit path agrees on.
+                        // KMK <--
+                        synchronized(lock) {
+                            if (pageInCache(page) && page.state == PageState.DECODING) {
+                                page.state = PageState.IDLE
+                            }
+                        }
+                        // The worker leaving a page is what makes any leftover in-flight state
+                        // detectable, so this is the natural point to look.
+                        stuckSignal.trySend(Unit)
                     }
                 }
             } catch (e: CancellationException) {
@@ -515,6 +544,50 @@ open class WebGpuViewer(
                 Thread.currentThread().interrupt()
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e) { "Decode worker died" }
+            }
+        }
+
+        // KMK --> Liveness net. Every state a page can sit in is owned by one of a small number of
+        // writers, and a missed reset on any path (a cancelled load, an early return, a future
+        // branch) leaves the shell in a state queueForDecode treats as in-flight - so it is never
+        // re-queued and spins forever.
+        //
+        // Driven by signal rather than a timer because the orphan condition - QUEUED but absent from
+        // the queue, or LOADING whose bytes have since arrived - cannot arise on its own: it needs a
+        // structural change to the queue or cache, and only a few sites perform one. A timer would
+        // pay a lock acquisition and a scan of every live shell for the whole session to find a
+        // condition those sites create anyway.
+        //
+        // Conflated so a burst of evictions costs one scan rather than one per eviction.
+        scope.launch {
+            for (signal in stuckSignal) {
+                if (isDestroyed) break
+                try {
+                    val orphans = synchronized(lock) {
+                        pageCache.values.filterIsInstance<ViewerReaderPage>().filter { page ->
+                            when (page.state) {
+                                PageState.QUEUED -> !decodeQueue.contains(page)
+                                // LOADING is only released when the bytes are already there: a page
+                                // genuinely fetching must keep its state, and queueForDecode will
+                                // promote it the moment it reports Ready.
+                                PageState.LOADING -> page.page.status == Page.State.Ready
+                                else -> false
+                            }
+                        }
+                    }
+                    if (orphans.isEmpty()) continue
+                    logcat(LogPriority.WARN) {
+                        "Re-driving ${orphans.size} stuck page(s): " +
+                            orphans.joinToString { "${it.page.chapter.chapter.id}/${it.page.index}=${it.state}" }
+                    }
+                    // Re-checked under the lock inside requeueStuckPage: the scan above is a
+                    // snapshot, and a page that started genuinely loading in between must not be
+                    // reset out from under its own coroutine.
+                    orphans.forEach { requeueStuckPage(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
             }
         }
 
