@@ -1046,33 +1046,33 @@ internal fun WebGpuViewer.preloadPages(page: ViewerPage) {
     val key = pageKey(page)
     val cachedPage = synchronized(lock) { findInCache(key) } ?: return
 
-    // Priority order: current (highest), next1, next2, prev1, prev2 (lowest).
-    // The worker takes from the back of the queue while queueForDecode appends
-    // non-priority pages at the front, so iterate nearest-first: each addFirst
-    // lands in front of the previous one and the worker reaches near pages
-    // before far ones. (Reversed iteration decoded far pages first, so turning
-    // back arrived at placeholders still waiting behind pages further out.)
+    // Decoding follows reading order: current, then ahead nearest-first, then behind.
+    //
+    // queueForDecode inserts non-priority pages at the front and the worker pops from the back, so
+    // within a group the iteration order is the reverse of the pop order - hence nearest-first
+    // iteration, and hence the ahead group being inserted before the behind group. Inserting them
+    // the other way round pops behind-before-ahead.
 
-    // Add prev pages (lowest priority)
-    val prevPages = mutableListOf<ViewerPage>()
-    var p: ViewerPage? = cachedPage
-    for (i in 0 until preloadBehind) {
-        p = p?.prev ?: break
-        prevPages.add(p)
-    }
-    prevPages.forEach { preloadPage(it) }
-
-    // Add next pages (medium priority)
+    // Ahead: inserted first, so it ends up nearest the back and pops first.
     val nextPages = mutableListOf<ViewerPage>()
-    p = cachedPage
+    var p: ViewerPage? = cachedPage
     for (i in 0 until preloadAhead) {
         p = p?.next ?: break
         nextPages.add(p)
     }
     nextPages.forEach { preloadPage(it) }
 
-    // Add current spread last with priority flag (highest priority in LIFO)
-    // Also preload the paired page
+    // Behind: inserted last, so it ends up nearest the front and pops last.
+    val prevPages = mutableListOf<ViewerPage>()
+    p = cachedPage
+    for (i in 0 until preloadBehind) {
+        p = p?.prev ?: break
+        prevPages.add(p)
+    }
+    prevPages.forEach { preloadPage(it) }
+
+    // Current spread is prioritized so it pops ahead of everything, with its partner alongside it
+    // because in dual-page mode the two share the screen.
     cachedPage.next?.let { preloadPage(it, prioritize = true) }
     preloadPage(cachedPage, prioritize = true)
 }

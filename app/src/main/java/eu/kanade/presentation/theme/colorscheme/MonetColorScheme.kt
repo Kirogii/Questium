@@ -22,15 +22,26 @@ import mihon.app.di.globalAppGraph
  * from `getWallpaperColors` while the sample is still running - and then the system accent. When
  * none is available the scheme falls back to the app's own accent rather than to a fixed built-in
  * theme, so selecting "Monet" never silently means "some unrelated static theme".
+ *
+ * [isAmoled] only reaches the compat scheme. On Android 12+ the system palette is already dark and
+ * [BaseColorScheme] layers the pure-black override on top; below that the containers come from
+ * materialkolor, and [BaseColorScheme] skips its container override for Monet so the system values
+ * survive where they exist. Left unset, those containers stayed at their seeded tone, so "pure black
+ * dark mode" blackened the background and surface but left every card, sheet and list item at the
+ * wallpaper's own hue.
  */
-internal class MonetColorScheme(context: Context, sampledSeed: Color? = null) : BaseColorScheme() {
+internal class MonetColorScheme(
+    context: Context,
+    sampledSeed: Color? = null,
+    isAmoled: Boolean = false,
+) : BaseColorScheme() {
 
     private val monet: BaseColorScheme = when {
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> MonetSystemColorScheme(context)
         // A sampled wallpaper colour beats getWallpaperColors, which is null until the system has
         // extracted the wallpaper and washed out on the ones it has. Null while the sample is still
         // running, so the scheme still comes up immediately on the chain below.
-        else -> MonetCompatColorScheme(sampledSeed ?: dynamicSeedOrDefault(context))
+        else -> MonetCompatColorScheme(sampledSeed ?: dynamicSeedOrDefault(context), isAmoled)
     }
 
     override val darkScheme
@@ -46,19 +57,19 @@ private class MonetSystemColorScheme(context: Context) : BaseColorScheme() {
     override val darkScheme = dynamicDarkColorScheme(context)
 }
 
-internal class MonetCompatColorScheme(seed: Color) : BaseColorScheme() {
-    override val lightScheme = generateColorSchemeFromSeed(seed = seed, dark = false)
-    override val darkScheme = generateColorSchemeFromSeed(seed = seed, dark = true)
+internal class MonetCompatColorScheme(seed: Color, isAmoled: Boolean = false) : BaseColorScheme() {
+    override val lightScheme = generateColorSchemeFromSeed(seed = seed, dark = false, isAmoled = false)
+    override val darkScheme = generateColorSchemeFromSeed(seed = seed, dark = true, isAmoled = isAmoled)
 
     companion object {
-        fun generateColorSchemeFromSeed(seed: Color, dark: Boolean): ColorScheme {
+        fun generateColorSchemeFromSeed(seed: Color, dark: Boolean, isAmoled: Boolean): ColorScheme {
             return DynamicScheme(
                 seedColor = seed,
                 isDark = dark,
                 specVersion = ColorSpec.SpecVersion.SPEC_2025,
                 style = PaletteStyle.TonalSpot,
             )
-                .toColorScheme(isAmoled = false)
+                .toColorScheme(isAmoled = isAmoled)
         }
     }
 }

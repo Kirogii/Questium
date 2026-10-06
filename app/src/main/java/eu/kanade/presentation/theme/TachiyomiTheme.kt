@@ -126,7 +126,7 @@ private fun getThemeColorScheme(
 ): ColorScheme {
     val colorScheme = when (appTheme) {
         AppTheme.MONET -> {
-            MonetColorScheme(context, wallpaperSeed)
+            MonetColorScheme(context, wallpaperSeed, isAmoled)
         }
         // KMK -->
         AppTheme.CUSTOM -> {

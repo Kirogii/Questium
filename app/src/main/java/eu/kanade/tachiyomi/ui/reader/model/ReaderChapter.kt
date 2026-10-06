@@ -119,11 +119,17 @@ data class ReaderChapter(val chapter: Chapter) {
      *
      * [Page.number] is derived from the immutable [Page.index], so it cannot report a position for
      * a page inserted after the list was built. Falls back to the index when [page] is unlisted,
-     * which is what every page looked like before this existed.
+     * which is what every page looked like before this existed - except that a segment's own index
+     * is a slot in the segment range rather than a page number, so the parent it was cut from is
+     * what names the page the reader is on.
      */
     fun displayNumber(page: ReaderPage): Int {
         val position = positionOf(page)
-        return if (position >= 0) position + 1 else page.index + 1
+        return if (position >= 0) {
+            position + 1
+        } else {
+            (parentIndexOfSegment(page.index) ?: page.index) + 1
+        }
     }
 
     var pageLoader: PageLoader? = null

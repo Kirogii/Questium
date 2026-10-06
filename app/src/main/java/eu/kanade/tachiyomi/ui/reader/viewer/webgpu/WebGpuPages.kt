@@ -252,8 +252,32 @@ class ViewerReaderPage(
             else -> null
         }
 
+    /**
+     * The neighbour links have to be answered from a page that is still in its chapter's list.
+     *
+     * A page a split removed answers [ReaderChapter.positionOf] with -1, and every "one before the
+     * first / one after the last" test below reads that as a chapter edge - so the walk jumped into
+     * the neighbouring chapter, laying its pages into the strip where the segments belonged. The
+     * chain from the replacement's side is the same chain the parent used to be part of, so
+     * delegating keeps the ordering intact instead of inventing a boundary that is not there.
+     *
+     * Resolved outside the [NeighborLink] memo on purpose: the memo keys on the page count, which a
+     * split does change, but only by the time the replacement is asked for - and a stale hit here
+     * would reinstate exactly the neighbour that caused the duplication.
+     */
+    private fun linkedNeighbour(step: Int): ViewerPage? {
+        if (page.chapter.positionOf(page) < 0) {
+            val replacement = page.chapter.splitReplacementOf(page) ?: return null
+            return viewer.getPage(replacement, viewer.currentPage).let { replacementPage ->
+                if (step > 0) replacementPage.next else replacementPage.prev
+            }
+        }
+        return null
+    }
+
     override val prev: ViewerPage?
         get() {
+            linkedNeighbour(-1)?.let { return it }
             val chapterPages = page.chapter.pages
             val prevCh = prevChapter
             return prevLink.get(
@@ -283,6 +307,7 @@ class ViewerReaderPage(
 
     override val next: ViewerPage?
         get() {
+            linkedNeighbour(1)?.let { return it }
             val chapterPages = page.chapter.pages
             val nextCh = nextChapter
             return nextLink.get(

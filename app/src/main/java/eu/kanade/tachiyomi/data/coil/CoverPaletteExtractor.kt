@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.coil
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.os.Build
 import androidx.palette.graphics.Palette
 import coil3.BitmapImage
 import coil3.Image
@@ -39,6 +40,15 @@ object CoverPaletteExtractor {
      */
     private const val MAX_SAMPLED_EDGE = 512
 
+    /** Edge the cover is reduced to before its pixels are read; 24² samples is plenty. */
+    private const val SAMPLE_GRID = 24
+
+    /** Bits kept per channel when bucketing samples, so near-identical shades share a bucket. */
+    private const val BUCKET_BITS = 4
+
+    /** Samples below this alpha are skipped: a transparent cover has no colour to theme from. */
+    private const val MIN_ALPHA = 0x80
+
     /**
      * The swatches a cover contributes.
      *
@@ -58,7 +68,104 @@ object CoverPaletteExtractor {
      * [BitmapImage] only for this to unwrap it again.
      */
     fun colorsOf(bitmap: Bitmap?): CoverColors? =
-        withPalette(bitmap) { CoverColors(it.getBestColor(), dominantOf(it)) }
+        withPalette(bitmap) { sampled, palette ->
+            CoverColors(vibrantOf(sampled, palette), dominantOf(palette))
+        }
+
+    /**
+     * The seed the cover-seeded theme is built from.
+     *
+     * Android 12 and up read the accent through [getBestColor], which weighs swatch population and
+     * saturation and is what the rest of the per-platform colour code agrees with.
+     *
+     * Below Android 12 there is no system palette to be consistent with, so the accent is taken
+     * straight from the cover's own pixels by [representativeColorOf] rather than from a swatch
+     * score. A single pixel would be too fragile - one sample of a highlight, a caption or a
+     * border decides the colour of the whole page - so the pixels are reduced to a small grid and
+     * the most populated colour bucket is averaged. That is the cheapest thing that is both
+     * deterministic and stable under re-decodes.
+     *
+     * The palette result stays as a fallback for the case where the cover cannot be sampled that
+     * way, so a cover never leaves the page without a seed.
+     */
+    private fun vibrantOf(sampled: Bitmap, palette: Palette): Int? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            bestOf(palette)
+        } else {
+            representativeColorOf(sampled) ?: bestOf(palette)
+        }
+
+    /**
+     * Best available accent, or null only when the palette holds no usable swatch at all.
+     *
+     * [getBestColor] weighs swatch population and saturation, but every branch of it can still come
+     * back empty - a cover made of one flat tone quantises to a handful of swatches, none of which
+     * may qualify. A null here is not cosmetic: it is the seed itself, and the palette is not
+     * rebuilt for a cover already in memory, so there is nothing to retry from. The individual
+     * targets stand in behind it, ending on the dominant swatch because that one is chosen by
+     * population and so is the likeliest to exist at all.
+     */
+    private fun bestOf(palette: Palette): Int? =
+        palette.getBestColor()
+            ?: palette.vibrantSwatch?.rgb
+            ?: palette.lightVibrantSwatch?.rgb
+            ?: palette.darkVibrantSwatch?.rgb
+            ?: palette.mutedSwatch?.rgb
+            ?: palette.dominantSwatch?.rgb
+
+    /**
+     * The cover's dominant colour, as an opaque ARGB int, or null when it holds no opaque pixel.
+     *
+     * The bitmap is reduced to [SAMPLE_GRID] square first, so the cost is a fixed few hundred
+     * samples whatever the cover's resolution. Buckets are 4 bits per channel: coarse enough that
+     * a cover's near-identical shades land in one bucket, fine enough to keep distinct colours
+     * apart. The winner is averaged rather than taken from a single member, which is what stops the
+     * seed flickering as the cover is re-decoded at slightly different sizes.
+     */
+    private fun representativeColorOf(bitmap: Bitmap): Int? {
+        if (bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) return null
+        val grid = runCatching {
+            Bitmap.createScaledBitmap(bitmap, SAMPLE_GRID, SAMPLE_GRID, true)
+        }.getOrNull() ?: return null
+        val ownsGrid = grid !== bitmap
+        try {
+            val pixels = IntArray(SAMPLE_GRID * SAMPLE_GRID)
+            grid.getPixels(pixels, 0, SAMPLE_GRID, 0, 0, SAMPLE_GRID, SAMPLE_GRID)
+            val bucketCount = 1 shl (BUCKET_BITS * 3)
+            val counts = IntArray(bucketCount)
+            val sumRed = IntArray(bucketCount)
+            val sumGreen = IntArray(bucketCount)
+            val sumBlue = IntArray(bucketCount)
+            for (pixel in pixels) {
+                if (pixel ushr 24 < MIN_ALPHA) continue
+                val red = pixel shr 16 and 0xFF
+                val green = pixel shr 8 and 0xFF
+                val blue = pixel and 0xFF
+                val bucket = (red shr (8 - BUCKET_BITS)) shl (BUCKET_BITS * 2) or
+                    (green shr (8 - BUCKET_BITS)) shl BUCKET_BITS or
+                    (blue shr (8 - BUCKET_BITS))
+                counts[bucket]++
+                sumRed[bucket] += red
+                sumGreen[bucket] += green
+                sumBlue[bucket] += blue
+            }
+            var best = -1
+            var bestCount = 0
+            for (bucket in 0 until bucketCount) {
+                if (counts[bucket] > bestCount) {
+                    bestCount = counts[bucket]
+                    best = bucket
+                }
+            }
+            if (best < 0) return null
+            val meanRed = sumRed[best] / bestCount
+            val meanGreen = sumGreen[best] / bestCount
+            val meanBlue = sumBlue[best] / bestCount
+            return (0xFF shl 24) or (meanRed shl 16) or (meanGreen shl 8) or meanBlue
+        } finally {
+            if (ownsGrid) grid.recycle()
+        }
+    }
 
     /**
      * The Coil overload.
@@ -117,12 +224,12 @@ object CoverPaletteExtractor {
         }.getOrNull()
     }
 
-    private inline fun <T> withPalette(bitmap: Bitmap?, select: (Palette) -> T?): T? {
+    private inline fun <T> withPalette(bitmap: Bitmap?, select: (Bitmap, Palette) -> T?): T? {
         if (bitmap == null || bitmap.isRecycled || bitmap.width <= 0 || bitmap.height <= 0) return null
         return runCatching {
             val sampled = downsampleForPalette(bitmap)
             try {
-                select(Palette.from(sampled).generate())
+                select(sampled, Palette.from(sampled).generate())
             } finally {
                 if (sampled !== bitmap) sampled.recycle()
             }

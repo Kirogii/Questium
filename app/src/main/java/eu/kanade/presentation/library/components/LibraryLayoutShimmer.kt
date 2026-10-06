@@ -92,10 +92,14 @@ private fun gridShimmer(
     LazyVerticalGrid(
         columns = GridCells.Fixed(columns.coerceAtLeast(1)),
         modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
+        horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
-        items(itemCount) { item(it) }
+        items(itemCount) { index ->
+            Box(modifier = Modifier.padding(CommonMangaItemDefaults.GridItemPadding)) {
+                item(index)
+            }
+        }
     }
 }
 
@@ -106,7 +110,7 @@ private fun MangaCoverOnlyItemShimmer(modifier: Modifier = Modifier) {
 
 @Composable
 private fun MangaStaggeredGridItemShimmer(tall: Boolean, modifier: Modifier = Modifier) {
-    Column(modifier = modifier.padding(2.dp)) {
+    Column(modifier = modifier) {
         CoverShimmer(ratio = if (tall) 0.68f else 0.9f, corner = 6.dp)
         Spacer(Modifier.height(6.dp))
         LineShimmer(if (tall) 0.8f else 0.55f)

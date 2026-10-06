@@ -69,6 +69,9 @@ import kotlin.time.Duration.Companion.milliseconds
 /** Edge pages of an adjacent chapter to reserve shells for up front (see preloadChapterThenRetry). */
 private const val CHAPTER_EDGE_PRELOAD = 4
 
+/** Sentinel for "this chapter slot has never been reconciled", and for an absent neighbour. */
+private const val UNSEEN_VERSION = -1
+
 open class WebGpuViewer(
     val activity: ReaderActivity,
     val isReversed: Boolean,
@@ -384,20 +387,37 @@ open class WebGpuViewer(
         return dropped
     }
 
-    /** Last [ReaderChapter.pageListVersion] this viewer reconciled against. */
-    private var seenPageListVersion = -1
+    /**
+     * Last [ReaderChapter.pageListVersion] reconciled against, per chapter slot.
+     *
+     * All three slots, not just the current chapter: the strip spans prev/current/next, and the
+     * chapter that gets split mid-session is as likely to be one the reader is only part-way into
+     * as the one they are on. Watching the current chapter alone left those splits unreconciled,
+     * which is the in-between-chapters case.
+     *
+     * A flat list rather than one packed int because each chapter counts independently, so any
+     * packing scheme eventually folds two distinct triples onto the same value and hides a change.
+     */
+    private var seenPageListVersions = intArrayOf(UNSEEN_VERSION, UNSEEN_VERSION, UNSEEN_VERSION)
+
+    /** Page-list versions of the three chapters a strip spans, in slot order. */
+    private fun ViewerChapters.pageListVersions(): IntArray = intArrayOf(
+        currChapter.pageListVersion,
+        prevChapter?.pageListVersion ?: UNSEEN_VERSION,
+        nextChapter?.pageListVersion ?: UNSEEN_VERSION,
+    )
 
     /**
      * Reconciles against a page list the loader replaced underneath us.
      *
-     * Cheap when nothing changed: one volatile int compare. Returns true when the viewer had to
+     * Cheap when nothing changed: three volatile int compares. Returns true when the viewer had to
      * move off a page the split removed, so the caller should stop - it was about to walk outward
      * from a node that no longer exists, and re-anchoring has already queued the right pages.
      */
     internal fun syncPageList(chapters: ViewerChapters): Boolean {
-        val version = chapters.currChapter.pageListVersion
-        if (version == seenPageListVersion) return false
-        seenPageListVersion = version
+        val version = chapters.pageListVersions()
+        if (version.contentEquals(seenPageListVersions)) return false
+        seenPageListVersions = version
         val discarded = evictReplacedPages() ?: return false
         // Re-enter from whatever now stands in the discarded page's place - not from the chapter's
         // resume target, which is where the chapter was opened and can be pages away from where the
@@ -1329,8 +1349,8 @@ open class WebGpuViewer(
         this.viewerChapters = chapters
 
         // Baseline for syncPageList: it exists to catch pages replaced after this point, and
-        // without recording the current version the initial load reads as a change.
-        seenPageListVersion = chapters.currChapter.pageListVersion
+        // without recording the current versions the initial load reads as a change.
+        seenPageListVersions = chapters.pageListVersions()
 
         val chapterId = chapters.currChapter.chapter.id
         val stored = if (chapterId != null && chapterId != -1L) positionStore.load(chapterId) else null
