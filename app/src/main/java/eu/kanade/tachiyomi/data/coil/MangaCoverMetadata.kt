@@ -10,6 +10,7 @@ import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.domain.manga.model.MangaCover
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.pow
 
 /**
  * Object that holds info about a covers size ratio + dominant colors
@@ -21,7 +22,7 @@ object MangaCoverMetadata {
 
     fun load() {
         val ratios = preferences.coverRatios().get()
-        MangaCover.coverRatioMap = ConcurrentHashMap(
+        val loadedRatios = ConcurrentHashMap<Long, Float>(
             ratios.mapNotNull {
                 val splits = it.split("|")
                 val id = splits.firstOrNull()?.toLongOrNull()
@@ -34,19 +35,47 @@ object MangaCoverMetadata {
             }.toMap(),
         )
         val colors = preferences.coverColors().get()
-        MangaCover.dominantCoverColorMap = ConcurrentHashMap(
+        val loadedColors = ConcurrentHashMap<Long, Pair<Int, Int>>(
             colors.mapNotNull {
                 val splits = it.split("|")
                 val id = splits.firstOrNull()?.toLongOrNull()
                 val color = splits.getOrNull(1)?.toIntOrNull()
                 val textColor = splits.getOrNull(2)?.toIntOrNull()
                 if (id != null && color != null) {
-                    id to (color to (textColor ?: 0))
+                    // A stored colour is only half an entry: consumers use the pair as
+                    // container + content, so a missing or fully transparent text colour
+                    // renders the cover's title invisible on top of the container colour.
+                    // Derive the readable partner instead of defaulting it to 0 (transparent).
+                    id to (color to (textColor ?: contrastingTextColor(color)))
                 } else {
                     null
                 }
             }.toMap(),
         )
+        MangaCover.coverRatioMap = loadedRatios
+        MangaCover.dominantCoverColorMap = loadedColors
+        // Seeded from what was just restored so the first savePrefs() after a load is a no-op.
+        // Left null instead, the very first ON_PAUSE would rewrite both prefs byte-for-byte with
+        // the values load() only just read.
+        lastSavedRatios = loadedRatios
+        lastSavedColors = loadedColors
+    }
+
+    /**
+     * WCAG relative luminance, used to pick black or white text for an arbitrary container colour.
+     * `Palette.Swatch.titleTextColor` normally supplies this, so this is only reached for a
+     * truncated, hand-edited or older-format pref entry.
+     */
+    private fun contrastingTextColor(background: Int): Int {
+        val channel = { value: Int ->
+            val srgb = value / 255.0
+            if (srgb <= 0.03928) srgb / 12.92 else ((srgb + 0.055) / 1.055).pow(2.4)
+        }
+        val luminance =
+            0.2126 * channel(background shr 16 and 0xFF) +
+                0.7152 * channel(background shr 8 and 0xFF) +
+                0.0722 * channel(background and 0xFF)
+        return if (luminance > 0.5) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
     }
 
     /**
@@ -150,9 +179,16 @@ object MangaCoverMetadata {
             runCatching { if (!bitmap.isRecycled) bitmap.recycle() }
         }
 
-        if (mangaCover.isMangaFavorite && options.outWidth != -1 && options.outHeight != -1) {
-            val raw = options.outWidth / options.outHeight.toFloat()
-            mangaCover.ratio = raw.coerceIn(MangaCover.MIN_COVER_RATIO, MangaCover.MAX_COVER_RATIO)
+        val width = options.outWidth
+        val height = options.outHeight
+        // Guarded on > 0, not != -1: a 0 height divides to Infinity, which coerceIn silently
+        // clamps to MAX_COVER_RATIO, and a NaN passes coerceIn through unchanged - either way
+        // the stored ratio stops describing the cover.
+        if (mangaCover.isMangaFavorite && width > 0 && height > 0) {
+            val raw = width / height.toFloat()
+            if (raw.isFinite()) {
+                mangaCover.ratio = raw.coerceIn(MangaCover.MIN_COVER_RATIO, MangaCover.MAX_COVER_RATIO)
+            }
         }
     }
 
@@ -161,22 +197,54 @@ object MangaCoverMetadata {
         MangaCover.dominantCoverColorMap.remove(mangaId)
     }
 
+    /**
+     * Persists the ratio and colour maps, but only when something actually changed since the last
+     * write.
+     *
+     * Called from [androidx.lifecycle.Lifecycle.Event.ON_PAUSE], which fires on every dialog,
+     * permission prompt and Home press, not just when the user leaves. Both maps are serialised
+     * into `StringSet` prefs (up to 2000 entries each) and trimmed on the way, so an unconditional
+     * write makes a user who opens and immediately backgrounds the app pay a full serialise for
+     * zero delta. The maps are `ConcurrentHashMap`s whose `contentEquals` is a cheap identity
+     * check on size plus a hash of the entries.
+     */
     fun savePrefs() {
         val ratioCopy = MangaCover.coverRatioMap.toMap()
-        if (ratioCopy.size > 2000) {
-            val trimmed = ratioCopy.entries.sortedBy { it.key }.takeLast(2000).associate { it.key to it.value }
-            MangaCover.coverRatioMap.clear()
-            MangaCover.coverRatioMap.putAll(trimmed)
-        }
         val colorCopy = MangaCover.dominantCoverColorMap.toMap()
-        if (colorCopy.size > 2000) {
-            val trimmed = colorCopy.entries.sortedBy { it.key }.takeLast(2000).associate { it.key to it.value }
-            MangaCover.dominantCoverColorMap.clear()
-            MangaCover.dominantCoverColorMap.putAll(trimmed)
-        }
-        preferences.coverRatios().set(MangaCover.coverRatioMap.map { "${it.key}|${it.value}" }.toSet())
-        preferences.coverColors().set(MangaCover.dominantCoverColorMap.map { "${it.key}|${it.value.first}|${it.value.second}" }.toSet())
+        if (ratioCopy == lastSavedRatios && colorCopy == lastSavedColors) return
+        val ratios = trimmed(ratioCopy)
+        val colors = trimmed(colorCopy)
+        MangaCover.coverRatioMap.clear()
+        MangaCover.coverRatioMap.putAll(ratios)
+        MangaCover.dominantCoverColorMap.clear()
+        MangaCover.dominantCoverColorMap.putAll(colors)
+        preferences.coverRatios().set(ratios.map { "${it.key}|${it.value}" }.toSet())
+        preferences.coverColors().set(colors.map { "${it.key}|${it.value.first}|${it.value.second}" }.toSet())
+        lastSavedRatios = ratios
+        lastSavedColors = colors
     }
+
+    @Volatile
+    private var lastSavedRatios: Map<Long, Float>? = null
+
+    @Volatile
+    private var lastSavedColors: Map<Long, Pair<Int, Int>>? = null
+
+    /**
+     * Caps a map at [MAX_PERSISTED_ENTRIES] by keeping the highest manga ids.
+     *
+     * Ids are assigned at insert, so the highest ones are the most recently added. The cap is
+     * lossy on purpose: [load] can only restore what was written, so an evicted entry has to be
+     * re-extracted from its cover next time the grid draws it.
+     */
+    private fun <K : Comparable<K>, V> trimmed(map: Map<K, V>): Map<K, V> =
+        if (map.size <= MAX_PERSISTED_ENTRIES) {
+            map
+        } else {
+            map.keys.sorted().takeLast(MAX_PERSISTED_ENTRIES).associateWith { key -> map.getValue(key) }
+        }
+
+    private const val MAX_PERSISTED_ENTRIES = 2000
 
     private const val SUB_SAMPLE = 4
 }

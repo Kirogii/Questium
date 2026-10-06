@@ -106,9 +106,16 @@ data class MangaCover(
          * palette is extracted again the next time the cover is drawn.
          */
         private fun trimVibrantCoverColors() {
-            val excess = vibrantCoverColorMap.size - MAX_VIBRANT_COLOR_ENTRIES / 2
+            // Size is sampled once and the overflow is read from the key set rather than re-read:
+            // several Coil fetch threads can pass the setter's size check at once, and re-reading
+            // size here (as a second `size - HALF`) made the target move under them. Over-eviction
+            // is harmless either way - a missing entry only means the palette is extracted again the
+            // next time the cover is drawn - but each pass sorts the whole key set, so bounded,
+            // predictable slices are what keep that off the fetch threads.
+            val keys = vibrantCoverColorMap.keys
+            val excess = keys.size - MAX_VIBRANT_COLOR_ENTRIES / 2
             if (excess <= 0) return
-            vibrantCoverColorMap.keys.sorted().take(excess).forEach { vibrantCoverColorMap.remove(it) }
+            keys.sorted().take(excess).forEach { vibrantCoverColorMap.remove(it) }
         }
 
         /**

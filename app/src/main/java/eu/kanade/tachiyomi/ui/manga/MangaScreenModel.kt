@@ -617,16 +617,24 @@ class MangaScreenModel(
      */
     fun onCoverPaletteAvailable(mangaCover: MangaCover, image: Image) {
         if (!themeCoverBased && !mangaCover.isMangaFavorite) return
+        // Captured before the hop: the holder can be rebound to another manga while this is in
+        // flight, and `mangaCover` is the value the caller passed in, so it stays correct - but
+        // reading it back on the IO thread after the fact would be a second, different snapshot.
         val isFavorite = mangaCover.isMangaFavorite
         screenModelScope.launchIO {
             val colors = CoverPaletteExtractor.colorsOf(image) ?: return@launchIO
-            val vibrantColor = colors.vibrant ?: return@launchIO
-            mangaCover.vibrantCoverColor = vibrantColor
+            // Independent: the dominant swatch is chosen by population and so is the likelier of
+            // the two to exist, while `vibrant` has six fallbacks and can still come back empty for
+            // a flat cover. Returning early on a null vibrant would skip the dominant write too, so
+            // a favorite whose palette has no vibrant swatch would lose its grid colours - the one
+            // thing this path is most likely to be reached for.
             if (isFavorite) {
                 colors.dominant?.let { (rgb, textColor) ->
                     mangaCover.dominantCoverColors = rgb to textColor
                 }
             }
+            val vibrantColor = colors.vibrant ?: return@launchIO
+            mangaCover.vibrantCoverColor = vibrantColor
             val seed = Color(vibrantColor)
             updateSuccessState { state ->
                 if (state.seedColor == seed) state else state.copy(seedColor = seed)
