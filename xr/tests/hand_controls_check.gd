@@ -57,7 +57,7 @@ func check() -> void:
     reader.ui.show_book()
     await process_frame
     assert(reader.ui.options_title.size.y < 100, "Long title remains bounded")
-    assert(reader.ui.footer.get_child_count() == 2, "Book actions remain outside the scrolling settings")
+    assert(reader.ui.footer.get_child_count() == 3, "Close, book actions and settings remain outside the scrolling content")
     reader.workspace.reading = true
     reader.recenter()
     assert(reader.workspace.hud.node.to_local(book.global_position).x > 1, "Recenter puts book beside HUD")

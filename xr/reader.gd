@@ -776,7 +776,7 @@ func _process(_delta: float) -> void:
             tracked[hand].ray.look_at(pointer_origin + direction, Vector3.UP)
         ui_hand = hand
         var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand, _delta)
-        var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick, pressed)
+        var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick, pressed and not tracked[hand].get("fist", false))
         var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick, pressed and not tracked[hand].get("fist", false))
         var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not resizing and not joystick, pressed, _delta)
         var fist: bool = natural_hand and tracked[hand].get("fist", false)
@@ -803,7 +803,6 @@ func _process(_delta: float) -> void:
                 contacts.append(candidate.to_local(tracked[hand].tip))
         candidate.hover_edges(contacts)
     _palm_toolbar(palm_visible, palm_position, _delta)
-    if workspace: workspace.follow_view(_delta)
 
 func _notification(what: int) -> void:
     if what in [NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT] and is_instance_valid(book):
@@ -830,6 +829,8 @@ func _cancel_interactions() -> void:
         tracked[hand].stick_down = false
 
 func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, valid: bool, pointer_basis: Basis = Basis.IDENTITY) -> void:
+    if window_holder == hand and tracked[hand].get("natural_hand", false):
+        pressed = tracked[hand].get("fist", false)
     if holder == hand and moving and tracked[hand].get("natural_hand", false):
         pressed = tracked[hand].get("fist", false)
     if hand_page_turn and not hand_page_turn.owner.is_empty() and hand_page_turn.owner != hand:
@@ -860,14 +861,21 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
             window_holder = ""
         tracked[hand].pressed = pressed
         return
-    if pressed and not previous and valid and ui_owner.is_empty():
+    if workspace and not tracked[hand].get("fist", false) and holder.is_empty() and (ui_owner.is_empty() or ui_owner == hand) and workspace.popup_ray(tip, direction):
+        ui_hand = hand
+        if _panel_input(tip, direction, pressed, previous):
+            if pressed and not previous: ui_owner = hand
+            elif not pressed and ui_owner == hand: ui_owner = ""
+            tracked[hand].pressed = pressed
+            return
+    if pressed and (not previous or (tracked[hand].get("fist", false) and not tracked[hand].get("was_fist", false))) and valid and ui_owner.is_empty():
         for candidate in books:
             if candidate.is_visible_in_tree() and candidate.close_at(candidate.to_local(tip)):
                 _activate_book(candidate)
                 close_book()
                 tracked[hand].pressed = true
                 return
-        var window: Node3D = workspace.handle_at(tip) if workspace else null
+        var window: Node3D = workspace.handle_at(tip) if workspace and tracked[hand].get("fist", false) else null
         var controller_grip := bool(tracked[hand].get("buttons", {}).get("grip_click", false))
         if window == null and workspace and controller_grip:
             var window_hit: Dictionary = workspace.handle_ray(tip, direction)
@@ -876,7 +884,7 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
                 window = window_hit.node
                 tracked[hand].remote_distance = window_hit.distance
                 tip = window_hit.point
-        if window != null and holder.is_empty():
+        if window != null and holder.is_empty() and window_holder.is_empty():
             window_holder = hand
             held_window = window
             held_window_offset = window.global_position - tip
@@ -1059,9 +1067,9 @@ func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: b
         var point := local + ray * distance
         var captured: bool = not ui_capture.is_empty() and ui_capture.panel == candidate
         if captured or (distance >= 0 and distance <= 5 and absf(point.x) <= candidate.size.x / 2 and absf(point.y) <= candidate.size.y / 2):
-            if captured or book_hit.is_empty() or distance < float(book_hit.distance):
-                candidates.append({"panel": candidate, "distance": distance})
-    candidates.sort_custom(func(a: Dictionary, b: Dictionary): return a.distance < b.distance)
+            if captured or candidate.get("popup", false) or book_hit.is_empty() or distance < float(book_hit.distance):
+                candidates.append({"panel": candidate, "distance": distance, "priority": int(node.get_meta("popup_priority", 0))})
+    candidates.sort_custom(func(a: Dictionary, b: Dictionary): return a.priority > b.priority if a.priority != b.priority else a.distance < b.distance)
     for entry in candidates:
         var panel: Dictionary = entry.panel
         if not ui_capture.is_empty() and ui_capture.panel != panel:

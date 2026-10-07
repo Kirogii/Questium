@@ -144,6 +144,7 @@ func clear() -> void:
     for child in footer.get_children():
         footer.remove_child(child)
         child.queue_free()
+    icon_button(footer, "close", func(): options.visible = false, Vector2(80, 70))
     for child in content.get_children():
         content.remove_child(child)
         child.queue_free()

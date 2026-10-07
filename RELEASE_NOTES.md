@@ -18,7 +18,7 @@ files moved. See .github/scripts/release_notes.py.
 ### Improve
 - Include all upstream commits through Houri v1.23.9, including extension management fixes and long-page memory improvements.
 - Build Quest APKs in GitHub Actions with automatic Godot setup, signed artifacts and a dedicated alpha prerelease.
-- Make the VR library half-sized and closer, allow resizing its top corners, and gently bring idle panels back into view. A thumb-up fist adjusts workspace distance.
+- Make the VR library half-sized and closer, allow resizing its top corners, and retain their placement until manually recentered. A thumb-up fist adjusts workspace distance.
 - Turn pages with an open hand from the white side bars, including quick inward swipes; improve extended-finger scrolling and stabilize hand pointers during pinches.
 - Show fallback controller models and add source language selection with English enabled by default.
 - Launch directly into darkened passthrough, with smaller book previews and reader defaults, accessible preview actions, and scrolling book options with bounded titles.
@@ -62,3 +62,6 @@ files moved. See .github/scripts/release_notes.py.
 - Add a preview with Save to Library, Read/Resume, and a searchable chapter and description side panel.
 - Disable stick locomotion and snap turning; recenter the interface in the current facing direction.
 - Keep cover artwork while reading and support long strips. Novel support is deferred.
+
+- Remove automatic HUD/book recentering while looking away; preserve manual recenter controls.
+- Drag the main HUD and popups by clenching inside their panels. Keep popups above books and other UI, with accessible Close controls.

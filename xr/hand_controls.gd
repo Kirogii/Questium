@@ -52,12 +52,12 @@ func edge_hand(tracker: XRHandTracker) -> bool:
     return open >= 3 and absf(normal.normalized().dot(reader.book.global_basis.x.normalized())) > 0.5
 
 func joystick(hand: String, tracker: XRHandTracker, valid: bool, delta: float) -> bool:
-    if not valid or not thumb_up(tracker) or not reader.holder.is_empty() or not reader.ui_owner.is_empty():
+    if not valid or not thumb_up(tracker) or not reader.holder.is_empty() or not reader.ui_owner.is_empty() or not reader.window_holder.is_empty():
         joy_samples.erase(hand)
         if joy_owner == hand: joy_owner = ""
         return false
     var palm: Vector3 = reader.origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
-    if reader._reader_at(palm) != null:
+    if reader._reader_at(palm) != null or reader.workspace.handle_at(palm) != null:
         joy_samples.erase(hand)
         if joy_owner == hand: joy_owner = ""
         return false

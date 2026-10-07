@@ -33,16 +33,11 @@ func check() -> void:
     reader.hand_controls.cancel()
     gui.set_hud_scale(0.5)
     reader.camera.rotation.y = 0.9
-    var old_angle: float = (-reader.camera.global_basis.z).angle_to((gui.hud.node.global_position - reader.camera.global_position).normalized())
-    for i in range(65): gui.follow_view(0.02)
-    var new_angle: float = (-reader.camera.global_basis.z).angle_to((gui.hud.node.global_position - reader.camera.global_position).normalized())
-    assert(new_angle < old_angle, "Out-of-view HUD follows after an idle dwell")
-    reader.ui_owner = "left"
-    var captured: Transform3D = gui.hud.node.global_transform
-    reader.camera.rotation.y = -1
-    for i in range(65): gui.follow_view(0.02)
-    assert(gui.hud.node.global_transform.is_equal_approx(captured), "UI follow pauses during hand interaction")
-    reader.ui_owner = ""
+    var fixed_hud: Transform3D = gui.hud.node.global_transform
+    var fixed_book: Transform3D = reader.book.global_transform
+    for i in range(100): reader._process(0.02)
+    assert(gui.hud.node.global_transform.is_equal_approx(fixed_hud), "Turning away never automatically recenters the HUD")
+    assert(reader.book.global_transform.is_equal_approx(fixed_book), "Turning away never automatically recenters the book")
     reader.camera.rotation = Vector3.ZERO
     reader.recenter()
     var tracker := XRHandTracker.new()
@@ -80,5 +75,5 @@ func check() -> void:
     assert(direction.is_equal_approx(reader.hand_controls.forward(tracker)), "Curling index finger cannot lift the hand-forward ray")
     reader.queue_free()
     await process_frame
-    print("PASS: closer half-size HUD, language filters, panel resizing, idle view follow, thumb-up distance gesture, controller visuals and stable hand-forward aim")
+    print("PASS: closer half-size HUD, language filters, panel resizing, manual-only recentering, thumb-up distance gesture, controller visuals and stable hand-forward aim")
     quit()

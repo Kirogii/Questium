@@ -60,7 +60,40 @@ var language_panel: Dictionary
 var language_list: VBoxContainer
 var hud_scale := 0.5
 var gui_distance := 0.62
-var follow_dwell := 0.0
+var popup_order := 10
+
+func raise_popup(node: Node3D) -> void:
+    popup_order = mini(popup_order + 2, 120)
+    node.set_meta("popup_priority", popup_order)
+    for target in reader.panels:
+        if target.node != node: continue
+        target["popup"] = true
+        for child in node.get_children():
+            if not child is MeshInstance3D: continue
+            var material: Material = child.material_override
+            material.render_priority = popup_order + (1 if material is StandardMaterial3D else 0)
+            if material is StandardMaterial3D:
+                material.no_depth_test = true
+            elif material is ShaderMaterial:
+                var shader := Shader.new()
+                shader.code = preload("res://glass.gdshader").code.replace("depth_draw_never;", "depth_draw_never, depth_test_disabled;")
+                material.shader = shader
+    node.visible = true
+
+func toggle_info() -> void:
+    if info.node.visible: info.node.visible = false
+    else: raise_popup(info.node)
+
+func popup_ray(start: Vector3, direction: Vector3) -> bool:
+    for target in reader.panels:
+        if not target.get("popup", false) or not target.node.is_visible_in_tree(): continue
+        var local: Vector3 = target.node.to_local(start)
+        var ray: Vector3 = target.node.global_basis.inverse() * direction
+        if absf(ray.z) < 0.0001: continue
+        var distance := -local.z / ray.z
+        var point := local + ray * distance
+        if distance >= 0 and distance <= 5 and absf(point.x) <= target.size.x * 0.5 and absf(point.y) <= target.size.y * 0.5: return true
+    return false
 
 func roots() -> Array:
     var nodes: Array = [hud.node, badge.node, preview.node, info.node, picker.node, language_panel.node, reader.ui.options]
@@ -79,31 +112,6 @@ func set_hud_scale(value: float) -> void:
     hud.node.scale = Vector3.ONE * hud_scale
     preferences.set_value("workspace", "hud_scale", hud_scale)
     preferences.save("user://library.cfg")
-
-func follow_view(delta: float) -> void:
-    if not reader.holder.is_empty() or not reader.ui_owner.is_empty() or not reader.hand_controls.corners.is_empty() or not reader.hand_controls.hud_corners.is_empty() or not reader.hand_controls.joy_owner.is_empty() or not reader.hand_page_turn.owner.is_empty() or not reader.hand_controls.scroll_owner.is_empty():
-        follow_dwell = 0
-        return
-    var focal: Vector3 = hud.node.global_position if hud.node.visible else reader.book.global_position
-    if hud.node.visible and reader.book.visible:
-        var forward: Vector3 = -reader.camera.global_basis.z.normalized()
-        if forward.dot((reader.book.global_position - head_position()).normalized()) > forward.dot((focal - head_position()).normalized()):
-            focal = reader.book.global_position
-    if not hud.node.visible and not reader.book.visible: return
-    var relative: Vector3 = reader.camera.global_basis.inverse() * (focal - head_position())
-    var yaw: float = atan2(relative.x, -relative.z)
-    var pitch: float = atan2(relative.y, -relative.z)
-    var outside: bool = absf(yaw) > deg_to_rad(26) or absf(pitch) > deg_to_rad(20) or relative.z > -0.25
-    follow_dwell = follow_dwell + delta if outside else 0.0
-    if follow_dwell < 0.65: return
-    var destination: Vector3 = head_position() - reader.camera.global_basis.z.normalized() * gui_distance
-    var shift: Vector3 = (destination - focal) * clampf(delta * 3, 0, 1)
-    var facing := facing_basis()
-    var current: Basis = hud.node.global_basis.orthonormalized() if hud.node.visible else reader.book.global_basis.orthonormalized()
-    var turn := current.slerp(facing, clampf(delta * 3, 0, 1)) * current.inverse()
-    for node in roots():
-        node.global_position = focal + turn * (node.global_position - focal) + shift
-        node.global_basis = turn * node.global_basis
 
 func _init(host: Node3D) -> void:
     reader = host
@@ -134,7 +142,10 @@ func build() -> void:
     var sidebar := VBoxContainer.new()
     sidebar.add_theme_constant_override("separation", 12)
     inset.add_child(sidebar)
-    label(sidebar, "VR Komikku", 32)
+    var hud_header := HBoxContainer.new()
+    sidebar.add_child(hud_header)
+    label(hud_header, "VR Komikku", 32).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reader.ui.icon_button(hud_header, "close", func(): hud.node.visible = false, Vector2(48, 48))
     var gap := Control.new()
     gap.custom_minimum_size.y = 18
     sidebar.add_child(gap)
@@ -220,9 +231,13 @@ func build() -> void:
     save_button = button(actions, "Save to Library", save_to_library)
     read_button = button(actions, "Read", read_selected)
     read_button.disabled = true
-    button(actions, "Info", func(): info.node.visible = not info.node.visible)
+    button(actions, "Info", toggle_info)
+    button(actions, "Close", reader.close_book)
     info = panel(Vector2(0.36, 0.70), Vector2i(504, 980))
-    label(info.content, "Book Info", 28)
+    var info_header := HBoxContainer.new()
+    info.content.add_child(info_header)
+    label(info_header, "Book Info", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reader.ui.icon_button(info_header, "close", func(): info.node.visible = false, Vector2(48, 48))
     var search_chapters := HBoxContainer.new()
     info.content.add_child(search_chapters)
     chapter_search = edit(search_chapters, "Find a chapter")
@@ -252,6 +267,10 @@ func build() -> void:
     info.node.visible = false
     keyboard.node.visible = false
     picker = panel(Vector2(0.55, 0.70), Vector2i(720, 960))
+    var picker_header := HBoxContainer.new()
+    picker.content.add_child(picker_header)
+    label(picker_header, "Choose Source", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reader.ui.icon_button(picker_header, "close", func(): picker.node.visible = false, Vector2(48, 48))
     picker_search = edit(picker.content, "Search sources")
     picker_search.text_changed.connect(func(_text: String): render_sources())
     picker_status = label(picker.content, "", 20)
@@ -267,7 +286,10 @@ func build() -> void:
     button(picker.content, "Close", func(): picker.node.visible = false)
     picker.node.visible = false
     language_panel = panel(Vector2(0.38, 0.48), Vector2i(480, 600))
-    label(language_panel.content, "Source languages", 28)
+    var language_header := HBoxContainer.new()
+    language_panel.content.add_child(language_header)
+    label(language_header, "Source languages", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reader.ui.icon_button(language_header, "close", func(): language_panel.node.visible = false, Vector2(48, 48))
     var language_scroll := ScrollContainer.new()
     language_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     language_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -277,6 +299,7 @@ func build() -> void:
     language_scroll.add_child(language_list)
     button(language_panel.content, "Close", func(): language_panel.node.visible = false)
     language_panel.node.visible = false
+    reader.ui.options.reparent(reader, true)
     update_navigation()
     recenter()
     reader._request("sources")
@@ -392,6 +415,7 @@ func show_sources(available: bool) -> void:
     picker_search.text = ""
     picker.node.visible = true
     picker.node.global_transform = Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0.3, 0, -0.85))
+    raise_popup(picker.node)
     if available:
         reader._request("extensions")
     else:
@@ -450,7 +474,7 @@ func show_languages() -> void:
             render_sources()
         )
     language_panel.node.global_transform = Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0, 0, -gui_distance))
-    language_panel.node.visible = true
+    raise_popup(language_panel.node)
 
 func ensure_source_language() -> void:
     var allowed := installed_sources.filter(func(item): return str(item.get("lang", "en")) in enabled_languages)
@@ -615,7 +639,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     previewing = true
     badge.node.visible = true
     badge.node.global_transform = Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0, 0.26, -1.04))
-    preview.node.visible = true
+    raise_popup(preview.node)
     info.node.visible = false
     var target := preview_book_pose()
     var start := target
@@ -833,6 +857,7 @@ func drag_scroll(target: Dictionary, pixel: Vector2, pressed: bool, previous: bo
 func place_settings() -> void:
     var facing := facing_basis()
     reader.ui.options.global_transform = Transform3D(facing, head_position() + facing * Vector3(-0.66, 0, -1.04))
+    raise_popup(reader.ui.options)
 
 func preview_book_pose() -> Transform3D:
     var facing := facing_basis()
@@ -862,8 +887,15 @@ func recenter(head_pose: Variant = null) -> void:
 func dock_pose(index: int) -> Transform3D:
     return dock_poses[mini(index, dock_poses.size() - 1)]
 
-func handle_at(_point: Vector3) -> Node3D:
-    return null
+func handle_at(point: Vector3) -> Node3D:
+    var hits: Array = []
+    for target in reader.panels:
+        if target.node not in [hud.node, preview.node, info.node, picker.node, language_panel.node, reader.ui.options] or not target.node.is_visible_in_tree(): continue
+        var local: Vector3 = target.node.to_local(point)
+        if absf(local.x) <= target.size.x * 0.5 and absf(local.y) <= target.size.y * 0.5 and absf(local.z) <= 0.12:
+            hits.append({"node": target.node, "priority": int(target.node.get_meta("popup_priority", 0)), "depth": absf(local.z)})
+    hits.sort_custom(func(a, b): return a.priority > b.priority if a.priority != b.priority else a.depth < b.depth)
+    return hits[0].node if not hits.is_empty() else null
 
 func handle_ray(_start: Vector3, _direction: Vector3) -> Dictionary:
     return {}
@@ -871,8 +903,8 @@ func handle_ray(_start: Vector3, _direction: Vector3) -> Dictionary:
 func preview_snap(_node: Node3D) -> int:
     return -1
 
-func begin_drag(_node: Node3D) -> void:
-    pass
+func begin_drag(node: Node3D) -> void:
+    if node != hud.node: raise_popup(node)
 
 func finish_drag(_node: Node3D) -> void:
     pass
