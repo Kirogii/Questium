@@ -52,6 +52,11 @@ BULLET_RE = re.compile(r"^[-*]\s+(.*\S)\s*$")
 UNRELEASED_RE = re.compile(r"^##\s+\[Unreleased\]\s*$", re.IGNORECASE)
 VERSION_HEADING_RE = re.compile(r"^##\s+\[")
 
+# Continuation lines of a bullet are indented two spaces. Markdown needs the
+# indent to keep them inside the list item; a lazy continuation (no indent)
+# renders inconsistently between GitHub and Discord.
+CONTINUATION_INDENT = "  "
+
 TEMPLATE = """<!--
 Curated release notes for the NEXT version. Append user-facing bullets here as
 work lands, grouped under the headings below, then bump versionName and push.
@@ -107,8 +112,31 @@ def parse_notes(text: str) -> dict[str, list[str]]:
         bullet = BULLET_RE.match(line.strip())
         if bullet and current is not None:
             found[current].append(bullet.group(1))
+            continue
+        # An indented line under the bullet above is a continuation of it, and
+        # belongs in the same item. These used to be dropped, which truncated
+        # every multi-line bullet at its first line in the release body AND in
+        # the CHANGELOG archive - the notes file is hand-wrapped, so nearly
+        # every bullet lost most of its text.
+        if current is not None and found[current] and line[:1] in (" ", "\t"):
+            found[current][-1] += "\n" + line.strip()
 
     return found
+
+
+def bullet_lines(item: str) -> list[str]:
+    """One bullet as the markdown lines it occupies.
+
+    An item may carry embedded newlines from the notes file's own hand-wrapping.
+    Those are preserved rather than re-flowed: re-wrapping would risk breaking a
+    line inside a `code` span, where a soft break renders as a space and
+    silently corrupts the path or command.
+    """
+    parts = [part.strip() for part in item.split("\n")]
+    parts = [part for part in parts if part]
+    if not parts:
+        return []
+    return [f"- {parts[0]}"] + [f"{CONTINUATION_INDENT}{part}" for part in parts[1:]]
 
 
 def render(notes: dict[str, list[str]]) -> str:
@@ -121,7 +149,8 @@ def render(notes: dict[str, list[str]]) -> str:
         if not items:
             continue
         lines = [f"{HEADING_PREFIX} {name}", ""]
-        lines += [f"- {item}" for item in items]
+        for item in items:
+            lines += bullet_lines(item)
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 
@@ -156,7 +185,8 @@ def cmd_cut(notes_path: Path, changelog: Path, version: str, dry_run: bool) -> i
         if not items:
             continue
         entry.append(f"### {name}")
-        entry += [f"- {item}" for item in items]
+        for item in items:
+            entry += bullet_lines(item)
     entry.append("")
 
     try:

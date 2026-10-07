@@ -57,6 +57,25 @@ def _validate_webhook(url: str) -> None:
         raise ValueError(f"Invalid DISCORD_WEBHOOK_URL: {e}") from e
 
 
+def _fold_bullets(lines: list[str]) -> list[str]:
+    """Join each bullet's continuation lines back into one logical line.
+
+    RELEASE_NOTES.md is hand-wrapped, so a bullet routinely spans several
+    physical lines. Discord turns every physical line into its own list entry,
+    so without this one wrapped bullet arrives as several unrelated bullets.
+    Headings and lines that already start a bullet open a new logical line;
+    only an indented line with no marker of its own continues the one above.
+    """
+    folded: list[str] = []
+    for line in lines:
+        continues = line[:1] in (" ", "\t") and not line.lstrip().startswith(("#", "- ", "* "))
+        if folded and continues:
+            folded[-1] = f"{folded[-1]} {line.strip()}"
+        else:
+            folded.append(line.rstrip())
+    return folded
+
+
 def _discord_notes(raw: str, limit: int = 1650) -> str:
     """Render curated release notes (##/### headings + - bullets) for Discord.
 
@@ -69,7 +88,7 @@ def _discord_notes(raw: str, limit: int = 1650) -> str:
     out: list[str] = []
     total = 0
     hidden = 0
-    lines = [l.rstrip() for l in raw.strip().splitlines() if l.strip()]
+    lines = _fold_bullets([l.rstrip() for l in raw.strip().splitlines() if l.strip()])
     for index, line in enumerate(lines):
         stripped = line.lstrip("#").strip()
         if line.startswith("#"):
@@ -95,7 +114,7 @@ def _discord_notes(raw: str, limit: int = 1650) -> str:
 def _truncate_changelog(raw: str, limit: int = 1650) -> tuple[str, int]:
     if not raw or not raw.strip():
         return "- No notable changes", 0
-    lines = [l.rstrip() for l in raw.strip().splitlines() if l.strip()]
+    lines = _fold_bullets([l.rstrip() for l in raw.strip().splitlines() if l.strip()])
     if not lines:
         return "- No notable changes", 0
     # keep at least one bullet
