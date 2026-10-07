@@ -3,7 +3,8 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [feature/quest-vr]
+    branches: [master, main, 'feature/**']
+    tags: [v1]
 permissions:
   contents: read
 concurrency:
@@ -12,6 +13,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -32,6 +34,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92
       - name: Verify formatting
         run: ./gradlew spotlessCheck
+      - name: Verify vector resource limits
+        run: python3 .github/scripts/check_vector_paths.py
       - name: Build standalone Quest APK
         run: ./gradlew :app:stageNomtlDebugQuestApk -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
       - name: Stage Quest APK
@@ -49,11 +53,34 @@ jobs:
                   abis = {name.split('/')[1] for name in names if name.startswith('lib/')}
                   print(apk, sorted(abis))
                   if abis == {'arm64-v8a'} and 'assets/vr.pck' in names:
+                      assert 'lib/arm64-v8a/libopenxr_loader.so' in names, 'Quest APK is missing the OpenXR loader'
                       candidates.append(apk)
           assert len(candidates) == 1, f'Expected one Quest APK, found {candidates}'
           Path('quest-apk').mkdir(exist_ok=True)
           shutil.copy2(candidates[0], 'quest-apk/VR-Tachiyomi-Quest3-debug.apk')
           PY
+      - name: Sign trusted builds
+        if: github.event_name != 'pull_request'
+        env:
+          VR_SIGNING_KEYSTORE_BASE64: ${{ secrets.VR_SIGNING_KEYSTORE_BASE64 }}
+          VR_SIGNING_STORE_PASSWORD: ${{ secrets.VR_SIGNING_STORE_PASSWORD }}
+          VR_SIGNING_KEY_PASSWORD: ${{ secrets.VR_SIGNING_KEY_PASSWORD }}
+          VR_SIGNING_KEY_ALIAS: ${{ secrets.VR_SIGNING_KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${VR_SIGNING_KEYSTORE_BASE64:?Set the VR signing repository secrets}"
+          : "${VR_SIGNING_STORE_PASSWORD:?Missing store password}"
+          : "${VR_SIGNING_KEY_PASSWORD:?Missing key password}"
+          : "${VR_SIGNING_KEY_ALIAS:?Missing key alias}"
+          KEYSTORE="$RUNNER_TEMP/vr-release.jks"
+          trap 'rm -f "$KEYSTORE"' EXIT
+          umask 077
+          printf '%s' "$VR_SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --ks "$KEYSTORE" --ks-key-alias "$VR_SIGNING_KEY_ALIAS" --ks-pass env:VR_SIGNING_STORE_PASSWORD --key-pass env:VR_SIGNING_KEY_PASSWORD --out quest-apk/VR-Tachiyomi-alpha.apk quest-apk/VR-Tachiyomi-Quest3-debug.apk
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs quest-apk/VR-Tachiyomi-alpha.apk
+          rm quest-apk/VR-Tachiyomi-Quest3-debug.apk
+          sha256sum quest-apk/VR-Tachiyomi-alpha.apk > quest-apk/SHA256SUMS.txt
       - name: Preserve APK diagnostics if staging fails
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -66,6 +93,27 @@ jobs:
           if-no-files-found: warn
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: Quest-VR-debug-APK
-          path: quest-apk/VR-Tachiyomi-Quest3-debug.apk
+          name: Quest-VR-APK
+          path: quest-apk/*
           if-no-files-found: error
+  release:
+    if: github.ref == 'refs/tags/v1'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/download-artifact@v4
+        with:
+          name: Quest-VR-APK
+          path: quest-apk
+      - name: Publish alpha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v1 >/dev/null 2>&1; then
+            gh release upload v1 quest-apk/* --clobber
+          else
+            gh release create v1 quest-apk/* --verify-tag --title alpha --prerelease --notes-file .github/alpha-release.md
+          fi

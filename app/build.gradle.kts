@@ -255,6 +255,8 @@ configurations.all {
 dependencies {
     // KMK --> Native Quest renderer, embedded in the existing app.
     implementation("org.godotengine:godot:4.6.3.stable")
+    // Embedded Godot does not run the editor export step that adds the XR loader.
+    implementation("org.khronos.openxr:openxr_loader_for_android:1.1.53")
     implementation(files("libs/vr/godotopenxr-meta-release.aar"))
     // KMK <--
     implementation(projects.i18n)

@@ -1,11 +1,11 @@
 <div align="center">
 
 <br/>
-<img src="./.github/readme-images/houri-icon.svg" width="200" height="200" alt="Houri icon"/>
+<img src="./.github/readme-images/questium-logo.svg" width="200" height="200" alt="Questium logo with a single Touch controller"/>
 <br/>
- <h1 align="center">Houri</h1>
+ <h1 align="center">Questium</h1>
 
-*A new approach to Komikku.*
+*A manga reader built for Quest 3 and Quest 3S.*
 
 [![Discord](https://img.shields.io/discord/1540509997719355545.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/JcQZYvCbYH)
 [![CI](https://img.shields.io/github/actions/workflow/status/PineappleTwilight/komikku-pineapple/build_push.yml?labelColor=27303D&label=CI)](https://github.com/PineappleTwilight/komikku-pineapple/actions/workflows/build_push.yml)
@@ -24,8 +24,8 @@ A free, open source, and bleeding edge manga reader, forked from Komikku (itself
 
 ## Features
 
-### Houri's unique features:
-- Pineapple-themed UI and branding (adaptive icon with monochrome variant).
+### Questium's unique features:
+- Quest 3/3S-focused VR manga reading with Touch controller support.
 - **Library subcategories** — hierarchical categories with an optional Android home-screen-style folder layout, a virtual "All" view, subcategory reordering, per-subcategory library refresh, orphan cleanup, and full backup/restore support.
 - **Enhanced E-Hentai/ExHentai** — automatic censorship status detection (censored / decensored / uncensored) and mosaic vs. full marking, shown as dedicated tags with matching sort/filter options and colors.
 - **Smart Scanlator filter & chapter deduplication** — deduplicate chapters by scanlator with advanced controls: chapter count ranges, per-scanlator enable/disable, coverage view, and a quick toggle from the manga details menu.
@@ -160,7 +160,7 @@ See [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 Thank you to all the people who have contributed!
 
 <a href="https://github.com/PineappleTwilight/komikku-pineapple/graphs/contributors">
-    <img src="https://contrib.rocks/image?repo=PineappleTwilight/komikku-pineapple" alt="Houri contributors" title="Houri contributors" width="800"/>
+    <img src="https://contrib.rocks/image?repo=PineappleTwilight/komikku-pineapple" alt="Questium contributors" title="Questium contributors" width="800"/>
 </a>
 
 ### Disclaimer

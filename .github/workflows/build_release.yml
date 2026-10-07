@@ -23,6 +23,7 @@ permissions:
 
 jobs:
   prepare-build:
+    if: github.ref != 'refs/tags/v1'
     runs-on: 'ubuntu-24.04'
     outputs:
       VERSION_TAG: ${{ steps.get_tag.outputs.VERSION_TAG }}

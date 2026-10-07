@@ -18,5 +18,6 @@ openxr/enabled=true
 openxr/extensions/hand_tracking=true
 openxr/extensions/meta/passthrough=true
 openxr/extensions/meta/hand_tracking_mesh=true
+openxr/extensions/meta/render_model=true
 openxr/startup_alert=false
 shaders/enabled=true

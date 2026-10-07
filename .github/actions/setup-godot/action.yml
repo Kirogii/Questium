@@ -20,3 +20,11 @@ runs:
         "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/book_check.gd
         "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/input_check.gd
         "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/controls_check.gd
+        "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/tracking_check.gd
+        "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/app_panel_check.gd
+        timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/workspace_check.gd
+        timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/remote_check.gd
+        timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/scroll_check.gd
+        timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/palm_check.gd
+        timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/hand_check.gd
+        timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script res://tests/locomotion_check.gd

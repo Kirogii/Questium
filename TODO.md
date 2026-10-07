@@ -1,5 +1,56 @@
 # Houri TODO
 
+## VR reader — plan.md order
+
+### Current refinement pass — October 7, 2026
+
+User priority supersedes the older dock plan: a single frosted Reference1 HUD,
+thin Livro-like book, reliable Quest 3S hands, and refined reading interactions.
+Novel support remains deferred.
+
+- [x] Thin covers, almost-flat resting spread, narrow paper edges, and curved turning sheets; inspect desktop renders.
+- [x] Separate closed-cover body grabs from cover hinges; preserve hand contact during wrist rotation and either-hand release.
+- [x] Isolate an active page sweep from gestures made by the other hand.
+- [x] Native fingertip touch with safe cancellation and book occlusion.
+- [x] Add actual skinned fallback hands and verify bone deformation, unknown tracking-source support and partial finger occlusion.
+- [ ] Confirm hand visuals and live page interactions on the Quest 3S after installing this pass.
+- [ ] Exercise seamless long-page and chapter boundaries with source content; fix remaining interaction gaps.
+- [ ] Audit reading controls, retained placement and loading behavior against the video; update acceptance evidence.
+
+### Earlier implementation record
+
+Three-dock and free-window items below describe the superseded workspace.
+The current app uses the single frosted HUD requested by the user.
+
+- [x] Reference frame study and distinction between observed behavior and assumptions.
+- [x] Workspace: three default docks, persistent library, independent placed books.
+- [x] Workspace: free window placement, empty-dock preview/snap, explicit recenter.
+- [x] Workspace: preserve book/window positions when reopening the library.
+- [x] Workspace: nearest-panel routing, books block clicks on windows behind them.
+- [ ] Workspace: verify native Android capability parity and refine frosted library styling on Quest.
+- [x] Book: cover acquisition without jump, reversible drag, settling and tracking-loss cancellation.
+- [x] Book: page corner acquisition, continuous reversible turn, RTL and unloaded-page protection.
+- [x] Book: body grab offsets and rotation; two-hand scale midpoint and release continuity.
+- [x] Book: per-book edge hover/close controls and controller remote body/window grabs, checked on desktop.
+- [x] Long pages: automatic original-aspect detection, manual modes and vertical scrolling.
+- [ ] Long pages: verify seamless page/chapter boundary scrolling on real source content.
+- [x] Long pages: slow drag accumulation, unloaded-neighbor clamping, backward continuity and chapter request throttling.
+- [x] Hands/palm: native skinned hand/controller model registration; remove joint/capsule placeholders and hide models on tracking loss.
+- [x] Hands/palm: palm attachment, reveal dwell, dismissal grace, capture stability and controller menu reveal.
+- [ ] Hands/palm: verify native hand skeleton and implement/refine passthrough holdout on Quest.
+- [x] Book rendering: preload resumed cover artwork; curved page blocks stay behind printed surfaces; beveled covers and 64×24 leaf meshes.
+- [x] Book/model fix: eleven desktop checks, real-page rendered previews, Spotless and full build; verify native extension registration in APK and install on Quest.
+- [x] Settings crash: compact oversized shared logo paths, verify compiled APK resources, add vector-limit CI check and install corrected build.
+- [ ] Book rendering: confirm new model loading, chapter images and closer Livro appearance on Quest.
+- [ ] Room: headset comfort and locomotion validation; architecture visual refinement last.
+- [x] Build: Spotless apply/check and arm64 Android build pass using the existing native library cache.
+- [x] Install: verify embedded reader pack/OpenXR loader, install the final APK and launch on Quest; retain device logging.
+- [ ] Install/headset: verify the final build's input, source flows, hand rendering and scene depth.
+
+Checked items describe implementation plus relevant desktop regression coverage,
+not confirmed 1:1 headset responsiveness. Continue in this order; visual mesh
+refinement is lower priority than working interaction and app functionality.
+
 ## Feature Ideas
 
 - [x] **Yokai Backport**: Library sort option to ignore articles (A, An, The, etc.) — like J2K/Yokai. Example: "A Sign of Affection" sorts under S, "The Apothecary Diaries" sorts under A instead of T.

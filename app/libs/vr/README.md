@@ -10,3 +10,8 @@ MIT licensed: https://github.com/GodotVR/godot_openxr_vendors/blob/master/LICENS
 The AAR supplies the Android plugin registration, OpenXR permissions,
 GDExtension descriptor, and arm64/x86_64 native libraries. Do not add another
 OpenXR loader or a separately exported Godot APK.
+
+The embedded reader must also contain addons/godotopenxrvendors/plugin.gdextension
+so its exported extension list registers native hand/controller model classes.
+The reader includes Windows/Linux debug libraries from the same 5.1.0 release
+for editor import and desktop regression checks; Android uses this AAR's JNI library.

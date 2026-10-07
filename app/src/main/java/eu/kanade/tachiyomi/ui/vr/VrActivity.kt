@@ -1,12 +1,10 @@
 package eu.kanade.tachiyomi.ui.vr
 
 // KMK -->
-import android.content.Intent
 import android.os.Bundle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.lifecycleScope
-import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
@@ -17,8 +15,8 @@ import org.godotengine.godot.xr.XRMode
 
 class VrActivity : GodotActivity() {
     private val readers = ViewModelStore()
-    private var readerManga = -1L
     private var contentBridge: HouriVrBridge? = null
+    private var exiting = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,26 +29,27 @@ class VrActivity : GodotActivity() {
     }
 
     override fun getHostPlugins(godot: Godot): Set<GodotPlugin> = setOf(
-        contentBridge ?: HouriVrBridge(godot, this).also { contentBridge = it },
+        contentBridge ?: HouriVrBridge(godot, this).also {
+            contentBridge = it
+        },
     )
 
-    fun reader(mangaId: Long): ReaderViewModel {
+    fun reader(mangaId: Long, chapterId: Long): ReaderViewModel {
         check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())
-        if (readerManga != mangaId) {
-            readers.clear()
-            readerManga = mangaId
-        }
         return ViewModelProvider(readers, appGraph.viewModelFactory, defaultViewModelCreationExtras)
-            .get("vr-reader-$mangaId", ReaderViewModel::class.java)
+            .get("vr-reader-$mangaId-$chapterId", ReaderViewModel::class.java)
     }
 
     fun exitVr() {
         runOnUiThread {
+            if (exiting) return@runOnUiThread
+            exiting = true
             appGraph.preferenceStore.getBoolean(VrSettingKeys.ENABLED.key).set(false)
-            // Godot cannot reliably initialize a second engine in the same process.
-            // Restart into the normal activity after its readers have saved progress.
+            // Progress is flushed by the bridge before exiting. Remove the VR task
+            // and its engine process so the next launch initializes a fresh engine.
             readers.clear()
-            triggerRebirth(null, Intent(this, MainActivity::class.java))
+            finishAndRemoveTask()
+            android.os.Process.killProcess(android.os.Process.myPid())
         }
     }
 
@@ -65,6 +64,7 @@ class VrActivity : GodotActivity() {
         contentBridge?.close()
         readers.clear()
         super.onDestroy()
+        if (isFinishing && !exiting) exitVr()
     }
 }
 // KMK <--

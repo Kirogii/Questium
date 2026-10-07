@@ -6,15 +6,30 @@ uniform sampler2D back_image : source_color, filter_linear_mipmap;
 uniform float progress : hint_range(0.0, 1.0) = 0.0;
 uniform float side = 1.0;
 uniform float width = 0.28;
-uniform float curvature = 0.055;
+uniform float curvature = 0.002;
+uniform float rest_angle = 0.035;
+uniform float grab_y = 0.5;
 
 void vertex() {
     float u = UV.x;
-    float angle = mix(0.20, 2.94159265, progress);
-    float curl = sin(angle) * curvature;
+    float angle = mix(rest_angle, 3.14159265 - rest_angle, progress);
+    // A corner pull twists the free edge while the spine remains fixed.
+    float twist = (UV.y - (1.0 - grab_y)) * sin(progress * 3.14159265) * 0.14;
+    angle += twist * u;
+    // Integrate a curved tangent along the sheet, preserving its arc length.
+    // The page stays thin: its changing bend supplies the apparent volume.
+    float bend = sin(progress * 3.14159265) * 0.95;
     float radius = u * width;
-    VERTEX.x = side * (radius * cos(angle) - curl * sin(u * 3.14159265));
-    VERTEX.z = radius * sin(angle) + curl * sin(u * 3.14159265);
+    float x = radius * cos(angle);
+    float z = radius * sin(angle);
+    if (bend > 0.001) {
+        float root_angle = angle - bend * 0.5;
+        x = width * (sin(root_angle + bend * u) - sin(root_angle)) / bend;
+        z = width * (cos(root_angle) - cos(root_angle + bend * u)) / bend;
+    }
+    float resting_curve = sin(rest_angle) * curvature * sin(u * 3.14159265);
+    VERTEX.x = side * (x - resting_curve);
+    VERTEX.z = z + resting_curve;
 }
 
 void fragment() {

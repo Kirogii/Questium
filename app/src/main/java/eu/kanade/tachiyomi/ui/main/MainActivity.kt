@@ -133,7 +133,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.util.collectAsState
 import java.util.LinkedList
 
-class MainActivity : BaseActivity() {
+open class MainActivity : BaseActivity() {
 
     private val libraryPreferences: LibraryPreferences by lazy { globalAppGraph.libraryPreferences }
     private val preferences: BasePreferences by lazy { globalAppGraph.basePreferences }
@@ -566,9 +566,9 @@ class MainActivity : BaseActivity() {
     }
 
     /**
-     * Sets custom splash screen exit animation with pineapple spin burst.
+     * Sets custom splash screen exit animation with a controller spin burst.
      *
-     * The pineapple (ic_houri) spins on a loop with accelerate/decelerate
+     * The controller mark (ic_houri) spins on a loop with accelerate/decelerate
      * burst — FastOutSlowIn per 360° — until the splash is dismissed.
      */
     @Suppress("Deprecation")
@@ -584,7 +584,7 @@ class MainActivity : BaseActivity() {
         splashScreen.setOnExitAnimationListener { splashProvider ->
             splashProvider.iconView.translationY = 0F
 
-            // Pineapple spin burst — infinite 360° loops with FastOutSlowIn
+            // Controller spin burst — infinite 360° loops with FastOutSlowIn
             // (linear accelerate → decelerate) until splash is removed.
             val iconView = splashProvider.iconView
             // Ensure pivot is centered even if view not yet laid out
@@ -723,7 +723,7 @@ class MainActivity : BaseActivity() {
     }
 }
 
-// Splash screen — pineapple spin burst visible during exit, so duration
+// Splash screen — controller spin burst visible during exit, so duration
 // allows at least one full 650ms burst loop.
 private const val SPLASH_MIN_DURATION = 500 // ms
 private const val SPLASH_MAX_DURATION = 5000 // ms
