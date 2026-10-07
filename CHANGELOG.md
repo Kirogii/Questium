@@ -37,6 +37,19 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.8] - 2026-10-07
+### Fix
+- **Failed extensions now say why they failed.** The extensions screen showed only a spinner or an
+- **Fixed an extension keeping a stale icon after being updated.** The icon was cached for as long as
+- **Fixed the update button doing nothing on some extensions.** If a repository was re-signed, the
+- **Fixed extensions failing to load leaving the app waiting indefinitely.** If loading extensions
+- **Failed extensions can now be reported to the right place.** An extension that fails usually means
+- **Extensions are found faster in large libraries.** Looking up which extension owns a source
+- **Fixed a spinning gap in the long-strip reader where a page should be.** Scrolling quickly could
+- **Fixed two-page spread height matching silently giving up on a chapter.** If a side was still being
+- **Loading pages in the long-strip reader now show the percentage as well as the spinner**, including
+
+
 ## [v1.23.7] - 2026-10-06
 ### Improve
 - **The reader no longer wakes the processor every quarter-second while you are not waiting for a
