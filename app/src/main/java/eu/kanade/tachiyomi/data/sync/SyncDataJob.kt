@@ -3,10 +3,12 @@ package eu.kanade.tachiyomi.data.sync
 import android.content.Context
 import android.content.pm.ServiceInfo
 import android.os.Build
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
+import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
@@ -91,6 +93,16 @@ class SyncDataJob(private val context: Context, workerParams: WorkerParameters) 
             val interval = prefInterval ?: syncPreferences.syncInterval().get()
 
             if (interval > 0) {
+                val constraints = Constraints.Builder()
+                    // A sync is a network job: without this the worker is still woken with no
+                    // connection available, fails, and backs off - a wakeup spent discovering
+                    // there is nothing to talk to.
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    // Matches the library-update, backup and E-H update workers, which all defer on
+                    // a low battery. Without it this was the only periodic job that did not.
+                    .setRequiresBatteryNotLow(true)
+                    .build()
+
                 val request = PeriodicWorkRequestBuilder<SyncDataJob>(
                     interval.toLong(),
                     TimeUnit.MINUTES,
@@ -99,6 +111,7 @@ class SyncDataJob(private val context: Context, workerParams: WorkerParameters) 
                 )
                     .addTag(TAG_JOB)
                     .addTag(TAG_AUTO)
+                    .setConstraints(constraints)
                     .build()
 
                 context.workManager.enqueueUniquePeriodicWork(TAG_AUTO, ExistingPeriodicWorkPolicy.UPDATE, request)

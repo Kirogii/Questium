@@ -64,6 +64,23 @@ class SourcePreferences(
 
     fun extensionUpdatesCount() = preferenceStore.getInt("ext_updates_count", 0)
 
+    // KMK -->
+    /**
+     * Extension error prompts already shown, keyed `pkgName:versionCode:reason`. Without this a
+     * runtime failure re-appears on every launch, because the failure itself persists.
+     */
+    fun extensionErrorPromptsShown() = preferenceStore.getStringSet(
+        Preference.appStateKey("extension_error_prompts_shown"),
+        emptySet(),
+    )
+
+    /** Keys are `pkgName:versionCode`, so a new version of the same extension prompts again. */
+    fun extensionErrorPromptsSuppressed() = preferenceStore.getStringSet(
+        Preference.appStateKey("extension_error_prompts_suppressed"),
+        emptySet(),
+    )
+    // KMK <--
+
     fun trustedExtensions() = preferenceStore.getStringSet(
         Preference.appStateKey("trusted_extensions"),
         emptySet(),

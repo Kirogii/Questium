@@ -3,8 +3,6 @@ package eu.kanade.tachiyomi.ui.more
 import android.content.Context
 import android.content.Intent
 import androidx.compose.runtime.Immutable
-import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import cafe.adriel.voyager.core.model.ScreenModel
 import cafe.adriel.voyager.core.model.screenModelScope
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller
@@ -84,22 +82,35 @@ class NewUpdateScreenModel(
         response.body.source().saveTo(apkFile)
     }
 
+    /**
+     * Hands off to the package installer, which replaces this app and kills the process.
+     *
+     * The database is checkpointed first, and waited on. Reading progress is written as the reader turns
+     * pages, so a write can still be sitting in the write-ahead log when the user taps install - and the
+     * installer gives the app no chance to finish. Anything that reaches the installer is already past
+     * this point, which is why it is not fire-and-forget.
+     */
     fun installUpdate() {
-        try {
-            if (!apkFile.exists()) {
-                logcat(LogPriority.WARN) { "APK file not found, re-downloading" }
-                _state.update { it.copy(stage = Stage.Available) }
-                startDownload()
-                return
+        screenModelScope.launch {
+            runCatching { globalAppGraph.databaseHandler.checkpoint() }
+                .onFailure { logcat(LogPriority.WARN, it) { "Could not checkpoint the database before updating" } }
+
+            try {
+                if (!apkFile.exists()) {
+                    logcat(LogPriority.WARN) { "APK file not found, re-downloading" }
+                    _state.update { it.copy(stage = Stage.Available) }
+                    startDownload()
+                    return@launch
+                }
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(apkFile.getUriCompat(context), ExtensionInstaller.APK_MIME)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                }
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to install update" }
+                _state.update { it.copy(stage = Stage.Failed) }
             }
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkFile.getUriCompat(context), ExtensionInstaller.APK_MIME)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-            }
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to install update" }
-            _state.update { it.copy(stage = Stage.Failed) }
         }
     }
 

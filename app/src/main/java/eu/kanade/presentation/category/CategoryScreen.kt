@@ -2,6 +2,8 @@ package eu.kanade.presentation.category
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -323,24 +325,36 @@ private fun CategoryContent(
             )
         }
         item(key = "category-manager-sort") {
-            Row(
-                modifier = Modifier.fillMaxWidth().animateItem(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SortModeDropdown(sortMode = sortMode, onSortMode = onSortMode, modifier = Modifier.weight(1f))
-                TextButton(onClick = onExpandAll) {
-                    Text(stringResource(KMR.strings.category_manager_expand_all))
-                }
-                TextButton(onClick = onCollapseAll) {
-                    Text(stringResource(KMR.strings.category_manager_collapse_all))
+            // KMK --> The dropdown owns the full width and the expand/collapse pair sits on its
+            // own line. Sharing one row squeezed a translated dropdown label to nothing on a
+            // 360dp phone while the two buttons kept their full intrinsic width.
+            // KMK <--
+            Column(modifier = Modifier.fillMaxWidth().animateItem()) {
+                SortModeDropdown(sortMode = sortMode, onSortMode = onSortMode)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = onExpandAll) {
+                        Text(stringResource(KMR.strings.category_manager_expand_all))
+                    }
+                    TextButton(onClick = onCollapseAll) {
+                        Text(stringResource(KMR.strings.category_manager_collapse_all))
+                    }
                 }
             }
         }
         if (selectMode) {
             item(key = "category-manager-bulk") {
-                Row(
+                // KMK --> FlowRow, not Row: this used to lay six full-width TextButtons out on a
+                // single line, so on any phone the last two were simply off-screen and
+                // unreachable. Wrapping keeps every bulk action tappable at every width.
+                // KMK <--
+                FlowRow(
                     modifier = Modifier.fillMaxWidth().animateItem(),
-                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
+                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
                 ) {
                     TextButton(onClick = { onSelectVisible(rows.map { it.category.id }.toSet()) }) {
                         Text(stringResource(KMR.strings.category_manager_select))

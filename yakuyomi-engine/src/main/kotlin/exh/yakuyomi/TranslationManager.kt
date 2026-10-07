@@ -95,9 +95,11 @@ class TranslationManager(
 
     fun retryChapter(mangaId: Long, chapterId: Long) {
         val st = status.chapterStatus(mangaId, chapterId) ?: return
-        val failedPages = st.pages.filter { it.value.state == TranslationStatus.PageState.ERROR }.keys
-        if (failedPages.isEmpty()) return
-        status.updateForRetry(mangaId, chapterId, failedPages)
+        // Not just ERROR: a page the provider never answered is also worth another attempt, and it
+        // arrives as SKIPPED. Retrying only the red pages left the silent skips untouched.
+        val retryable = st.pages.filterValues { it.isRetryable }.keys
+        if (retryable.isEmpty()) return
+        status.updateForRetry(mangaId, chapterId, retryable)
     }
 
     fun clearAllChapters() {
@@ -240,6 +242,12 @@ class TranslationManager(
     private suspend fun effectiveModel(): String = resolver.resolve().modelName
 
     /**
+     * Provider, model and target language folded into one string, used as the page cache key so a
+     * configuration change cannot be answered from a page saved under the previous one.
+     */
+    private suspend fun pageCacheIdentity(): String = resolver.pageCacheIdentity()
+
+    /**
      * Fast path for pages already translated in this session/on disk: serves the saved page or the
      * hash cache without running the detection/OCR/LLM pipeline. Returns null when nothing is stored
      * (caller should fall back to [translatePage]).
@@ -262,6 +270,7 @@ class TranslationManager(
             targetLang = targetLang,
             model = model,
             promptFingerprint = promptFingerprint,
+            identity = pageCacheIdentity(),
         )?.let { return@withContext it.bytes }
         null
     }
@@ -292,6 +301,7 @@ class TranslationManager(
             targetLang = targetLang,
             model = model,
             promptFingerprint = promptFingerprint,
+            identity = pageCacheIdentity(),
         )?.let { hit ->
             // A content-hash hit is copied into the saved-page store so the next visit finds it there.
             if (hit.source == PageCacheSource.CONTENT_HASH && pageCache.autoPersistEnabled) {
@@ -302,6 +312,7 @@ class TranslationManager(
                     webp = hit.bytes,
                     mangaTitle = mangaTitleFor(mangaId),
                     promptFingerprint = promptFingerprint,
+                    identity = pageCacheIdentity(),
                 )
             }
             status.pageCached(mangaId, chapterId, pageIndex)
@@ -328,6 +339,7 @@ class TranslationManager(
     ): ByteArray? {
         val targetLang = resolver.targetLanguage()
         val model = effectiveModel()
+        val identity = pageCacheIdentity()
         val promptPolicy = prefs.promptPolicy()
         val promptFingerprint = promptPolicy.fingerprint()
         val glossary = promptPolicy.glossary
@@ -355,7 +367,7 @@ class TranslationManager(
                 if (webp != null && webp.isNotEmpty()) {
                     pageCache.store(imageBytes, targetLang, model, webp, promptFingerprint)
                     if (pageCache.persistEnabled) {
-                        pageCache.storePage(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint)
+                        pageCache.storePage(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint, identity)
                     }
                     try {
                         notes.appendFromTranslation(mangaId, chapterId, listOf("[mangatranslator]"))
@@ -496,7 +508,7 @@ class TranslationManager(
                     runCatching { result.page.recycle() }
                     pageCache.store(imageBytes, targetLang, model, webp, promptFingerprint)
                     if (pageCache.persistWhileReadingEnabled) {
-                        pageCache.storePage(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint)
+                        pageCache.storePage(mangaId, chapterId, pageIndex, webp, mangaTitle, promptFingerprint, identity)
                     }
                     val translatedTexts = result.analysis?.regions?.map { it.translatedText } ?: emptyList()
                     try {

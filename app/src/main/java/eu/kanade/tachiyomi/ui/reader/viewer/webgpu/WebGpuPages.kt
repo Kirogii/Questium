@@ -196,6 +196,15 @@ class ViewerReaderPage(
     var rescaleInFlight: Boolean = false
     // KMK <--
 
+    /**
+     * Set when the renderer actually asked for this page, which distinguishes a page that is on
+     * screen (or prewarmed) from one only a speculative preload walk ever touched. Read by the
+     * liveness sweep so a stalled page on screen is recovered without queueing shells that nothing
+     * will ever draw.
+     */
+    @Volatile
+    var wantedByRender: Boolean = false
+
     // KMK -->
     /**
      * Pre-translation page retained for the compare toggle. Set once on the
@@ -252,8 +261,32 @@ class ViewerReaderPage(
             else -> null
         }
 
+    /**
+     * The neighbour links have to be answered from a page that is still in its chapter's list.
+     *
+     * A page a split removed answers [ReaderChapter.positionOf] with -1, and every "one before the
+     * first / one after the last" test below reads that as a chapter edge - so the walk jumped into
+     * the neighbouring chapter, laying its pages into the strip where the segments belonged. The
+     * chain from the replacement's side is the same chain the parent used to be part of, so
+     * delegating keeps the ordering intact instead of inventing a boundary that is not there.
+     *
+     * Resolved outside the [NeighborLink] memo on purpose: the memo keys on the page count, which a
+     * split does change, but only by the time the replacement is asked for - and a stale hit here
+     * would reinstate exactly the neighbour that caused the duplication.
+     */
+    private fun linkedNeighbour(step: Int): ViewerPage? {
+        if (page.chapter.positionOf(page) < 0) {
+            val replacement = page.chapter.splitReplacementOf(page) ?: return null
+            return viewer.getPage(replacement, viewer.currentPage).let { replacementPage ->
+                if (step > 0) replacementPage.next else replacementPage.prev
+            }
+        }
+        return null
+    }
+
     override val prev: ViewerPage?
         get() {
+            linkedNeighbour(-1)?.let { return it }
             val chapterPages = page.chapter.pages
             val prevCh = prevChapter
             return prevLink.get(
@@ -283,6 +316,7 @@ class ViewerReaderPage(
 
     override val next: ViewerPage?
         get() {
+            linkedNeighbour(1)?.let { return it }
             val chapterPages = page.chapter.pages
             val nextCh = nextChapter
             return nextLink.get(
@@ -432,23 +466,24 @@ class ProgressPage(
         // monochrome vector, so a white tint is invisible on light reader backgrounds.
         sprite(texture, cx, cy, sizePx, dst, eased * 2f * PI.toFloat(), foregroundColor)
         // KMK <--
-        // KMK --> Percentage only once bytes actually arrive; unknown-length and cached
-        // loads never advance progressFlow, so 0% would stick forever. The spinning
-        // pineapple above is the indeterminate indicator until then.
-        if (progress > 0f) {
-            val textPx = (full * 0.09f).coerceAtLeast(12f)
-            text(
-                dst,
-                viewer.activity.baseContext,
-                FontFamily.Default,
-                "${(progress * 100).toInt()}%",
-                cx,
-                cy + sizePx * 0.5f + textPx * 1.1f,
-                textPx,
-                foregroundColor,
-                align = TextAlign.Center,
-            )
-        }
+        // KMK --> The percentage is always drawn, including while the load is
+        // indeterminate (cached or unknown-length, where progressFlow never advances and progress
+        // stays 0). Hiding it until bytes arrived left the placeholder as a bare spinner with no
+        // reading at all, which is indistinguishable from the stall it was meant to reassure about -
+        // "0%" reads as "started", the pineapple alone reads as "hung". Clamped so a progressFlow
+        // that overshoots cannot render past 100.
+        val textPx = (full * 0.09f).coerceAtLeast(12f)
+        text(
+            dst,
+            viewer.activity.baseContext,
+            FontFamily.Default,
+            "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+            cx,
+            cy + sizePx * 0.5f + textPx * 1.1f,
+            textPx,
+            foregroundColor,
+            align = TextAlign.Center,
+        )
         // KMK <--
     }
 

@@ -59,6 +59,11 @@ object CommonMangaItemDefaults {
     val GridHorizontalSpacer = 4.dp
     val GridVerticalSpacer = 4.dp
 
+    // Inset GridItemSelectable leaves around a cover. Loading placeholders stand in for these items,
+    // so they read this rather than repeating it - a skeleton sized independently of the item it
+    // stands in for is exactly how the two drifted apart.
+    val GridItemPadding = 4.dp
+
     @Suppress("ConstPropertyName")
     const val BrowseFavoriteCoverAlpha = 0.34f
 }
@@ -401,7 +406,7 @@ private fun GridItemSelectable(
                 onLongClick = onLongClick,
             )
             .selectedOutline(isSelected = isSelected, color = MaterialTheme.colorScheme.secondary)
-            .padding(4.dp),
+            .padding(CommonMangaItemDefaults.GridItemPadding),
     ) {
         val contentColor = if (isSelected) {
             MaterialTheme.colorScheme.onSecondary

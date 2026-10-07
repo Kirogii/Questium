@@ -18,6 +18,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
+import eu.kanade.presentation.browse.components.FeedListShimmer
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.browse.feed.AnizenMultiFeedState
 import kotlinx.coroutines.launch
@@ -27,7 +28,6 @@ import tachiyomi.i18n.sy.SYMR
 import tachiyomi.presentation.core.components.material.TabText
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.screens.EmptyScreen
-import tachiyomi.presentation.core.screens.LoadingScreen
 
 // KMK -->
 /**
@@ -50,7 +50,10 @@ fun AnizenMultiFeedScreen(
     getMangaState: @Composable (Manga) -> State<Manga>,
 ) {
     when {
-        state.isLoading -> LoadingScreen()
+        // KMK --> Layout-shaped placeholder, matching the feed rows this screen renders. See
+        // FeedScreen for why the centred spinner was replaced.
+        // KMK <--
+        state.isLoading -> FeedListShimmer(contentPadding = contentPadding)
         state.isEmpty -> EmptyScreen(
             SYMR.strings.feed_tab_empty,
             modifier = Modifier.padding(contentPadding),

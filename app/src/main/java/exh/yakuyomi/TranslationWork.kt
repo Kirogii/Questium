@@ -120,12 +120,27 @@ class TranslationWork(
                             translated++
                         } else {
                             when (outcome?.state) {
+                                TranslationStatus.PageState.ERROR -> errored++
+                                // A skip the provider caused (as opposed to a page with genuinely
+                                // no text) belongs with the failures: counting it as a success is
+                                // what let one unreachable provider quietly finish a whole chapter
+                                // with nothing translated and no retry.
+                                TranslationStatus.PageState.SKIPPED -> {
+                                    if (outcome?.isRetryable == true) {
+                                        errored++
+                                        xLogE(
+                                            "TranslationWork page $index skipped by provider " +
+                                                "(${outcome?.code}), will retry",
+                                        )
+                                    } else {
+                                        cached++
+                                    }
+                                }
+
                                 TranslationStatus.PageState.CACHED,
                                 TranslationStatus.PageState.DONE,
-                                TranslationStatus.PageState.SKIPPED,
                                 -> cached++
-                                TranslationStatus.PageState.ERROR,
-                                -> errored++
+
                                 else -> {}
                             }
                         }

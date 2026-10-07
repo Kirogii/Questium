@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -66,6 +66,7 @@ jobs:
   build-app:
     runs-on: 'ubuntu-24.04'
     needs: prepare-build
+    timeout-minutes: 120
     steps:
       - name: Clone Repository (${{ needs.prepare-build.outputs.TAG_NAME }})
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -116,6 +117,18 @@ jobs:
           pkg-config --version
           nasm --version
           ccache --version
+
+      - name: Add swap space (8GB)
+        run: |
+          if swapon --show | grep -q /swapfile; then
+            echo "Swap already active"
+          else
+            sudo fallocate -l 8G /swapfile
+            sudo chmod 600 /swapfile
+            sudo mkswap /swapfile
+            sudo swapon /swapfile
+          fi
+          free -h
 
       - name: Install Android SDK CMake 3.22.1
         run: |
@@ -181,11 +194,12 @@ jobs:
         run: ./gradlew spotlessCheck --build-cache
 
       - name: Build app
-        run: ./gradlew assembleMtlBenchmark --build-cache --parallel
+        run: ./gradlew assembleMtlBenchmark --build-cache --max-workers=4
         env:
           CCACHE_DIR: /home/runner/.ccache
           CMAKE_C_COMPILER_LAUNCHER: ccache
           CMAKE_CXX_COMPILER_LAUNCHER: ccache
+          JAVA_TOOL_OPTIONS: -Xmx4g
 
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest --build-cache --parallel

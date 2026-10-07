@@ -369,51 +369,58 @@ internal fun WebGpuViewer.scheduleSpreadHeightMatch(sourcePage: ViewerReaderPage
         var scaledImage: Image? = null
         var translationSource: ByteArray? = null
         try {
-            val bytes = synchronized(lock) { sourcePage.spreadBytes }
-            if (bytes != null) {
-                translationSource = bytes
-                scaledImage = rescaleImageToHeight(bytes, safeTarget)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: OutOfMemoryError) {
-            logcat(LogPriority.ERROR) { "Spread height-match OOM target $safeTarget" }
-            System.gc()
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Spread height-match rescale failed" }
-        }
-
-        var swapped = false
-        synchronized(lock) {
-            sourcePage.rescaleInFlight = false
-            if (scaledImage != null && pageInCache(sourcePage)) {
-                val scaledSingle = ImagePage.ImageSingle(scaledImage)
-                // Reapply the full decode-time zoom stack, not only the double-tap policy,
-                // so a swapped side keeps fit-mode/wide-zoom anchoring after e-ink resume.
-                if (!isDualPageMode()) {
-                    if (!applyWideZoomIfNeeded(scaledSingle)) {
-                        applyFitModeAnchor(scaledSingle)
-                    }
+            try {
+                val bytes = synchronized(lock) { sourcePage.spreadBytes }
+                if (bytes != null) {
+                    translationSource = bytes
+                    scaledImage = rescaleImageToHeight(bytes, safeTarget)
                 }
-                applyDoubleTapZoomPolicy(scaledSingle)
-                val oldImagePage = sourcePage.imagePage
-                sourcePage.cleanupCompare()
-                sourcePage.imagePage = scaledSingle
-                sourcePage.spreadBytes = null
-                oldImagePage.cleanup()
-                swapped = true
-            } else {
-                sourcePage.spreadBytes = null
-                scaledImage?.let { stale -> ImagePage.ImageSingle(stale).cleanup() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OutOfMemoryError) {
+                logcat(LogPriority.ERROR) { "Spread height-match OOM target $safeTarget" }
+                System.gc()
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Spread height-match rescale failed" }
             }
-        }
-        // Terminal state reached either way: drop any coalesced retry for this side. The
-        // anchor-keyed retry, if any, self-terminates on equal heights at the next pass.
-        resetSpreadHeightRetry(sourcePage)
 
-        if (swapped) {
-            pager.state.invalidate()
-            translationSource?.let { scheduleTranslation(sourcePage, it) }
+            var swapped = false
+            synchronized(lock) {
+                if (scaledImage != null && pageInCache(sourcePage)) {
+                    val scaledSingle = ImagePage.ImageSingle(scaledImage)
+                    // Reapply the full decode-time zoom stack, not only the double-tap policy,
+                    // so a swapped side keeps fit-mode/wide-zoom anchoring after e-ink resume.
+                    if (!isDualPageMode()) {
+                        if (!applyWideZoomIfNeeded(scaledSingle)) {
+                            applyFitModeAnchor(scaledSingle)
+                        }
+                    }
+                    applyDoubleTapZoomPolicy(scaledSingle)
+                    val oldImagePage = sourcePage.imagePage
+                    sourcePage.cleanupCompare()
+                    sourcePage.imagePage = scaledSingle
+                    sourcePage.spreadBytes = null
+                    oldImagePage.cleanup()
+                    swapped = true
+                } else {
+                    sourcePage.spreadBytes = null
+                    scaledImage?.let { stale -> ImagePage.ImageSingle(stale).cleanup() }
+                }
+            }
+            // Terminal state reached either way: drop any coalesced retry for this side. The
+            // anchor-keyed retry, if any, self-terminates on equal heights at the next pass.
+            resetSpreadHeightRetry(sourcePage)
+
+            if (swapped) {
+                pager.state.invalidate()
+                translationSource?.let { scheduleTranslation(sourcePage, it) }
+            }
+        } finally {
+            // Cancellation skipped the reset above, because the catch rethrows before reaching it.
+            // rescaleInFlight gates both scheduleSpreadHeightMatch and the plan check above, so a
+            // flag stranded true cancels every future height-match for this page until it is evicted -
+            // which is why this is a finally and not another line in the happy path.
+            synchronized(lock) { sourcePage.rescaleInFlight = false }
         }
     }
 }

@@ -10,13 +10,26 @@ import tachiyomi.source.local.isLocal
 import java.io.InputStream
 import java.time.Instant
 
-fun Manga.removeCovers(coverCache: CoverCache = globalAppGraph.coverCache): Manga {
+/**
+ * Leaves this manga's covers on disk now that it has left the library.
+ *
+ * Deleting them meant the common browse-then-add cycle re-downloaded an image that was already
+ * cached. They are dropped later instead, by [CoverCache.pruneOrphanedCovers], once nothing in the
+ * library points at them and the retention window has passed.
+ *
+ * The returned copy bumps `coverLastModified` when a cover was actually there, so a cover visible
+ * behind the removal redraws instead of lingering - which is the only reason this returns anything.
+ *
+ * The files are stamped for a second, independent reason: [CoverCache.pruneOrphanedCovers] ages
+ * covers by mtime, so a cover written months before this point would read as overdue the moment it
+ * was retained. See [CoverCache.markRetained].
+ */
+fun Manga.retainCovers(coverCache: CoverCache = globalAppGraph.coverCache): Manga {
     if (isLocal()) return this
-    return if (coverCache.deleteFromCache(this, true) > 0) {
-        copy(coverLastModified = Instant.now().toEpochMilli())
-    } else {
-        this
-    }
+    if (!coverCache.hasRetainedCover(this)) return this
+    val now = Instant.now().toEpochMilli()
+    coverCache.markRetained(this, now)
+    return copy(coverLastModified = now)
 }
 
 suspend fun Manga.editCover(

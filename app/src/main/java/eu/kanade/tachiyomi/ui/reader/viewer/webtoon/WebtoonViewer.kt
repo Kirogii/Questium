@@ -321,7 +321,12 @@ class WebtoonViewer(
     }
 
     fun onScrolled(pos: Int? = null) {
-        val position = pos ?: layoutManager.findLastEndVisibleItemPosition()
+        // A page too tall for the decoder was replaced by its segments after this viewer built its
+        // item list, so the position below has to be resolved against the rebuilt one.
+        val reconciled = syncPageList()
+        // An explicit position is an index into the list the rebuild just replaced, so it only
+        // survives when nothing changed.
+        val position = if (reconciled || pos == null) layoutManager.findLastEndVisibleItemPosition() else pos
         val item = adapter.items.getOrNull(position)
         val allowPreload = checkAllowPreload(item as? ReaderPage)
         if (item != null && currentPage != item) {
@@ -331,6 +336,48 @@ class WebtoonViewer(
                 is ChapterTransition -> onTransitionSelected(item)
             }
         }
+    }
+
+    /**
+     * Rebuilds the item list if the chapter's page list was replaced underneath us, and drops
+     * [currentPage] when it is the page the split removed.
+     *
+     * Clearing it matters because [onScrolled] only reports an item it has not reported before: left
+     * in place, the page that has taken its slot would be skipped and the progress display would
+     * keep naming a page the chapter no longer lists.
+     *
+     * Returns true when the list changed, so an explicit position can be discarded.
+     */
+    private fun syncPageList(): Boolean {
+        val chapter = adapter.currentChapter ?: return false
+        if (!adapter.syncPageList(chapter)) return false
+        if ((currentPage as? ReaderPage)?.supersededBySplit == true) {
+            currentPage = null
+        }
+        return true
+    }
+
+    /**
+     * Rebuilds the item list once a page reaches [Page.State.Ready], if that load split it.
+     *
+     * The loader cuts a too-tall image as it finishes loading, which lengthens the chapter's page
+     * list while the recycler still holds the shorter one. Scroll callbacks do not cover that on
+     * their own - the items beyond the split are simply not there to scroll to.
+     *
+     * The version compare is the only guard, and it is the one that terminates: this fires for the
+     * page the split replaced, whose load did the cutting, and stops firing once the rebuilt list
+     * has caught up. Gating on the page instead would skip exactly the page that needs rebuilding.
+     *
+     * Posted rather than called inline, because the caller is a holder mid-decode and the rebuild
+     * rebinds holders - including the one that asked.
+     */
+    internal fun onPageReady(page: ReaderPage) {
+        val chapter = adapter.currentChapter ?: return
+        // A page of an adjacent chapter finishing its load says nothing about this chapter's list,
+        // and it is not the current chapter the adapter would rebuild from either.
+        if (page.chapter !== chapter) return
+        if (chapter.pageListVersion == adapter.currentPageListVersion) return
+        recycler.post { onScrolled() }
     }
 
     /**

@@ -26,3 +26,7 @@
 *.wav binary
 *.mp3 binary
 *.ogg binary
+*.so binary
+*.dll binary
+*.bin binary
+*.jks binary

@@ -343,6 +343,7 @@ data class BrowseSourceScreen(
                 source = screenModel.source,
                 mangaList = mangaList,
                 columns = screenModel.getColumnsPreference(LocalConfiguration.current.orientation),
+                columnsCount = screenModel.getConfiguredColumns(LocalConfiguration.current.orientation),
                 // SY -->
                 ehentaiBrowseDisplayMode = screenModel.ehentaiBrowseDisplayMode,
                 // SY <--

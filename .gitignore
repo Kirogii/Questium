@@ -15,6 +15,9 @@ build
 # Configuration files
 local.properties
 
+# Machine-local daemon JVM criteria, written by Gradle's own tooling on first run
+gradle/gradle-daemon-jvm.properties
+
 # macOS specific files
 .DS_Store
 

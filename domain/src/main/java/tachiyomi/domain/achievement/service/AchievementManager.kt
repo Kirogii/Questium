@@ -4,6 +4,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import tachiyomi.domain.achievement.interactor.GetStaleUnstartedBacklog
+import tachiyomi.domain.achievement.model.Achievement
 import tachiyomi.domain.achievement.model.AchievementStats
 import tachiyomi.domain.achievement.model.AchievementTier
 import tachiyomi.domain.achievement.model.Achievements
@@ -36,7 +37,6 @@ class AchievementManager(
         val r = checkThresholds(count).toMutableList()
         r += bumpWeekendReads()
         if (r.isNotEmpty()) notifyIfNeeded(r)
-        checkUltimateProgress()
         return r
     }
 
@@ -82,7 +82,6 @@ class AchievementManager(
         if (total >= 60000) tryUnlock("reading_time_1000h", unlocked)
         if (total >= 120000) tryUnlock("ultimate_time_dilation", unlocked)
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        checkUltimateProgress()
         return unlocked
     }
 
@@ -328,14 +327,23 @@ class AchievementManager(
 
     @Synchronized
     fun onBacklogCleared(count: Int = 1): List<String> {
+        val unlocked = onBacklogClearedQuiet(count)
+        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
+        return unlocked
+    }
+
+    /**
+     * Counts a cleared backlog entry and returns what it unlocked, without notifying. Callers
+     * that own a wider batch add the result to their own list so one event yields one toast
+     * batch and one complete return value. Already `@Synchronized` by way of its callers.
+     */
+    private fun onBacklogClearedQuiet(count: Int = 1): List<String> {
         if (!prefs.achievementsEnabled().get()) return emptyList()
         repeat(count.coerceIn(1, 1000)) { prefs.incrementBacklogCleared() }
         val total = prefs.backlogClearedCount().get().coerceAtLeast(0L)
         val unlocked = mutableListOf<String>()
         if (total >= 10) tryUnlock("backlog_cleared_10", unlocked)
         if (total >= 100) tryUnlock("backlog_cleared_100", unlocked)
-        if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        checkUltimateProgress()
         return unlocked
     }
 
@@ -389,12 +397,15 @@ class AchievementManager(
         if (count >= 10) tryUnlock("ten_manga_finished", unlocked)
         if (count >= 20) tryUnlock("twenty_manga_finished", unlocked)
         if (count >= 50) tryUnlock("fifty_manga_finished", unlocked)
-        onBacklogCleared(1)
-        // KMK --> No backlog recompute here: finishing implies the entry was already started, so
+        // KMK --> Composed rather than delegated: onBacklogCleared used to notify on its own, so
+        // finishing one manga produced two toast batches and its return value (which the caller
+        // uses for the "what did this event unlock" list) silently dropped the backlog tiers.
+        // onBacklogClearedQuiet counts without notifying or re-evaluating the library gate.
+        // No backlog recompute here either: finishing implies the entry was already started, so
         // it cannot be in the stale-unstarted set. refreshBacklog covers the other triggers.
         // KMK <--
+        unlocked += onBacklogClearedQuiet()
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        checkUltimateProgress()
         return unlocked
     }
 
@@ -410,8 +421,10 @@ class AchievementManager(
         if (count >= 10) tryUnlock("ten_manga_caught_up", unlocked)
         if (count >= 20) tryUnlock("twenty_manga_caught_up", unlocked)
         if (count >= 50) tryUnlock("fifty_manga_caught_up", unlocked)
+        // KMK --> Composed for the same reason as onMangaFinished: one event, one batch.
+        // KMK <--
+        unlocked += onBacklogClearedQuiet()
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        checkUltimateProgress()
         return unlocked
     }
 
@@ -445,8 +458,10 @@ class AchievementManager(
         // a query, and this entry point is synchronous and called from the library's own flows.
         // The caller refreshes with force = true instead.
         // KMK <--
+        // The only event that moves the library count, so it is the only one that can satisfy
+        // the library-side collection gate without an unlock happening first.
+        checkCollectionProgress(unlocked)
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        checkUltimateProgress()
         return unlocked
     }
 
@@ -504,7 +519,6 @@ class AchievementManager(
         val unlocked = mutableListOf<String>()
         tryUnlock("secret_jxl", unlocked)
         if (unlocked.isNotEmpty()) notifyIfNeeded(unlocked)
-        checkUltimateProgress()
         return unlocked
     }
 
@@ -525,28 +539,34 @@ class AchievementManager(
         return unlocked
     }
 
-    private fun checkUltimateProgress() {
-        // KMK --> Both conditions are monotone - the unlocked set and the library count only grow
-        // - so once both are satisfied this can never fire again. It runs on every chapter read
-        // and every library change, and re-reading plus re-validating the whole unlocked set is
-        // the expensive half, so short-circuit before doing any of it.
-        // KMK <--
-        if (prefs.isUnlocked("ultimate_perfection") && prefs.isUnlocked("ultimate_eternal_library")) return
+    /**
+     * Collection achievements are a function of the unlocked set and the library size, so they
+     * only need re-evaluating when one of those two moves - never on every event. They used to
+     * be checked from each handler's tail, which meant the per-chapter-read path re-parsed and
+     * re-validated the whole unlocked CSV to evaluate two thresholds; [tryUnlock] is the one
+     * place the set can change, and [onLibraryCountChanged] the one place the library can.
+     */
+    private fun checkCollectionProgress(out: MutableList<String>) {
+        // Both conditions are monotone - the unlocked set and the library count only grow - so
+        // once both are satisfied this can never fire again.
+        if (prefs.isUnlocked(ULTIMATE_PERFECTION) && prefs.isUnlocked(ULTIMATE_ETERNAL_LIBRARY)) return
         val countable = prefs.getUnlockedIds().count { Achievements.forId(it)?.countsTowardsProgress == true }
-        if (countable >= 200) tryUnlockDirect("ultimate_perfection")
-        val library = prefs.libraryMangaCount().get()
-        if (library >= 2000) tryUnlockDirect("ultimate_eternal_library")
+        // The private tryUnlock, not tryUnlockDirect: this runs inside another event's batch, and
+        // notifying here would split one event into two toast batches.
+        if (countable >= 200) tryUnlock(ULTIMATE_PERFECTION, out)
+        if (prefs.libraryMangaCount().get() >= 2000) tryUnlock(ULTIMATE_ETERNAL_LIBRARY, out)
     }
 
     private fun tryUnlock(id: String, out: MutableList<String>) {
         if (!prefs.achievementsEnabled().get()) return
         if (prefs.unlock(id)) {
             out.add(id)
-            // Collection achievements are a function of the whole unlocked set, so they can only
-            // be reached by re-checking on every unlock. tryUnlock is the one funnel all of them
-            // pass through. Without this they were wait-and-see-forever: defined, given a
-            // progress bar, and no code path ever evaluated them.
+            // Collection achievements can only be reached by re-checking whenever the set grows,
+            // so tryUnlock is the one funnel they all pass through. Without this they were
+            // wait-and-see-forever: defined, given a progress bar, and no code path ever
+            // evaluated them.
             unlockCollections(out)
+            checkCollectionProgress(out)
         }
     }
 
@@ -558,23 +578,26 @@ class AchievementManager(
      * unlock, which is unbounded recursion. Going straight to the pref store cannot re-enter.
      */
     private fun unlockCollections(out: MutableList<String>) {
+        // KMK --> This runs on every successful unlock, and a restore can perform fifty of them
+        // back to back. Deriving the tier lists here re-filtered the whole catalogue each time,
+        // so they are resolved once per catalogue and cached; the sets they are derived from
+        // (byId, all) are themselves already lazily built from the same source.
+        // KMK <--
         val unlocked = prefs.getUnlockedIds()
-        val all = Achievements.all
 
-        val secrets = all.count { it.isSecret && it.id in unlocked }
+        val secrets = unlocked.count { it in SECRET_IDS }
         if (secrets >= 10) unlockQuietly("secret_all_secret", out)
         if (secrets >= 20) unlockQuietly("ultimate_secret_hunter_ultimate", out)
 
-        val mythic = all.filter { it.tier == AchievementTier.MYTHIC }
-        if (mythic.count { it.id in unlocked } >= 5) unlockQuietly("secret_mythic_hoard", out)
+        if (unlocked.count { it in MYTHIC_IDS } >= 5) unlockQuietly("secret_mythic_hoard", out)
 
         // "Every PLATINUM" reads as the non-secret tiers; the secret platinums are themselves
         // gated behind collection achievements, so counting them here would deadlock.
-        val platinum = all.filter { it.tier == AchievementTier.PLATINUM && !it.isSecret }
-        if (platinum.isNotEmpty() && platinum.all { it.id in unlocked }) unlockQuietly("secret_platinum_club", out)
+        if (OPEN_PLATINUM_IDS.isNotEmpty() && unlocked.containsAll(OPEN_PLATINUM_IDS)) {
+            unlockQuietly("secret_platinum_club", out)
+        }
 
-        val openIds = all.filterNot { it.isSecret }.map { it.id }
-        if (openIds.isNotEmpty() && unlocked.containsAll(openIds)) unlockQuietly("secret_100_percent", out)
+        if (OPEN_IDS.isNotEmpty() && unlocked.containsAll(OPEN_IDS)) unlockQuietly("secret_100_percent", out)
     }
 
     private fun unlockQuietly(id: String, out: MutableList<String>) {
@@ -593,6 +616,38 @@ class AchievementManager(
 
     // KMK -->
     private companion object {
+        val SECRET_IDS: Set<String> by lazy { Achievements.secrets.mapToIdSet() }
+        val MYTHIC_IDS: Set<String> by lazy {
+            Achievements.all.filterToIdSet { it.tier == AchievementTier.MYTHIC }
+        }
+        val OPEN_PLATINUM_IDS: Set<String> by lazy {
+            Achievements.all.filterToIdSet { it.tier == AchievementTier.PLATINUM && !it.isSecret }
+        }
+        val OPEN_IDS: Set<String> by lazy {
+            Achievements.all.filterToIdSet { !it.isSecret }
+        }
+
+        /**
+         * Ids of the achievements matching [keep], for O(1) membership tests.
+         *
+         * Takes an [Iterable] rather than a [Sequence] because the catalogue accessors hand back
+         * lists, and `Achievement` has to be projected to its id - filtering straight into a set
+         * would collect the achievements themselves, which is not what every caller compares
+         * against.
+         */
+        private fun Iterable<Achievement>.filterToIdSet(keep: (Achievement) -> Boolean): Set<String> {
+            val ids = mutableSetOf<String>()
+            for (achievement in this) {
+                if (keep(achievement)) ids += achievement.id
+            }
+            return ids
+        }
+
+        private fun Iterable<Achievement>.mapToIdSet(): Set<String> = mapTo(mutableSetOf()) { it.id }
+
+        const val ULTIMATE_PERFECTION = "ultimate_perfection"
+        const val ULTIMATE_ETERNAL_LIBRARY = "ultimate_eternal_library"
+
         const val REFRESH_THROTTLE_MS = 15L * 60L * 1000L
         // A single missed day does not end a streak, so "read N days in a row" tolerates one gap.
         const val STREAK_GRACE_DAYS = 1L
@@ -651,7 +706,13 @@ class AchievementManager(
 
     fun wipeWithConfirmation(firstConfirmed: Boolean, secondConfirmed: Boolean): Boolean {
         if (!firstConfirmed || !secondConfirmed) return false
-        prefs.wipe()
+        // The counter names are supplied here because this class owns the catalogue; without
+        // them the wipe left lifetime counters populated and the tiers built on them
+        // unreachable for the rest of the install.
+        prefs.wipe(
+            counterNames = COUNTER_TIERS.keys,
+            dailyCounterNames = DAILY_COUNTER_TIERS.keys,
+        )
         return true
     }
 }

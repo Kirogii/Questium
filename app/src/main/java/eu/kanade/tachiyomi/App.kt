@@ -220,7 +220,6 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             kotlinx.coroutines.delay(1500)
             runCatching {
                 eu.kanade.tachiyomi.data.achievement.FeatureAchievementHooks(
-                    prefs = globalAppGraph.achievementPreferences,
                     manager = globalAppGraph.achievementManager,
                     uiPreferences = globalAppGraph.uiPreferences,
                     connectionsPreferences = globalAppGraph.connectionsPreferences,
@@ -342,6 +341,12 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 
         setAppCompatDelegateThemeMode(globalAppGraph.uiPreferences.themeMode().get())
 
+        // KMK --> Seeded here so RAM-gated settings rows compose against the real bypass
+        // value instead of the default false. Without it, a user who already disabled the gate
+        // on a previous launch still saw every gated AI category hidden.
+        eu.kanade.presentation.more.settings.RamGateState.seed(this)
+        // KMK <--
+
         ProcessLifecycleOwner.get().lifecycleScope.launchIO {
             runCatching { MangaCoverMetadata.load() }
                 .onFailure { xLogE("Failed to load cover metadata", it) }
@@ -433,7 +438,14 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
                     .build(),
             )
 
-            crossfade((300 * this@App.animatorDurationScale).toInt())
+            // With system animations off the scale is 0, which turns the crossfade into a
+            // zero-duration transition that still allocates and drives an animation per image load -
+            // across a library scroll that is a lot of wasted frames for something the user asked
+            // to have no animation. Omitting crossfade entirely is also what the platform does.
+            val imageAnimatorScale = animatorDurationScale
+            if (imageAnimatorScale > 0f) {
+                crossfade((300 * imageAnimatorScale).toInt())
+            }
             allowRgb565(isLowRam)
             // KMK -->
             if (EHLogLevel.isExtraLogging()) logger(DebugLogger())

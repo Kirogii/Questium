@@ -53,6 +53,7 @@ import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.domain.track.store.DelayedTrackingStore
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.presentation.theme.colorscheme.WallpaperSeedSampler
 import eu.kanade.tachiyomi.App
 import eu.kanade.tachiyomi.core.security.PrivacyPreferences
 import eu.kanade.tachiyomi.core.security.SecurityPreferences
@@ -78,6 +79,7 @@ import eu.kanade.tachiyomi.data.sync.service.GoogleDriveSyncService
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.data.webhook.WebhookNotifier
+import eu.kanade.tachiyomi.extension.ExtensionErrorReporter
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -254,6 +256,8 @@ interface AppGraph : ViewModelGraph {
 
     val viewModelFactory: MetroViewModelFactory
 
+    val wallpaperSeedSampler: WallpaperSeedSampler
+
     // Preferences
     val basePreferences: BasePreferences
     val uiPreferences: UiPreferences
@@ -276,6 +280,7 @@ interface AppGraph : ViewModelGraph {
     val sourceManager: SourceManager
     val trackerManager: TrackerManager
     val extensionManager: ExtensionManager
+    val extensionErrorReporter: ExtensionErrorReporter
     val chapterCache: ChapterCache
     val downloadCache: DownloadCache
     val networkHelper: NetworkHelper
@@ -299,6 +304,7 @@ interface AppGraph : ViewModelGraph {
     // Accessors added while migrating remaining call sites off Injekt
     val protoBuf: ProtoBuf
     val sqlDriver: SqlDriver
+    val databaseExporter: eu.kanade.tachiyomi.data.database.DatabaseExporter
     val databaseHandler: DatabaseHandler
     val database: Database
     val mangaRepository: MangaRepository

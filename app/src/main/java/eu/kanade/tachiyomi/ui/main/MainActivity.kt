@@ -56,6 +56,7 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.connections.service.ConnectionsPreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.presentation.browse.ExtensionErrorReportDialog
 import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
@@ -83,6 +84,7 @@ import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.data.updater.RELEASE_URL
 import eu.kanade.tachiyomi.extension.api.ExtensionApi
+import eu.kanade.tachiyomi.extension.copyExtensionErrorToClipboard
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
 import eu.kanade.tachiyomi.ui.browse.source.browse.BrowseSourceScreen
 import eu.kanade.tachiyomi.ui.browse.source.feed.SourceFeedScreen
@@ -387,6 +389,9 @@ open class MainActivity : BaseActivity() {
                 // KMK <--
                 CheckForUpdates()
                 ShowOnboarding()
+                // KMK -->
+                ShowExtensionErrorReport()
+                // KMK <--
             }
 
             // SY -->
@@ -551,6 +556,40 @@ open class MainActivity : BaseActivity() {
             } catch (e: Exception) {
                 logcat(LogPriority.ERROR, e)
             }
+        }
+    }
+
+    /**
+     * Watches for extension failures reported anywhere in the app and asks the user to report them
+     * to the repository that ships the broken extension.
+     */
+    @Composable
+    private fun ShowExtensionErrorReport() {
+        // KMK -->
+        val context = LocalContext.current
+        val reporter = globalAppGraph.extensionErrorReporter
+        val report by reporter.pendingPrompt.collectAsState()
+
+        val current = report
+        if (current != null) {
+            ExtensionErrorReportDialog(
+                report = current,
+                onOk = reporter::dismissPrompt,
+                onDontShowAgain = reporter::suppressCurrentVersion,
+                onSearchGitHub = { url -> context.openExtensionRepoLink(url) },
+                onCopyReport = { context.copyExtensionErrorToClipboard(current) },
+            )
+        }
+        // KMK <--
+    }
+
+    private fun Context.openExtensionRepoLink(url: String) {
+        runCatching {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, url.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure {
+            logcat(LogPriority.WARN) { "Could not open extension issue search: $url" }
         }
     }
 

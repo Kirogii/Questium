@@ -68,6 +68,13 @@ void fillInputTile(
     }
 }
 
+// Composites a model tile into the RGBA scratch buffer, RGB only.
+//
+// Alpha is not carried through: the super-resolution models run on RGB planes, so
+// this writes only the three colour channels and resampleRgba reconstructs alpha by
+// nearest-neighbour lookup into the source. A page that relies on real transparency
+// therefore comes back opaque rather than translucent. Treat this as the reason a
+// transparent source is not worth upscaling rather than as a defect to route around.
 bool copyOutputTile(
     const ncnn::Mat& output,
     int coreWidth,
@@ -255,6 +262,7 @@ Java_exh_yakuyomi_NativeUpscaler_nativeCreate(
 
 extern "C" JNIEXPORT void JNICALL
 Java_exh_yakuyomi_NativeUpscaler_nativeDestroy(JNIEnv*, jobject, jlong handle) {
+    if (handle == 0) return;
     delete reinterpret_cast<UpscaleSession*>(handle);
 }
 
@@ -271,15 +279,24 @@ Java_exh_yakuyomi_NativeUpscaler_nativeProcess(
     jint tileSize,
     jint padding,
     jintArray outputPixels) {
+    // A 0 handle is the "session already closed" sentinel on the Kotlin side. The caller's
+    // `handle == 0` guard is not atomic with this call (close() can run from another thread on a
+    // model-status change), so re-check here instead of dereferencing the sentinel.
+    if (handle == 0) return -10;
     auto* session = reinterpret_cast<UpscaleSession*>(handle);
     if (session == nullptr || inputPixels == nullptr || outputPixels == nullptr) return -1;
     if (width <= 0 || height <= 0 || targetWidth <= 0 || targetHeight <= 0) return -2;
     if (width > kMaxDimension || height > kMaxDimension || targetWidth > kMaxDimension || targetHeight > kMaxDimension) return -3;
     if (static_cast<int64_t>(width) * height > kMaxPixels || static_cast<int64_t>(targetWidth) * targetHeight > kMaxPixels) return -4;
 
+    // int64_t, not int: `width * height` overflows the 32-bit product for any side above ~46341,
+    // which a largeHeap device can hand us (kMaxPixels is 16.7M pixels per side pair).
+    const int64_t inputNeeded = static_cast<int64_t>(width) * height;
+    const int64_t outputNeeded = static_cast<int64_t>(targetWidth) * targetHeight;
     const jsize inputCount = env->GetArrayLength(inputPixels);
     const jsize outputCount = env->GetArrayLength(outputPixels);
-    if (inputCount < width * height || outputCount < targetWidth * targetHeight) return -5;
+    if (static_cast<int64_t>(inputCount) < inputNeeded ||
+        static_cast<int64_t>(outputCount) < outputNeeded) return -5;
 
     const int nativeWidth = width * session->nativeScale;
     const int nativeHeight = height * session->nativeScale;

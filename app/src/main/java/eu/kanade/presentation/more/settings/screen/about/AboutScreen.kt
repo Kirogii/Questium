@@ -97,10 +97,13 @@ class AboutScreen : Screen() {
                             val now = System.currentTimeMillis()
                             val pruned = (versionTapTimes.filter { now - it < 60_000 } + now)
                             versionTapTimes = pruned
-                            if (exh.yakuyomi.DeviceMemory.isRamGateDisabled(context)) {
+                            if (eu.kanade.presentation.more.settings.RamGateState.isDisabled.value) {
                                 context.toast("RAM gate already disabled")
                             } else if (pruned.size >= 10) {
-                                exh.yakuyomi.DeviceMemory.setRamGateDisabled(context, true)
+                                // Routed through RamGateState so the RAM-gated settings rows
+                                // recompose immediately; a bare SharedPreferences write left
+                                // them on their pre-toggle verdict.
+                                eu.kanade.presentation.more.settings.RamGateState.setDisabled(context, true)
                                 context.toast("RAM gate disabled – all features unlocked")
                             }
                         },

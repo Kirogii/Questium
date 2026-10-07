@@ -8,9 +8,9 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import com.materialkolor.DynamicMaterialExpressiveTheme // TODO: Consider switching to a stable Material3 Compose library when materialkolor stabilizes or migrate to official Material3 dynamic color APIs
-import eu.kanade.domain.ui.UiPreferences
 import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.presentation.theme.colorscheme.BaseColorScheme
 import eu.kanade.presentation.theme.colorscheme.CatppuccinColorScheme
@@ -34,6 +34,7 @@ import eu.kanade.presentation.theme.colorscheme.TealTurqoiseColorScheme
 import eu.kanade.presentation.theme.colorscheme.TidalWaveColorScheme
 import eu.kanade.presentation.theme.colorscheme.YinYangColorScheme
 import eu.kanade.presentation.theme.colorscheme.YotsubaColorScheme
+import eu.kanade.presentation.theme.colorscheme.rememberWallpaperSeed
 import mihon.app.di.globalAppGraph
 
 @Composable
@@ -91,16 +92,27 @@ private fun BaseTachiyomiTheme(
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
     val isDark = isSystemInDarkTheme()
+    // Only Monet below Android 12 has to sample the wallpaper for a seed, and that runs off the main
+    // thread. Keying on it is what lets the scheme settle onto the wallpaper's own colours once the
+    // sample lands; without the key the first-composition fallback would stick for the session.
+    val wallpaperSeed = rememberWallpaperSeed(appTheme)
+    // Monet and CUSTOM are seeded from live system state (wallpaper colours, the user's
+    // accent). Re-resolving only when the enum changed left the app showing the colours
+    // captured at composition time, so a wallpaper or accent change stayed invisible
+    // until the process restarted - the one thing a dynamic theme must not do.
+    val scheme = remember(configuration, appTheme, isDark, isAmoled, wallpaperSeed) {
+        getThemeColorScheme(
+            context = context,
+            appTheme = appTheme,
+            isDark = isDark,
+            isAmoled = isAmoled,
+            wallpaperSeed = wallpaperSeed,
+        )
+    }
     MaterialTheme(
-        colorScheme = remember(appTheme, isDark, isAmoled) {
-            getThemeColorScheme(
-                context = context,
-                appTheme = appTheme,
-                isDark = isDark,
-                isAmoled = isAmoled,
-            )
-        },
+        colorScheme = scheme,
         content = content,
     )
 }
@@ -110,10 +122,11 @@ private fun getThemeColorScheme(
     appTheme: AppTheme,
     isDark: Boolean,
     isAmoled: Boolean,
+    wallpaperSeed: Color? = null,
 ): ColorScheme {
     val colorScheme = when (appTheme) {
         AppTheme.MONET -> {
-            MonetColorScheme(context)
+            MonetColorScheme(context, wallpaperSeed, isAmoled)
         }
         // KMK -->
         AppTheme.CUSTOM -> {

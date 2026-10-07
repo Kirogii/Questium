@@ -274,11 +274,20 @@ data class TrackInfoDialogHomeScreen(
         // KMK <--
 
         init {
+            // KMK --> Sequenced, not concurrent. These used to be two independent launches, so
+            // the track flow emitted the stale local rows immediately while refreshTrackers()
+            // was still talking to every tracker - the dialog rendered one set of information
+            // and then swapped the whole thing for another a moment later. Refreshing first means
+            // the first (and only) emission already carries the fetched values.
+            // KMK <--
             screenModelScope.launch {
-                refreshTrackers()
-            }
+                mutableState.update { it.copy(isLoading = true) }
+                try {
+                    refreshTrackers()
+                } finally {
+                    mutableState.update { it.copy(isLoading = false) }
+                }
 
-            screenModelScope.launch {
                 getTracks.subscribe(mangaId)
                     .catch { logcat(LogPriority.ERROR, it) }
                     .distinctUntilChanged()

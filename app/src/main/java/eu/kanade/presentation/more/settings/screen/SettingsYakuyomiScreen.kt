@@ -145,7 +145,10 @@ object SettingsYakuyomiScreen : SearchableSettings {
     ): Preference.PreferenceGroup {
         val enabled by prefs.enabled().collectAsState()
         val context = LocalContext.current
-        val lowRam = !exh.yakuyomi.DeviceMemory.isMtlSupported(context)
+        // Collected, not read: the About easter egg flips the RAM gate at runtime and this
+        // drives whether the master switch is usable.
+        val ramGateDisabled by eu.kanade.presentation.more.settings.RamGateState.isDisabled.collectAsState()
+        val lowRam = !ramGateDisabled && !exh.yakuyomi.DeviceMemory.hasSufficientRam(context, exh.yakuyomi.DeviceMemory.MTL_MIN_RAM_BYTES)
         return Preference.PreferenceGroup(
             // KMK --> No header: every row below is already self-labelled, and a header
             // repeating the "Enable AI Translation" switch title was pure duplication.
@@ -710,7 +713,10 @@ object SettingsYakuyomiScreen : SearchableSettings {
     internal fun getModelGroup(modelManager: exh.yakuyomi.ModelManager): Preference.PreferenceGroup {
         val status by modelManager.status.collectAsState()
         val context = LocalContext.current
-        val lowRam = !exh.yakuyomi.DeviceMemory.isMtlSupported(context)
+        // Collected, not read: the About easter egg flips the RAM gate at runtime and this
+        // drives whether the master switch is usable.
+        val ramGateDisabled by eu.kanade.presentation.more.settings.RamGateState.isDisabled.collectAsState()
+        val lowRam = !ramGateDisabled && !exh.yakuyomi.DeviceMemory.hasSufficientRam(context, exh.yakuyomi.DeviceMemory.MTL_MIN_RAM_BYTES)
         val modelsClearedText = stringResource(KMR.strings.mtl_models_cleared)
         val actionTitle = when (status.state) {
             exh.yakuyomi.ModelManager.State.DOWNLOADING -> stringResource(KMR.strings.mtl_models_cancel)

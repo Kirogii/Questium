@@ -38,7 +38,14 @@ class UpscaleEngine(
     private data class InferenceCandidate(
         val backend: UpscalePreferences.Backend,
         val model: ResolvedUpscaleModel,
-    )
+    ) {
+        /**
+         * The native session is cached under this, so a page that succeeds reuses the loaded
+         * weights and a page that fails can evict exactly the entry that failed (see
+         * [dropNcnnSession]).
+         */
+        val sessionKey: String get() = "$backend:${model.id}:${model.nativeScale}"
+    }
 
     private val backendDetector by lazy { UpscaleBackendDetector(context) }
     private val cacheManager by lazy { UpscaleCacheManager(context.cacheDir) }
@@ -255,6 +262,11 @@ class UpscaleEngine(
                 bitmap.height,
                 requestedScale,
             )
+            // A request that clamps back onto the source dimensions is a no-op, so skip the load
+            // rather than infer the page only to resample it to the size it started at. Reached
+            // only when a dimension or pixel cap binds: `upscaleIfNeeded` already rejects factors
+            // below ~1.02, so an ordinary 2x/4x request never lands here.
+            if (targetWidth == bitmap.width && targetHeight == bitmap.height) return null
             val (nativeWidth, nativeHeight) = UpscaleScalingStrategy.scaledDimensions(
                 bitmap.width,
                 bitmap.height,
@@ -267,11 +279,13 @@ class UpscaleEngine(
                     val session = ncnnSession(candidate, modelManager.fileFor(param).absolutePath, modelManager.fileFor(bin).absolutePath)
                         ?: return null
                     session.process(bitmap, nativeWidth, nativeHeight, candidate.model.tileSize, candidate.model.padding)
+                        .also { if (it == null) dropNcnnSession(candidate.sessionKey, session) }
                 }
                 UpscaleModelFormat.ONNX -> {
                     val model = candidate.model.artifact("model") ?: return null
                     val session = ortSession(candidate, modelManager.fileFor(model).absolutePath) ?: return null
                     session.process(bitmap, nativeWidth, nativeHeight)
+                        .also { if (it == null) dropOrtSession(candidate.sessionKey, session) }
                 }
             } ?: return null
             nativeBitmap = output
@@ -293,7 +307,7 @@ class UpscaleEngine(
         paramPath: String,
         binPath: String,
     ): NativeUpscaleSession? = synchronized(sessionLock) {
-        val key = "${candidate.backend}:${candidate.model.id}:${candidate.model.nativeScale}"
+        val key = candidate.sessionKey
         ncnnSessions[key]?.let { return@synchronized it }
         val backend = if (candidate.backend == UpscalePreferences.Backend.VULKAN) {
             NativeUpscaler.Backend.VULKAN
@@ -310,8 +324,32 @@ class UpscaleEngine(
         )?.also { ncnnSessions[key] = it }
     }
 
+    /**
+     * Drops the cached session for [key] when its inference came back empty.
+     *
+     * A session that cannot run this model never will: the failure is in the weights, the backend,
+     * or the device's driver, not in the page. Left cached, every later page re-pays the session
+     * load and re-runs the failing inference, so one device-level problem costs the reader a full
+     * model load per page forever while looking like "upscaling just doesn't work here". Dropping it
+     * makes the next attempt pay the load once and then fall through to the next backend, and a
+     * later success recreates a working session.
+     */
+    private fun dropNcnnSession(key: String, session: NativeUpscaleSession) {
+        val evicted = synchronized(sessionLock) {
+            ncnnSessions.remove(key)?.takeIf { it === session } != null
+        }
+        if (evicted) runCatching { session.close() }
+    }
+
+    private fun dropOrtSession(key: String, session: OrtUpscaleSession) {
+        val evicted = synchronized(sessionLock) {
+            ortSessions.remove(key)?.takeIf { it === session } != null
+        }
+        if (evicted) runCatching { session.close() }
+    }
+
     private fun ortSession(candidate: InferenceCandidate, modelPath: String): OrtUpscaleSession? = synchronized(sessionLock) {
-        val key = "${candidate.backend}:${candidate.model.id}:${candidate.model.nativeScale}"
+        val key = candidate.sessionKey
         ortSessions[key]?.let { return@synchronized it }
         OrtUpscaleSession.open(
             modelPath = modelPath,
@@ -364,15 +402,43 @@ class UpscaleEngine(
         }
     }
 
-    private fun compressForCache(bitmap: Bitmap): ByteArray? = runCatching {
-        val pngOut = java.io.ByteArrayOutputStream()
-        if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, pngOut)) return null
-        val png = pngOut.toByteArray().takeIf { it.isNotEmpty() }
+    /**
+     * Encodes to the smallest of PNG / WebP that stays under [MAX_PNG_BYTES].
+     *
+     * OOM is caught here as it is in [decodeBitmap], and deliberately falls through to the other
+     * format rather than aborting: PNG's encoder buffers into native memory outside the Java heap
+     * cap, so a large page can exhaust the process during the PNG attempt and still have room for
+     * the far cheaper WebP pass. Returning null would drop the upscaled page entirely, which is
+     * the one outcome worse than a lossier encode.
+     */
+    private fun compressForCache(bitmap: Bitmap): ByteArray? {
+        if (bitmap.isRecycled) return null
+        var png: ByteArray? = null
+        try {
+            val pngOut = java.io.ByteArrayOutputStream()
+            if (bitmap.compress(Bitmap.CompressFormat.PNG, 100, pngOut)) {
+                png = pngOut.toByteArray().takeIf { it.isNotEmpty() }
+            }
+        } catch (e: OutOfMemoryError) {
+            System.gc()
+            logcat(LogPriority.WARN, e) { "Upscale PNG encode OOM; trying WebP" }
+            png = null
+        } catch (_: Exception) {
+            png = null
+        }
         if (png != null && png.size <= MAX_PNG_BYTES) return png
-        val webpOut = java.io.ByteArrayOutputStream()
-        if (!bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 95, webpOut)) return null
-        webpOut.toByteArray().takeIf { it.isNotEmpty() }
-    }.getOrNull()
+        return try {
+            val webpOut = java.io.ByteArrayOutputStream()
+            if (!bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 95, webpOut)) return null
+            webpOut.toByteArray().takeIf { it.isNotEmpty() }
+        } catch (e: OutOfMemoryError) {
+            System.gc()
+            logcat(LogPriority.ERROR, e) { "Upscale WebP encode OOM" }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
 
     private fun runUpscaleSimple(bytes: ByteArray, factor: Float, algo: UpscalePreferences.SimpleAlgo): ByteArray? {
         val bitmap = decodeBitmap(bytes) ?: return null

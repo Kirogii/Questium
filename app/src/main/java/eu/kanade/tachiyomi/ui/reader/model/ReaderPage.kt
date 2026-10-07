@@ -36,11 +36,27 @@ open class ReaderPage(
     var splitSegment: Boolean = false
 
     /**
-     * How many segments this page's image was split into, or 0 while it is still one image.
+     * True once this page has been replaced by the segments of its own split.
      *
-     * Set on the page the split started from, which keeps the split from being redone - and its
-     * extra pages re-added to the chapter - every time the page is queued or reloaded.
+     * A superseded page is no longer in its chapter's list, but a viewer may still be holding it
+     * with a decoded surface attached, which is what draws the old strip over its replacement.
+     * Recording the state on the page itself lets a viewer reject one without having to go back to
+     * the chapter to ask whether it is still real.
+     *
+     * Volatile because the writer and the viewer that reads it are on different threads, and the
+     * write deliberately happens *before* [eu.kanade.tachiyomi.ui.reader.model.ReaderChapter.replacePages]
+     * announces the new list - otherwise a viewer woken by that announcement could still read `false`
+     * here and keep the page it was told to drop.
      */
-    var splitSegmentCount: Int = 0
+    @Volatile
+    var supersededBySplit: Boolean = false
+
+    /**
+     * The page whose split produced this one, or null when this page is not a segment.
+     *
+     * What lets a viewer that was showing the parent land on the first segment instead of on the
+     * chapter's resume target, which after a mid-session split is a different page entirely.
+     */
+    var splitSourcePage: ReaderPage? = null
     // KMK <--
 }

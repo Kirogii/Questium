@@ -65,7 +65,7 @@ class ChapterLoader(
                     chapter.requestedPage = /* SY --> */ page ?: /* SY <-- */ chapter.chapter.last_page_read
                 }
 
-                chapter.state = ReaderChapter.State.Loaded(pages)
+                chapter.replacePages(pages)
             } catch (e: Throwable) {
                 chapter.state = ReaderChapter.State.Error(e)
                 throw e

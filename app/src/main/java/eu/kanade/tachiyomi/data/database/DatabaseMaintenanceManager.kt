@@ -15,6 +15,13 @@ private const val BACKUP_FILE_PREFIX = "tachiyomi-"
 private const val MAX_BACKUPS = 3
 private const val BACKUP_INTERVAL_MS = 24L * 60 * 60 * 1000
 
+private const val PRAGMA_WAL_CHECKPOINT_TRUNCATE = "PRAGMA wal_checkpoint(TRUNCATE)"
+private const val PRAGMA_WAL_CHECKPOINT_FULL = "PRAGMA wal_checkpoint(FULL)"
+private const val PRAGMA_QUICK_CHECK = "PRAGMA quick_check(1)"
+
+/** `wal_checkpoint`'s `busy` column when no reader blocked the checkpoint. */
+private const val CHECKPOINT_NOT_BUSY = "0"
+
 private enum class IntegrityResult { OK, CORRUPT, FAILED }
 
 /**
@@ -87,7 +94,7 @@ class DatabaseMaintenanceManager(
     }
 
     private fun integrityCheckResult(): IntegrityResult {
-        val verdict = runCatching { rawQueryScalar("PRAGMA quick_check(1)", readOnly = true) }
+        val verdict = runCatching { rawQueryScalar(PRAGMA_QUICK_CHECK, readOnly = true) }
             .getOrNull()
             ?.lowercase()
         return when (verdict) {
@@ -132,12 +139,60 @@ class DatabaseMaintenanceManager(
         }
     }
 
+    /**
+     * Folds the write-ahead log into the main file and confirms the result is exportable.
+     *
+     * The live connection runs in WAL mode (`AppBindings.providesSqlDriver`), so recent commits
+     * sit in the `-wal` sidecar until a checkpoint folds them back. Copying only the main file
+     * therefore yields something that opens fine and is quietly missing the last few chapters
+     * read, the newest category rename, the newest tracker rows - which is exactly what makes an
+     * exported database look like it lost data when it is imported elsewhere.
+     *
+     * [wal_checkpoint] returns `(busy, log, checkpointed)`; column 0 is 0 only when no reader was
+     * blocking it, i.e. when every committed frame is now in the main file. TRUNCATE is tried
+     * first because it also empties the sidecar, and FULL is the fallback for the busy case: it
+     * folds in everything committed and leaves an empty `-wal`, which is equally safe to copy.
+     *
+     * Returns the checkpointed file, or null when neither mode completed or the file does not
+     * pass a quick check - the caller must not ship a snapshot in that case.
+     */
+    suspend fun prepareSnapshot(): File? = withContext(Dispatchers.IO) {
+        if (!dbFile.isFile || dbFile.length() == 0L) return@withContext null
+
+        val truncated = runCatching { queryRow(PRAGMA_WAL_CHECKPOINT_TRUNCATE, readOnly = false) }
+            .onFailure { xLogE("WAL truncate checkpoint failed", it) }
+            .getOrNull()
+        if (truncated == CHECKPOINT_NOT_BUSY) return@withContext verifiedOrNull()
+
+        val full = runCatching { queryRow(PRAGMA_WAL_CHECKPOINT_FULL, readOnly = false) }
+            .onFailure { xLogE("WAL full checkpoint failed", it) }
+            .getOrNull()
+        if (full == CHECKPOINT_NOT_BUSY) return@withContext verifiedOrNull()
+
+        xLogE("$databaseName could not be checkpointed; refusing to export a stale copy")
+        null
+    }
+
+    /** Column 0 of the pragma's single row, or null when the pragma did not answer. */
+    private suspend fun queryRow(sql: String, readOnly: Boolean): String? = withContext(Dispatchers.IO) {
+        runCatching { rawQueryScalar(sql, readOnly) }.getOrNull()
+    }
+
+    private suspend fun verifiedOrNull(): File? {
+        val quickCheck = queryRow(PRAGMA_QUICK_CHECK, readOnly = true)
+        if (!quickCheck.equals("ok", ignoreCase = true)) {
+            xLogE("$databaseName failed the pre-export quick check: $quickCheck")
+            return null
+        }
+        return dbFile.takeIf { it.length() > 0L }
+    }
+
     private fun refreshBackup() {
         val newest = latestBackup()
         if (newest != null && System.currentTimeMillis() - newest.lastModified() < BACKUP_INTERVAL_MS) return
 
         runCatching {
-            rawQueryScalar("PRAGMA wal_checkpoint(TRUNCATE)", readOnly = false)
+            rawQueryScalar(PRAGMA_WAL_CHECKPOINT_TRUNCATE, readOnly = false)
             backupDir.mkdirs()
             val target = File(backupDir, "$BACKUP_FILE_PREFIX${System.currentTimeMillis()}.db")
             dbFile.copyTo(target, overwrite = true)

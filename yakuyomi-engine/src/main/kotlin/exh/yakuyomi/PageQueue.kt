@@ -47,6 +47,12 @@ class PageQueue(
     private val workers = ConcurrentHashMap<ChapterKey, Job>()
 
     /**
+     * Chapters whose worker must not be respawned. Held as a set rather than a flag on the worker so
+     * that cancelling a worker and cancelling its replacement are distinguishable.
+     */
+    private val paused = ConcurrentHashMap.newKeySet<ChapterKey>()
+
+    /**
      * Queues [pageIndex] and suspends until it has been translated.
      *
      * A resubmission of the same page replaces the earlier one and cancels its waiter, since a
@@ -62,15 +68,26 @@ class PageQueue(
         sourceLangHint: String,
     ): ByteArray? {
         val key = mangaId to chapterId
-        val queue = pending.computeIfAbsent(key) { ConcurrentSkipListMap() }
-        if (queue.size >= maxPendingPerChapter) {
-            val oldest = queue.firstKey()
-            queue.remove(oldest)?.deferred?.complete(null)
-            xLogE("MTL queue overflow: dropped page $oldest for chapter ${key.second} (queue size ${queue.size})")
-        }
+        // A paused chapter must not accept work: enqueueing anyway would park the page until the
+        // await timed out, so every page the reader binds after a pause would block for two
+        // minutes. Returning null is the paused answer - the caller keeps the original page.
+        if (key in paused) return null
         val deferred = CompletableDeferred<ByteArray?>()
-        val replaced = queue.put(pageIndex, PendingTranslation(imageBytes, sourceLangHint, deferred))
-        replaced?.let { if (!it.deferred.isCompleted) it.deferred.cancel() }
+        // The put happens inside compute(), under the map's lock for this key. A worker retires the
+        // chapter by checking-and-removing the same key atomically, so a page can no longer land in
+        // a map that has just been unregistered - which used to leave its deferred uncompleted and
+        // the caller blocked for the full timeout.
+        pending.compute(key) { _, current ->
+            val queue = current ?: ConcurrentSkipListMap()
+            if (queue.size >= maxPendingPerChapter) {
+                val oldest = queue.firstKey()
+                queue.remove(oldest)?.deferred?.complete(null)
+                xLogE("MTL queue overflow: dropped page $oldest for chapter ${key.second} (queue size ${queue.size})")
+            }
+            val replaced = queue.put(pageIndex, PendingTranslation(imageBytes, sourceLangHint, deferred))
+            replaced?.let { if (!it.deferred.isCompleted) it.deferred.cancel() }
+            queue
+        }
         ensureWorker(key)
         return try {
             withTimeout(timeoutMs) { deferred.await() }
@@ -85,18 +102,27 @@ class PageQueue(
     /** Drops everything queued for a chapter and stops its worker. Waiters are cancelled. */
     fun cancel(mangaId: Long, chapterId: Long) {
         val key = mangaId to chapterId
+        paused.remove(key)
         pending.remove(key)?.values?.forEach { entry -> runCatching { entry.deferred.cancel() } }
         workers.remove(key)?.cancel()
     }
 
-    /** Stops the worker but leaves queued pages, so [resume] can continue where it stopped. */
+    /**
+     * Stops the worker but leaves queued pages, so [resume] can continue where it stopped.
+     *
+     * The chapter has to be recorded as paused, not just have its worker cancelled: the worker's
+     * own `finally` respawns a replacement whenever pages remain queued, which is what keeps a
+     * chapter draining across a page-boundary race - and it would immediately undo the pause.
+     */
     fun pause(mangaId: Long, chapterId: Long) {
         val key = mangaId to chapterId
+        paused.add(key)
         workers.remove(key)?.cancel()
     }
 
     fun resume(mangaId: Long, chapterId: Long) {
         val key = mangaId to chapterId
+        paused.remove(key)
         if (pending[key]?.isNotEmpty() == true) ensureWorker(key)
     }
 
@@ -112,6 +138,7 @@ class PageQueue(
     }
 
     private fun ensureWorker(key: ChapterKey) {
+        if (key in paused) return
         workers.computeIfAbsent(key) {
             scope.launch {
                 try {
@@ -128,10 +155,7 @@ class PageQueue(
                         }
                         if (!job.deferred.isCompleted) job.deferred.complete(result)
                         queue.remove(pageIndex)
-                        if (queue.isEmpty()) {
-                            pending.remove(key)
-                            break
-                        }
+                        if (queue.isEmpty() && retire(key, queue)) break
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -143,12 +167,25 @@ class PageQueue(
                     }
                 } finally {
                     workers.remove(key)
-                    // Work submitted while this worker was finishing still needs a worker.
-                    if (pending[key]?.isNotEmpty() == true) ensureWorker(key)
+                    // Work submitted while this worker was finishing still needs a worker, unless
+                    // the chapter was paused in the meantime - that is the whole point of pausing.
+                    if (key !in paused && pending[key]?.isNotEmpty() == true) ensureWorker(key)
                 }
             }
         }
     }
+
+    /**
+     * Unregisters a drained chapter, returning true when this call is the one that retired it.
+     *
+     * The emptiness check and the removal share the map's lock for this key, which is what makes
+     * them atomic with respect to [submit]. Checking emptiness outside the lock is what allowed a
+     * page submitted in between to be registered into a queue nobody was left to drain.
+     */
+    private fun retire(key: ChapterKey, queue: ConcurrentSkipListMap<Int, PendingTranslation>): Boolean =
+        pending.computeIfPresent(key) { _, current ->
+            if (current === queue && current.isEmpty()) null else current
+        } == null
 
     private companion object {
         const val MAX_PENDING_PER_CHAPTER = 64

@@ -17,7 +17,7 @@ SQLDelight database layer with23 tables/views,46 migrations, and18 repository im
 - `historyView` (~50) – History + max read tracking + chapter count stats
 - `libraryUpdateErrorView` – Error details with manga metadata
 
-**Migrations** in `src/main/sqldelight/tachiyomi/migrations/`: `1.sqm` through `46.sqm`
+**Migrations** in `src/main/sqldelight/tachiyomi/migrations/`: `1.sqm` through `58.sqm`
 
 ## Repository implementations (18)
 
@@ -28,7 +28,7 @@ All in `tachiyomi.data.*`:
 - `MangaMergeRepositoryImpl` (127), `UpdatesRepositoryImpl` (105)
 - `ExtensionStoreRepositoryImpl` (149), `LibraryUpdateErrorRepositoryImpl` (74)
 - `MangaMetadataRepositoryImpl` (119), `FavoritesEntryRepositoryImpl` (66)
-- `CustomMangaRepositoryImpl` (106) – File-based JSON, not SQL
+- `CustomMangaRepositoryImpl` – user-edited manga metadata in `custom_manga_info` (KMK/SY table, migration 58); process-wide cache in front of the table because `Manga` snapshots edits in a `@Transient` initialiser
 
 **Common patterns:**
 ```kotlin

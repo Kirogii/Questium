@@ -36,6 +36,7 @@ import eu.kanade.domain.extension.interactor.TrustExtension
 import eu.kanade.domain.source.service.SourcePreferences
 import eu.kanade.domain.source.service.SourcePreferences.DataSaver
 import eu.kanade.domain.ui.UiPreferences
+import eu.kanade.domain.ui.model.RemovedCoverRetention
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.PreferenceDependency
 import eu.kanade.presentation.more.settings.screen.advanced.ClearDatabaseScreen
@@ -243,10 +244,33 @@ object SettingsAdvancedScreen : SearchableSettings {
     private fun getDataGroup(): Preference.PreferenceGroup {
         val context = LocalContext.current
         val navigator = LocalNavigator.currentOrThrow
+        // KMK -->
+        val uiPreferences = globalAppGraph.uiPreferences
+        // KMK <--
 
         return Preference.PreferenceGroup(
             title = stringResource(MR.strings.label_data),
             preferenceItems = persistentListOf(
+                // KMK --> Retention is a window, not a size, so it reads better as a list of periods
+                // than as a raw day count the user has to interpret.
+                Preference.PreferenceItem.ListPreference(
+                    preference = uiPreferences.removedCoverRetention(),
+                    title = stringResource(KMR.strings.pref_removed_cover_retention),
+                    subtitle = stringResource(KMR.strings.pref_removed_cover_retention_summary),
+                    entries = RemovedCoverRetention.entries.associateWith { retention ->
+                        stringResource(
+                            when (retention) {
+                                RemovedCoverRetention.IMMEDIATE -> KMR.strings.pref_removed_cover_retention_immediate
+                                RemovedCoverRetention.ONE_DAY -> KMR.strings.pref_removed_cover_retention_1_day
+                                RemovedCoverRetention.THREE_DAYS -> KMR.strings.pref_removed_cover_retention_3_days
+                                RemovedCoverRetention.SEVEN_DAYS -> KMR.strings.pref_removed_cover_retention_7_days
+                                RemovedCoverRetention.THIRTY_DAYS -> KMR.strings.pref_removed_cover_retention_30_days
+                            },
+                        )
+                    }
+                        .toImmutableMap(),
+                ),
+                // KMK <-->
                 Preference.PreferenceItem.TextPreference(
                     title = stringResource(MR.strings.pref_invalidate_download_cache),
                     subtitle = stringResource(MR.strings.pref_invalidate_download_cache_summary),

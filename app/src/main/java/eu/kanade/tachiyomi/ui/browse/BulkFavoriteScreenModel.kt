@@ -17,7 +17,7 @@ import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.Source
-import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.retainCovers
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.mutate
@@ -330,7 +330,7 @@ class BulkFavoriteScreenModel(
                 },
             )
             if (!new.favorite) {
-                new = new.removeCovers(coverCache)
+                new = new.retainCovers(coverCache)
             } else {
                 setMangaDefaultChapterFlags.await(manga)
                 addTracks.bindEnhancedTrackers(manga, source)

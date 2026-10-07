@@ -498,9 +498,7 @@ class MangaScreen(
                     navigator.push(ExtensionsScreen(searchSource = successState.source.name))
                 }
             },
-            onCoverLoaded = {
-                if (screenModel.themeCoverBased || successState.manga.favorite) screenModel.setPaletteColor(it)
-            },
+            onCoverLoaded = { mangaCover, image -> screenModel.onCoverPaletteAvailable(mangaCover, image) },
             coverRatio = coverRatio,
             onPaletteScreenClick = { navigator.push(PaletteScreen(successState.seedColor?.toArgb())) },
             onStartRereadingClick = screenModel::showStartRereadDialog.takeIf { successState.manga.favorite },

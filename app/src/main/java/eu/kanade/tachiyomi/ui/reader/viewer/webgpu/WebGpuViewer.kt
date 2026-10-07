@@ -39,6 +39,7 @@ import ca.mpreg.webgpuviewer.transition.TransitionStackRight
 import ca.mpreg.webgpuviewer.transition.TransitionStackUp
 import ca.mpreg.webgpuviewer.viewer.ImagePage
 import com.google.android.material.color.MaterialColors
+import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -54,7 +55,10 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.app.di.globalAppGraph
@@ -68,6 +72,9 @@ import kotlin.time.Duration.Companion.milliseconds
 
 /** Edge pages of an adjacent chapter to reserve shells for up front (see preloadChapterThenRetry). */
 private const val CHAPTER_EDGE_PRELOAD = 4
+
+/** Sentinel for "this chapter slot has never been reconciled", and for an absent neighbour. */
+private const val UNSEEN_VERSION = -1
 
 open class WebGpuViewer(
     val activity: ReaderActivity,
@@ -190,6 +197,7 @@ open class WebGpuViewer(
         synchronized(lock) {
             if (isDestroyed) return
             decodeQueue.clear()
+            stuckSignal.trySend(Unit)
             val snapshot = pageCache.values.toList()
             snapshot.forEach {
                 it.state = PageState.IDLE
@@ -263,6 +271,13 @@ open class WebGpuViewer(
 
     // Decode queue - pages waiting to be decoded, processed LIFO (last = highest priority)
     internal val decodeQueue = ArrayDeque<ViewerReaderPage>()
+
+    /**
+     * Requests a stuck-page sweep. Conflated, so signalling during a burst of evictions costs one
+     * scan. Emitted from the sites that can strand a page in an in-flight state without work behind
+     * it; see the collector in `init`.
+     */
+    internal val stuckSignal = Channel<Unit>(Channel.CONFLATED)
 
     // KMK -->
     private val chapterPreloadGuard = ChapterPreloadGuard()
@@ -344,6 +359,87 @@ open class WebGpuViewer(
     /** Check if a page is in the cache by identity. O(1) via key lookup. */
     internal fun pageInCache(page: ViewerPage): Boolean = pageCache[pageKey(page)] === page
 
+    /**
+     * Drops cached shells for pages a split has replaced, and reports the page the viewer should
+     * land on if it was showing one of them.
+     *
+     * A page too tall for the decoder is replaced by its segments after this viewer has already
+     * built its page graph. The parent shell stays cached under its own [PageKey.Reader] and keeps
+     * rendering the segment its stream now points at, while the chapter's list also holds that
+     * segment - so the strip was drawn twice, the whole and the pieces overlapping. Nothing else
+     * evicts it: it is not idle, not farthest, and its key still looks valid.
+     *
+     * Returns the shell that was on screen when a split removed it, or null when nothing the viewer
+     * was showing was removed.
+     */
+    private fun evictReplacedPages(): ViewerReaderPage? {
+        var dropped: ViewerReaderPage? = null
+        synchronized(lock) {
+            val orphaned = pageCache.values.filterIsInstance<ViewerReaderPage>()
+                .filter { it.page.supersededBySplit }
+            if (orphaned.isEmpty()) return null
+            orphaned.forEach { shell ->
+                pageCache.remove(pageKey(shell))
+                decodeQueue.remove(shell)
+                stuckSignal.trySend(Unit)
+                runCatching {
+                    shell.spreadPage?.cleanup()
+                    shell.spreadBytes = null
+                    shell.imagePage.cleanup()
+                }
+            }
+            // Read through a local: currentPage is a var, so the compiler will not smart-cast it past
+            // the check below, and the shell is the only thing still holding the page once it is
+            // out of the cache.
+            val shown = currentPage
+            if (shown is ViewerReaderPage && shown in orphaned) {
+                dropped = shown
+                currentPage = null
+            }
+        }
+        return dropped
+    }
+
+    /**
+     * Last [ReaderChapter.pageListVersion] reconciled against, per chapter slot.
+     *
+     * All three slots, not just the current chapter: the strip spans prev/current/next, and the
+     * chapter that gets split mid-session is as likely to be one the reader is only part-way into
+     * as the one they are on. Watching the current chapter alone left those splits unreconciled,
+     * which is the in-between-chapters case.
+     *
+     * A flat list rather than one packed int because each chapter counts independently, so any
+     * packing scheme eventually folds two distinct triples onto the same value and hides a change.
+     */
+    private var seenPageListVersions = intArrayOf(UNSEEN_VERSION, UNSEEN_VERSION, UNSEEN_VERSION)
+
+    /** Page-list versions of the three chapters a strip spans, in slot order. */
+    private fun ViewerChapters.pageListVersions(): IntArray = intArrayOf(
+        currChapter.pageListVersion,
+        prevChapter?.pageListVersion ?: UNSEEN_VERSION,
+        nextChapter?.pageListVersion ?: UNSEEN_VERSION,
+    )
+
+    /**
+     * Reconciles against a page list the loader replaced underneath us.
+     *
+     * Cheap when nothing changed: three volatile int compares. Returns true when the viewer had to
+     * move off a page the split removed, so the caller should stop - it was about to walk outward
+     * from a node that no longer exists, and re-anchoring has already queued the right pages.
+     */
+    internal fun syncPageList(chapters: ViewerChapters): Boolean {
+        val version = chapters.pageListVersions()
+        if (version.contentEquals(seenPageListVersions)) return false
+        seenPageListVersions = version
+        val discarded = evictReplacedPages() ?: return false
+        // Re-enter from whatever now stands in the discarded page's place - not from the chapter's
+        // resume target, which is where the chapter was opened and can be pages away from where the
+        // reader actually was.
+        val replacement = discarded.page.chapter.splitReplacementOf(discarded.page) ?: discarded.page
+        moveToPage(getSpreadAnchor(getPage(replacement, discarded)))
+        return true
+    }
+
     init {
         // KMK --> Shed off-screen decoded pages on system memory pressure.
         try {
@@ -424,6 +520,24 @@ open class WebGpuViewer(
                                 page.state = PageState.IDLE
                             }
                         }
+                    } finally {
+                        // KMK --> DECODING must never outlive the attempt. The catch arms above all
+                        // end in an ErrorPage or an IDLE reset, but decodeReaderPage also returns
+                        // normally on several paths (destroyed viewer, stream unavailable, already
+                        // decoded, evicted mid-flight) - and a plain return skips every catch, so
+                        // the page kept DECODING with nothing left to move it. queueForDecode treats
+                        // DECODING as in-flight and ignores it, so the shell then spun forever.
+                        // Resetting here makes "the worker is not on this page anymore" the single
+                        // invariant every exit path agrees on.
+                        // KMK <--
+                        synchronized(lock) {
+                            if (pageInCache(page) && page.state == PageState.DECODING) {
+                                page.state = PageState.IDLE
+                            }
+                        }
+                        // The worker leaving a page is what makes any leftover in-flight state
+                        // detectable, so this is the natural point to look.
+                        stuckSignal.trySend(Unit)
                     }
                 }
             } catch (e: CancellationException) {
@@ -435,6 +549,60 @@ open class WebGpuViewer(
             }
         }
 
+        // KMK --> Liveness net. Every state a page can sit in is owned by one of a small number of
+        // writers, and a missed reset on any path (a cancelled load, an early return, a future
+        // branch) leaves the shell in a state queueForDecode treats as in-flight - so it is never
+        // re-queued and spins forever.
+        //
+        // Driven by signal rather than a timer because the orphan condition - QUEUED but absent from
+        // the queue, or LOADING whose bytes have since arrived - cannot arise on its own: it needs a
+        // structural change to the queue or cache, and only a few sites perform one. A timer would
+        // pay a lock acquisition and a scan of every live shell for the whole session to find a
+        // condition those sites create anyway.
+        //
+        // Conflated so a burst of evictions costs one scan rather than one per eviction.
+        scope.launch {
+            for (signal in stuckSignal) {
+                if (isDestroyed) break
+                try {
+                    val orphans = synchronized(lock) {
+                        pageCache.values.filterIsInstance<ViewerReaderPage>().filter { page ->
+                            if (page.isDecoded || page.imagePage.destroyed) return@filter false
+                            when (page.state) {
+                                // Queued but absent from the queue: nothing will ever pop it.
+                                PageState.QUEUED -> !decodeQueue.contains(page)
+                                // LOADING is only released when the bytes are already there: a page
+                                // genuinely fetching must keep its state, and queueForDecode will
+                                // promote it the moment it reports Ready.
+                                PageState.LOADING -> page.page.status == Page.State.Ready
+                                // The terminal case: not being worked on at all. The renderer
+                                // reached this page (fetchPage called ensureDecoding), so it is on
+                                // screen or prewarmed, and nothing else will schedule it - a decode
+                                // that bailed mid-flight, or a state left IDLE by an exit path,
+                                // strands it behind its placeholder indefinitely. Checking
+                                // wantedByRender is what keeps this from queueing speculative shells
+                                // that only a preload walk ever touched.
+                                PageState.IDLE -> page.wantedByRender && page.imagePage is ProgressPage
+                                else -> false
+                            }
+                        }
+                    }
+                    if (orphans.isEmpty()) continue
+                    logcat(LogPriority.WARN) {
+                        "Re-driving ${orphans.size} stuck page(s): " +
+                            orphans.joinToString { "${it.page.chapter.chapter.id}/${it.page.index}=${it.state}" }
+                    }
+                    // Re-checked under the lock inside requeueStuckPage: the scan above is a
+                    // snapshot, and a page that started genuinely loading in between must not be
+                    // reset out from under its own coroutine.
+                    orphans.forEach { requeueStuckPage(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                }
+            }
+        }
+
         // KMK -->
         // Drives the live spin of the ProgressPage pineapple while a page is loading.
         // ProgressPage is time-based; without periodic invalidate the viewer would render
@@ -443,12 +611,26 @@ open class WebGpuViewer(
             while (!isDestroyed) {
                 try {
                     val progress = currentPage?.imagePage as? ProgressPage
-                    progress?.invalidate()
-                    // Animate at ~30fps only while a progress page is current; poll
-                    // slowly otherwise so the viewer does not wake every 33ms idle.
-                    delay(if (progress != null) 33.milliseconds else 250.milliseconds)
+                    if (progress == null) {
+                        // Nothing to animate: suspend until a ProgressPage becomes current, rather
+                        // than waking every 250ms for the rest of the session - 4 CPU wakeups a
+                        // second the reader cannot use, for most of a long reading session. The
+                        // flow emission wakes this on its own.
+                        if (config.perfHud) syncPerfHud()
+                        // Suspends without consuming CPU until a page whose image is a ProgressPage
+                        // becomes current. first{} also passes straight through if the current page
+                        // already qualifies, so the spin starts on the same iteration.
+                        currentPageFlow.first { (it as? ViewerReaderPage)?.imagePage is ProgressPage }
+                        continue
+                    }
+                    progress.invalidate()
+                    delay(33.milliseconds)
                     if (config.perfHud) syncPerfHud()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (_: Exception) {
+                    // A failed spin frame must not kill the loop, or the indicator freezes forever.
+                    delay(250.milliseconds)
                 }
             }
         }
@@ -495,8 +677,18 @@ open class WebGpuViewer(
 
     val pages: List<ReaderPage>? get() = (currentPage as? ViewerReaderPage)?.page?.chapter?.pages
 
+    /** Mirrors [currentPage] so a coroutine can suspend on it instead of polling. */
+    internal var currentPageFlow = MutableStateFlow<ViewerPage?>(null)
+
+    /** The page the reader is on. Mirrored into [currentPageFlow] so observers can suspend on it. */
     @Volatile
     var currentPage: ViewerPage? = null
+        set(value) {
+            field = value
+            // Every writer already sets this under the viewer's lock, so mirroring here keeps the
+            // flow and the field consistent without each call site having to do both.
+            currentPageFlow.value = value
+        }
 
     // KMK --> User-tunable preload window; continuous takes max() with live reach.
     open val preloadAhead get() = config.preloadAhead
@@ -616,19 +808,25 @@ open class WebGpuViewer(
                 // (Pager mode keeps the full pipeline, including the existing()
                 // identity reuse inside buildSpreadPage.)
                 if (isContinuous) {
-                    if (index == 0) return@fetch current.imagePage
+                    if (index == 0) {
+                        ensureDecoding(current)
+                        return@fetch current.imagePage
+                    }
                     var page = current
                     val step = if (index > 0) 1 else -1
                     repeat(abs(index)) {
                         page = nextPage(page, step) ?: return@fetch null
                     }
+                    ensureDecoding(page)
                     return@fetch page.imagePage
                 }
                 // KMK <--
 
                 // For index 0, return the current spread
                 if (index == 0) {
-                    return@fetch buildSpreadPage(getSpreadAnchor(current))
+                    val anchor = getSpreadAnchor(current)
+                    ensureDecoding(anchor)
+                    return@fetch buildSpreadPage(anchor)
                 }
 
                 // Navigate by spreads from current
@@ -638,7 +836,9 @@ open class WebGpuViewer(
                     page = nextPage(page, step) ?: return@fetch null
                 }
 
-                return@fetch buildSpreadPage(page)
+                val anchor = getSpreadAnchor(page)
+                ensureDecoding(anchor)
+                return@fetch buildSpreadPage(anchor)
             }
 
             onTap = { offset ->
@@ -1202,9 +1402,10 @@ open class WebGpuViewer(
                 if (isContinuous && pendingContinuousRestoreChapterId == cid) return
                 if (!isContinuous && pendingPagedRestoreChapterId == cid) return
                 // KMK <--
-                // Saved as a list position, not Page.index: an anchor is restored with
+                // Live position, not Page.index: an anchor is restored with
                 // coerceIn(0, pages.lastIndex), so a split segment's out-of-range index would
-                // clamp to the chapter's last page and resume the reader at the end.
+                // clamp to the chapter's last page and resume the reader at the end. This is what the
+                // running session and the progress display are measured against.
                 val position = page.page.chapter.positionOf(page.page)
                 if (position < 0) return
                 pager.state.seedPageIndex(position)
@@ -1214,7 +1415,16 @@ open class WebGpuViewer(
                     PageAnchor(pageIndex = position)
                 }
                 currentAnchor = anchor
-                positionStore.saveAnchor(cid, anchor, force = force)
+                // Stored in the coordinates the chapter has on the next open instead: the loader
+                // folds the segments away when it persists the page list, so a live position names a
+                // later page once that has happened. Only the copy on disk is converted - the live
+                // anchor above stays in the list the reader is actually paging through.
+                val saved = page.page.chapter.savedIndexOf(page.page)
+                positionStore.saveAnchor(
+                    cid,
+                    if (saved >= 0) anchor.copy(pageIndex = saved) else anchor,
+                    force = force,
+                )
             }
         } catch (_: Exception) {}
     }
@@ -1254,6 +1464,10 @@ open class WebGpuViewer(
         // KMK <--
 
         this.viewerChapters = chapters
+
+        // Baseline for syncPageList: it exists to catch pages replaced after this point, and
+        // without recording the current versions the initial load reads as a change.
+        seenPageListVersions = chapters.pageListVersions()
 
         val chapterId = chapters.currChapter.chapter.id
         val stored = if (chapterId != null && chapterId != -1L) positionStore.load(chapterId) else null

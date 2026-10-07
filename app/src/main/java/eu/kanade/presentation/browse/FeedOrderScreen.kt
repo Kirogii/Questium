@@ -13,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.browse.components.FeedOrderListItem
+import eu.kanade.presentation.browse.components.FeedOrderListShimmer
 import eu.kanade.tachiyomi.ui.browse.feed.FeedScreenState
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -21,7 +22,6 @@ import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.components.material.topSmallPaddingValues
 import tachiyomi.presentation.core.screens.EmptyScreen
-import tachiyomi.presentation.core.screens.LoadingScreen
 import tachiyomi.presentation.core.util.plus
 
 @Composable
@@ -31,7 +31,14 @@ fun FeedOrderScreen(
     onChangeOrder: (FeedSavedSearch, Int) -> Unit,
 ) {
     when {
-        state.isLoading -> LoadingScreen()
+        // KMK --> Layout-shaped placeholder matching these screens' draggable rows; the centred
+        // spinner showed nothing about what the screen will hold. Padded identically to the real
+        // LazyColumn below, so the rows do not shift sideways when the feed arrives.
+        // KMK <--
+        state.isLoading -> FeedOrderListShimmer(
+            contentPadding = topSmallPaddingValues +
+                PaddingValues(horizontal = MaterialTheme.padding.medium),
+        )
         state.isEmpty || state.items.isNullOrEmpty() -> EmptyScreen(
             stringRes = MR.strings.empty_screen,
         )

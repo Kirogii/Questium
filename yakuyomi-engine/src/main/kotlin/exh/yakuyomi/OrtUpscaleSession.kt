@@ -85,29 +85,38 @@ class OrtUpscaleSession private constructor(
 
             for (y0 in 0 until source.height step safeTile) {
                 val coreHeight = minOf(safeTile, source.height - y0)
+                val lastRow = y0 + coreHeight >= source.height
                 for (x0 in 0 until source.width step safeTile) {
                     val coreWidth = minOf(safeTile, source.width - x0)
-                    val tensor = createInputTensor(source, input, x0, y0, coreWidth, coreHeight, safePadding)
+                    val lastColumn = x0 + coreWidth >= source.width
+                    // Only an interior tile has a real neighbourhood past its core, so only an
+                    // interior tile is padded. These graphs are fully convolutional with no
+                    // reflect-pad node, so a border tile fed a padded input still emits only
+                    // core * scale; the origin arithmetic below would then crop padding * scale
+                    // of real pixels off it and leave the page's right/bottom edge transparent.
+                    val tilePadding = if (lastRow || lastColumn) 0 else safePadding
+                    val tensor = createInputTensor(source, input, x0, y0, coreWidth, coreHeight, tilePadding)
                     tensor.use {
                         session.run(mapOf(inputName to it)).use { result ->
                             val value = (result.get(outputName).orElse(null) ?: result.get(0)) as? OnnxTensor ?: return null
                             val info = value.info as? TensorInfo ?: return null
                             val shape = info.shape
                             if (shape.size != 4 || shape[0] != 1L || shape[1] != 3L) return null
+                            if (shape[2] !in 1..Int.MAX_VALUE.toLong() || shape[3] !in 1..Int.MAX_VALUE.toLong()) return null
                             val tileOutputWidth = shape[3].toInt()
                             val tileOutputHeight = shape[2].toInt()
                             val coreOutputWidth = coreWidth * scale
                             val coreOutputHeight = coreHeight * scale
                             if (tileOutputWidth < coreOutputWidth || tileOutputHeight < coreOutputHeight) return null
-                            val paddedOutputWidth = (coreWidth + safePadding * 2) * scale
-                            val paddedOutputHeight = (coreHeight + safePadding * 2) * scale
+                            val paddedOutputWidth = (coreWidth + tilePadding * 2) * scale
+                            val paddedOutputHeight = (coreHeight + tilePadding * 2) * scale
                             val sourceX = when {
-                                tileOutputWidth >= paddedOutputWidth -> safePadding * scale
+                                tileOutputWidth >= paddedOutputWidth -> tilePadding * scale
                                 tileOutputWidth >= coreOutputWidth -> (tileOutputWidth - coreOutputWidth) / 2
                                 else -> 0
                             }
                             val sourceY = when {
-                                tileOutputHeight >= paddedOutputHeight -> safePadding * scale
+                                tileOutputHeight >= paddedOutputHeight -> tilePadding * scale
                                 tileOutputHeight >= coreOutputHeight -> (tileOutputHeight - coreOutputHeight) / 2
                                 else -> 0
                             }
@@ -298,4 +307,9 @@ private fun colorChannel(argb: Int, order: Int, channel: Int): Int {
     return (argb ushr shift) and 0xff
 }
 
-private fun toByte(value: Float): Int = (value.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+// coerceIn maps NaN to NaN and toByte(NaN) truncates to 0, which would paint a
+// whole tile black on a diverged model instead of failing the inference.
+private fun toByte(value: Float): Int {
+    if (!value.isFinite()) return 0
+    return (value.coerceIn(0f, 1f) * 255f + 0.5f).toInt()
+}

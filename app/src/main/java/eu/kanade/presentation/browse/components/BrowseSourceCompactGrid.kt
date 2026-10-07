@@ -40,6 +40,13 @@ fun BrowseSourceCompactGrid(
     selection: List<Manga>,
     // KMK <--
 ) {
+    // First page in flight with nothing to show: draw the grid's own cells *instead of* the grid.
+    // Nesting a lazy grid inside a lazy grid item throws, so this cannot be a full-span item.
+    if (mangaList.loadState.refresh is LoadState.Loading && mangaList.itemCount == 0) {
+        BrowseSourceCompactGridShimmer(columns = columns, contentPadding = contentPadding)
+        return
+    }
+
     LazyVerticalGrid(
         columns = columns,
         contentPadding = contentPadding + PaddingValues(8.dp),
@@ -72,9 +79,12 @@ fun BrowseSourceCompactGrid(
             )
         }
 
+        // A refresh over items already on screen is a footer, not a placeholder for the grid.
         if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSourceLoadingItem()
+            if (mangaList.itemCount > 0) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    BrowseSourceLoadingItem()
+                }
             }
         }
     }

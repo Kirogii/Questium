@@ -102,6 +102,25 @@ class TranslationProviderResolver(
     /** Target language, defaulted the same way for every caller. */
     fun targetLanguage(): String = prefs.targetLang().get().ifBlank { DEFAULT_TARGET_LANG }
 
+    /**
+     * Everything about the current configuration that changes what a translated page *is*.
+     *
+     * Both page caches are keyed on this instead of on the model name alone. Target language and
+     * provider were previously absent from the saved-page key entirely, so switching either served
+     * the previously saved page — the user changes the target language and every page stays in the
+     * old one, with nothing to indicate the setting had been ignored. The content-addressed cache
+     * folded the language in but not the provider, so the same model reached through two different
+     * providers shared one cache entry.
+     *
+     * Cost of getting this wrong is not a stale read, it is a permanent one: a page saved once is
+     * re-served for as long as it survives pruning, and the identity is the only thing that can
+     * invalidate it.
+     */
+    suspend fun pageCacheIdentity(): String {
+        val active = resolve()
+        return "${active.providerName}|${active.modelName}|${targetLanguage()}"
+    }
+
     // The metadata path below is deliberately synchronous. Its readiness is read from the UI on a
     // hot path (MangaInfoTranslationController) and is stubbed in tests, so it must not depend on
     // the suspending Gemini Nano probe. Metadata does not use Gemini Nano today - it needs no page

@@ -181,23 +181,31 @@ class TranslatedPageStore(
         java.io.File(baseDir(), "$mangaId/$chapterId").apply { mkdirs() }
     fun pageFile(mangaId: Long, chapterId: Long, pageIndex: Int): java.io.File =
         java.io.File(chapterDir(mangaId, chapterId), "page_$pageIndex.webp")
+    /** [pageFile] without the directory side effect, for reads. */
+    private fun pageFileIfPresent(mangaId: Long, chapterId: Long, pageIndex: Int): java.io.File =
+        java.io.File(
+            java.io.File(java.io.File(context.filesDir, "yakuyomi_saved"), "$mangaId/$chapterId"),
+            "page_$pageIndex.webp",
+        )
     fun loadIfExists(
         mangaId: Long,
         chapterId: Long,
         pageIndex: Int,
         expectedPolicyFingerprint: String? = null,
+        expectedIdentity: String? = null,
     ): ByteArray? {
-        val f = pageFile(mangaId, chapterId, pageIndex)
-        if (expectedPolicyFingerprint != null && loadPolicyFingerprint(mangaId, chapterId, pageIndex) != expectedPolicyFingerprint) {
-            return null
+        val f = pageFileIfPresent(mangaId, chapterId, pageIndex)
+        if (!f.isFile || f.length() == 0L) return null
+        // Mirrors the engine store: identity is part of validity, so a page saved under a
+        // different target language or provider is never served.
+        if (expectedPolicyFingerprint != null || expectedIdentity != null) {
+            val stamp = loadStamp(mangaId, chapterId, pageIndex)
+            if (stamp?.first != expectedPolicyFingerprint) return null
+            if (expectedIdentity != null && stamp?.second != expectedIdentity) return null
         }
-        return if (f.exists() && f.length() > 0) {
-            try {
-                f.readBytes()
-            } catch (_: Exception) {
-                null
-            }
-        } else {
+        return try {
+            f.readBytes()
+        } catch (_: Exception) {
             null
         }
     }
@@ -208,6 +216,7 @@ class TranslatedPageStore(
         webpBytes: ByteArray,
         mangaTitle: String? = null,
         policyFingerprint: String? = null,
+        identity: String? = null,
     ) {
         if (webpBytes.isEmpty() || webpBytes.size > 5 * 1024 * 1024) return
         if (pageIndex < 0 || pageIndex > 5000) return
@@ -222,7 +231,7 @@ class TranslatedPageStore(
                 tmp.delete()
             }
         } catch (_: Exception) {}
-        if (!policyFingerprint.isNullOrBlank()) savePolicyFingerprint(mangaId, chapterId, pageIndex, policyFingerprint)
+        saveStamp(mangaId, chapterId, pageIndex, policyFingerprint, identity)
         saveTitle(mangaId, mangaTitle)
         pruneIfNeeded()
     }
@@ -231,12 +240,30 @@ class TranslatedPageStore(
     private fun policyFile(mangaId: Long, chapterId: Long, pageIndex: Int): java.io.File =
         java.io.File(chapterDir(mangaId, chapterId), "$POLICY_FILE_PREFIX$pageIndex.txt")
 
-    private fun loadPolicyFingerprint(mangaId: Long, chapterId: Long, pageIndex: Int): String? = runCatching {
-        policyFile(mangaId, chapterId, pageIndex).takeIf { it.isFile }?.readText()?.trim()
+    private fun loadStamp(mangaId: Long, chapterId: Long, pageIndex: Int): Pair<String?, String?>? = runCatching {
+        val f = java.io.File(
+            java.io.File(java.io.File(context.filesDir, "yakuyomi_saved"), "$mangaId/$chapterId"),
+            "$POLICY_FILE_PREFIX$pageIndex.txt",
+        )
+        if (!f.isFile) return@runCatching null
+        val lines = f.readText().split('\n')
+        (lines.getOrNull(0)?.trim()?.takeIf { it.isNotEmpty() }) to
+            (lines.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() })
     }.getOrNull()
 
-    private fun savePolicyFingerprint(mangaId: Long, chapterId: Long, pageIndex: Int, fingerprint: String) {
-        runCatching { policyFile(mangaId, chapterId, pageIndex).writeText(fingerprint.take(160)) }
+    private fun saveStamp(
+        mangaId: Long,
+        chapterId: Long,
+        pageIndex: Int,
+        policyFingerprint: String?,
+        identity: String?,
+    ) {
+        if (policyFingerprint.isNullOrBlank() && identity.isNullOrBlank()) return
+        runCatching {
+            policyFile(mangaId, chapterId, pageIndex).writeText(
+                "${policyFingerprint.orEmpty().take(160)}\n${identity.orEmpty().take(160)}",
+            )
+        }
     }
 
     fun saveTitle(mangaId: Long, title: String?) {

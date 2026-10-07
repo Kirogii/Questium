@@ -37,6 +37,106 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.9] - 2026-10-07
+### Fix
+- **Fixed the long-strip reader running out of memory and stalling the whole app.** A page that could
+- **Fixed pages in the long-strip reader staying at 0% while the pages around them loaded.** The page
+
+
+## [v1.23.8] - 2026-10-07
+### Fix
+- **Failed extensions now say why they failed.** The extensions screen showed only a spinner or an
+- **Fixed an extension keeping a stale icon after being updated.** The icon was cached for as long as
+- **Fixed the update button doing nothing on some extensions.** If a repository was re-signed, the
+- **Fixed extensions failing to load leaving the app waiting indefinitely.** If loading extensions
+- **Failed extensions can now be reported to the right place.** An extension that fails usually means
+- **Extensions are found faster in large libraries.** Looking up which extension owns a source
+- **Fixed a spinning gap in the long-strip reader where a page should be.** Scrolling quickly could
+- **Fixed two-page spread height matching silently giving up on a chapter.** If a side was still being
+- **Loading pages in the long-strip reader now show the percentage as well as the spinner**, including
+
+
+## [v1.23.7] - 2026-10-06
+### Improve
+- **The reader no longer wakes the processor every quarter-second while you are not waiting for a
+- **Backup sync now waits for a low battery to charge, like the other scheduled jobs do.** Sync was
+- **Cover images no longer fade in when you have turned animations off system-wide.** The fade still
+- **The feed tabs now show a layout-shaped placeholder while loading** instead of a spinner. The
+### Fix
+- **Fixed pages in the long-strip reader loading forever.** A page could end up marked as still being
+- **Fixed already-loaded pages unloading themselves in the long-strip reader.** Scrolling out of a
+- **Fixed the cover preview freezing when it opened.** Building the preview image generated its whole
+- **Fixed a transparent strip down the right and bottom edge of upscaled pages on the NPU path.** The
+- **Fixed upscaled pages occasionally coming back partly grey or not displaying at all.** A cached page
+- **Fixed upscaling silently giving up for the rest of the session on devices where a model cannot
+- **Fixed the app closing on very large pages when upscaling.** Two size checks in the native upscaler
+- **Fixed upscaled pages running out of memory on large or long pages.** Encoding a page back to an
+- **Fixed the library re-saving every cover colour on every pause.** Switching away from the app, opening
+- **Fixed titles disappearing from library covers in rare cases.** A stored colour whose text-colour half
+- **Fixed mangled library covers on rare covers whose header decodes oddly.** Such a cover could store a
+- **Fixed library covers losing their colours when opening a series.** The grid colours were being
+
+
+## [v1.23.6] - 2026-10-06
+### Improve
+- **The long-strip reader now loads pages in the order you read them.** Pages behind the current one
+- **Library loading placeholders line up with the real grid.** The skeletons used wider spacing than
+### Fix
+- **Fixed duplicated and misnumbered pages around chapter boundaries in the long-strip reader.** When
+- **Fixed the seek bar when reading between chapters.** The page list is now watched for all three
+- **Fixed "pure black dark mode" on the Dynamic theme below Android 12.** The black override reached
+- **Fixed cover-based theming below Android 12.** That release has no system palette to read a theme
+
+
+## [v1.23.5] - 2026-10-05
+### New
+- **Removed covers can now be kept for a while.** Taking a manga out of the library used to delete
+### Improve
+- **Filling a series in from MangaBaka now brings the artist across.** Only the title was carried
+- **Dynamic color now works below Android 12.** The Monet theme samples your wallpaper's own colours
+- **Source pages now show placeholders shaped like the results you are waiting for.** Opening a
+### Fix
+- **Fixed losing your place in a chapter after updating the app.** Installing the update shut the app
+- **Fixed very tall pages rendering on top of themselves.** An image too tall for the decoder is cut
+- **Fixed very tall pages breaking a chapter after you left and came back.** A cut page was
+- **Fixed the reader getting stuck on very tall pages.** Where a page was cut, the reader's page
+- **Fixed the GPU reader jumping to the wrong page after a very tall page was cut.** It could send
+- **Fixed very tall pages failing to reload after the image cache was cleared or trimmed.** Cutting
+- **Fixed chapters with a very tall page resuming on the wrong page.** Splitting a page into pieces
+
+
+## [v1.23.4] - 2026-10-04
+### New
+- This release is dedicated to my ex-friend **Juliana**, slinger of slurs and the core reason our world doesn't have gender equality yet. If it wasn't for her pissing me off so much, this release would've taken a lot longer.
+- **Export the database as a file.** Settings > Data > Export now has an "Export database" row that writes a self-contained snapshot wherever you choose. Recent changes are folded in first, so the file carries every commit rather than only what happened to be flushed — importing it elsewhere no longer silently rolls back the last few chapters read, category edits and tracker rows. The snapshot is verified before the export is reported as successful.
+### Improve
+- **Every library layout now has its own loading skeleton.** The library and the source browse pages load into a placeholder that matches the layout you selected — list, compact grid, cover-only, comfortable, panorama, staggered — instead of one generic grid that made the content jump as it arrived.
+- **Category management fits small screens.** On phones the row actions collapse into an overflow menu so the category name stays readable, and the bulk-action bar wraps instead of pushing its last two buttons off screen.
+### Fix
+- **Edits to manga entries now persist.** Titles, authors, artists, covers, descriptions, tags and status you set from the manga info editor were kept in a file outside the database, so they were lost on uninstall, missing from database exports, and invisible to backups. They now live in the database alongside everything else. Existing edits are migrated in automatically the first time the app starts.
+- **Dynamic theming works again.** Cover-based theming on the manga page and in the reader was sampling the palette from a second image request that failed whenever the cover could not be re-fetched, and the resolved colour was stored in a map that was not safe to read and write from different threads. The palette is now taken from the cover already on screen. Monet also picks up wallpaper and accent changes without a restart, and falls back to your own accent instead of an unrelated static theme on devices without the Android 12 system palette.
+- **The "Start reading" button follows the cover colour**, with a label colour chosen for readability rather than for contrast against arbitrary cover colours.
+- **Restoring a backup no longer floods the screen with achievement toasts.** Restoring writes every previously unlocked achievement at once; that was announced one toast and one sound at a time. A restore now produces a single summary line, and an unlock earned during normal reading is never announced twice.
+- **Achievements are more reliable.** "Wipe achievement data" now also resets the lifetime counters it left behind (downloads, categories, sources, tracker updates and friends), so those achievements can actually be earned again; finishing a manga reports one combined result instead of two; the collection achievements no longer re-scan the whole catalogue on every unlock; and a failure in one step of a chapter read no longer discards every step after it.
+- **Turning a setting on now unlocks its achievement even if you turned it on before.** The preference watchers used to only react to changes and were not installed at all while achievements were disabled, so settings restored from a backup never qualified.
+- **On-device AI settings follow the RAM gate consistently.** Disabling the gate from About now takes effect immediately rather than after a restart, and the upscaler model downloads are hidden on devices the gate is protecting instead of being offered and then crashing.
+- **The tracking filter finds tracked entries again.** The library's tracked/untracked filter and the per-tracker filters were reading a track list that had been filtered down to a single tracker, so anything you tracked elsewhere looked untracked.
+- **The tracker dialog stops flickering.** It rendered your locally stored tracking data and then swapped the whole thing for freshly fetched data a moment later. It now refreshes first and shows one set of information.
+- **Long webtoon strips no longer duplicate as you scroll.** A page too tall to decode is cut into segments; the cut could run twice for the same page and append a second copy of every segment, so the page count kept growing. The page counter and the saved reading position also indexed the page list with a segment's synthetic index, which broke both once a strip was cut.
+- **Extra-long webtoon strips no longer show the wrong page.** Only strips far beyond the usual length were affected: when a strip needed more than sixteen segments, the numbering for its segments ran into the numbering range of the page after it, and the reader could hand back a page from elsewhere in the chapter. The reserved range per page is now large enough that a strip has to be implausibly long to reach it.
+- **Dynamic theming applies to the manga page again.** The colour was being sampled from a cover held in GPU memory, which cannot be read directly, so the theme stayed untinted on most devices. It is now sampled from a readable copy, and doing so no longer stutters the screen as the details page opens.
+- **Completing a manga no longer counts twice.** Both completion paths already recorded a cleared backlog entry, and the reader recorded it a second time on top, which inflated that lifetime counter and could award its tiers twice as fast as intended.
+- **Restoring a backup still sends achievement webhooks.** Bulk mode was suppressing the outgoing webhook along with the toasts and sounds, so every achievement earned during a restore went unrecorded by anything listening for them.
+- **Migrating your old manga edits no longer stalls on one stale entry.** An edit for a series no longer in your library made the whole import roll back on every launch, so none of your other edits were carried over. Each edit is now brought across on its own, and the ones with nothing to attach to are reported and skipped.
+- **Monet theming on Android 8–11 no longer risks a crash.** Reading the wallpaper and system accent colours on those releases now checks the API level first.
+- **Changing the translation target language or provider now takes effect.** Translated pages were saved under a key that recorded neither, so switching either kept serving the pages already on disk and the setting looked like it was being ignored. Saved pages are now re-used only when they match the language, provider and model they were produced with.
+- **A dropped connection no longer silently ends translation for the chapter.** When a translation provider could not be reached, the page was recorded as "skipped" rather than "failed" — which meant it was never retried, the chapter never showed an error, and the pages stayed in their original language. Pages the provider failed on are now retried, and are offered for retry in the reader.
+- **Pausing translation actually pauses.** Cancelling the worker immediately restarted it, so queued pages kept draining.
+- **Long webtoon strips are only paid for once.** Pages produced by cutting a tall strip were never saved, so every visit re-ran detection, text recognition and the translation request for them. The reader also no longer creates folders merely by looking for a cached page.
+- **The status chip reports on the page you are looking at.** It previously reflected the chapter as a whole, so a chapter with one translated page showed "Translated" over pages that were still in their original language — including pages that had deliberately been left untranslated.
+- **Mihon upstream**: FlexibleAdapter now comes from its original `eu.davidea` 5.1.0 release on Maven Central instead of a JitPack fork that is no longer served.
+
+
 ## [v1.23.3] - 2026-10-03
 ### Improve
 - Bookmark colours are now included in backups. Recolouring a chapter's bookmark was left out of the backup file, so restoring a backup brought every bookmark back without its colour

@@ -61,7 +61,34 @@ class TranslationStatus {
         val code: String? = null,
         /** Why the engine skipped the page, when it did. */
         val skipReason: String? = null,
-    )
+    ) {
+
+        /**
+         * Whether attempting this page again could plausibly produce a translation.
+         *
+         * A skip is not one outcome. The engine reports the same state for "this page genuinely has
+         * no translatable text" and for "the provider never answered and the offline fallback
+         * handed back the source lines" — and only the second is worth retrying. [code] is what
+         * separates them: detection and OCR produced nothing about the image, so re-running the
+         * identical inputs will produce nothing again, whereas a filter/translate rejection can
+         * clear once the provider is reachable.
+         *
+         * Without this distinction a single dropped connection permanently skips every remaining
+         * page of the chapter: nothing is ever marked as failed, so there is no error to retry and
+         * no red chapter to prompt one.
+         */
+        val isRetryable: Boolean
+            get() = when (state) {
+                PageState.ERROR -> true
+                PageState.SKIPPED -> code != null && code in RETRYABLE_SKIP_CODES
+                else -> false
+            }
+
+        private companion object {
+            /** Engine codes where the provider, not the page, was the obstacle. */
+            val RETRYABLE_SKIP_CODES = setOf("ALL_FILTERED", "TRANSLATE_FAILED", "TIMEOUT")
+        }
+    }
 
     data class ChapterStatus(
         val mangaId: Long,

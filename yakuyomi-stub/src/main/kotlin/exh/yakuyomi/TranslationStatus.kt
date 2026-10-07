@@ -36,7 +36,11 @@ class TranslationStatus {
         val stage: PipelineStage = PipelineStage.IDLE,
         val code: String? = null,
         val skipReason: String? = null,
-    )
+    ) {
+        // Nothing ever translates in this flavor, so nothing is ever worth retrying. Present so
+        // callers compile and behave identically against either flavor's surface.
+        val isRetryable: Boolean get() = false
+    }
 
     data class ChapterStatus(
         val mangaId: Long,

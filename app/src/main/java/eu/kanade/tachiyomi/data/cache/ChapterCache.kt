@@ -231,6 +231,17 @@ class ChapterCache(
     }
 
     /**
+     * Removes a locally produced image from the cache.
+     *
+     * Only reachable for app-generated images: real pages are dropped by [clear] or by the LRU
+     * eviction the size limit causes. Segment keys are derived rather than downloaded, and a
+     * re-split can produce fewer segments than the last one, so the tail has to be droppable
+     * entry by entry - there was no way to do that before.
+     */
+    fun removeImageFromCache(imageUrl: String): Boolean =
+        removeFileFromCache(DiskUtil.hashKeyForDisk(imageUrl) + ".0")
+
+    /**
      * Remove file from cache.
      *
      * @param file name of file "md5.0".

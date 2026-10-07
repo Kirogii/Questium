@@ -74,7 +74,6 @@ import exh.source.isMergedSourceId
 import exh.util.defaultReaderType
 import exh.util.mangaType
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -959,7 +958,11 @@ class ReaderViewModel(
         chapterPageIndex = pageIndex
 
         if (!incognitoMode && page.status !is Page.State.Error) {
-            readerChapter.chapter.last_page_read = pageIndex
+            // Written in the coordinates the list will have on the next open, not the ones it has
+            // now: a split shifted every position after it, and the list that survives the close is
+            // the un-split one. pageIndex stays above because everything else here - the progress
+            // display, requestedPage, and the read check below - is about the list as it stands.
+            readerChapter.chapter.last_page_read = readerChapter.savedIndexOf(page)
 
             if (readerChapter.pages?.lastIndex == pageIndex ||
                 // SY -->
@@ -1291,9 +1294,13 @@ class ReaderViewModel(
                 setMangaViewerFlags.awaitSetReadingMode(manga.id, readingMode.flagValue.toLong())
                 val currChapters = state.value.viewerChapters
                 if (currChapters != null) {
-                    // Save current page
+                    // Save current page: chapterPageIndex, not last_page_read. The chapter is not
+                    // being reloaded here, so its page list is the live one and requestedPage is
+                    // indexed against that - while last_page_read is stored in un-split coordinates,
+                    // which in a chapter holding a tall image would land a page or two early.
                     val currChapter = currChapters.currChapter
-                    currChapter.requestedPage = currChapter.chapter.last_page_read
+                    currChapter.requestedPage = chapterPageIndex.takeIf { it >= 0 }
+                        ?: currChapter.chapter.last_page_read
 
                     mutableState.update {
                         it.copy(
@@ -1328,9 +1335,12 @@ class ReaderViewModel(
             setMangaViewerFlags.awaitSetOrientation(manga.id, orientation.flagValue.toLong())
             val currChapters = state.value.viewerChapters
             if (currChapters != null) {
-                // Save current page
+                // Save current page: chapterPageIndex, not last_page_read, for the same reason as
+                // above - the live list is not being replaced, so the live position is the one that
+                // means something here.
                 val currChapter = currChapters.currChapter
-                currChapter.requestedPage = currChapter.chapter.last_page_read
+                currChapter.requestedPage = chapterPageIndex.takeIf { it >= 0 }
+                    ?: currChapter.chapter.last_page_read
 
                 mutableState.update {
                     it.copy(

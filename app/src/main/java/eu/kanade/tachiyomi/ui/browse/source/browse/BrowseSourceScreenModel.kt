@@ -30,7 +30,7 @@ import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.online.MetadataSource
 import eu.kanade.tachiyomi.source.online.all.MangaDex
-import eu.kanade.tachiyomi.util.removeCovers
+import eu.kanade.tachiyomi.util.retainCovers
 import exh.metadata.metadata.RaisedSearchMetadata
 import exh.source.EH_PACKAGE
 import exh.source.ExhPreferences
@@ -292,13 +292,25 @@ open class BrowseSourceScreenModel(
         .stateIn(ioCoroutineScope, SharingStarted.Lazily, emptyFlow())
 
     fun getColumnsPreference(orientation: Int): GridCells {
+        val columns = getConfiguredColumns(orientation)
+        return if (columns == 0) GridCells.Adaptive(128.dp) else GridCells.Fixed(columns)
+    }
+
+    /**
+     * The configured column count, or 0 when the user picked the adaptive strategy.
+     *
+     * A loading skeleton has to name a fixed column count before anything has been measured, so
+     * [getColumnsPreference] is not usable for it: `GridCells.Fixed` exposes no public `count` and
+     * `Adaptive` only resolves once it sees a width. Callers that need a number - the skeleton -
+     * read the preference through here and fall back when it is adaptive.
+     */
+    fun getConfiguredColumns(orientation: Int): Int {
         val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
-        val columns = if (isLandscape) {
+        return if (isLandscape) {
             libraryPreferences.landscapeColumns()
         } else {
             libraryPreferences.portraitColumns()
         }.get()
-        return if (columns == 0) GridCells.Adaptive(128.dp) else GridCells.Fixed(columns)
     }
 
     // SY -->
@@ -435,7 +447,7 @@ open class BrowseSourceScreenModel(
             )
 
             if (!new.favorite) {
-                new = new.removeCovers(coverCache)
+                new = new.retainCovers(coverCache)
             } else {
                 setMangaDefaultChapterFlags.await(manga)
                 addTracks.bindEnhancedTrackers(manga, source)

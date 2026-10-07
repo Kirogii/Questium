@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,8 +62,7 @@ import eu.kanade.tachiyomi.data.coil.NewImageDecoder
 import eu.kanade.tachiyomi.data.coil.newDecoder
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import kotlinx.collections.immutable.persistentListOf
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
@@ -207,6 +207,7 @@ fun MangaCoverDialog(
             // Mihon -->
             if (useNewRenderer) {
                 val state = remember(manga.id) { ImageViewerState() }
+                val scope = rememberCoroutineScope()
                 DisposableEffect(state) {
                     onDispose {
                         state.fetchPage = { null }
@@ -219,27 +220,33 @@ fun MangaCoverDialog(
                         .memoryCachePolicy(CachePolicy.DISABLED)
                         .newDecoder(true)
                         .target { result ->
-                            val res = (result as NewImageDecoder.DecodeResultImage).res
-                            val page = runBlocking(Dispatchers.Default) {
-                                ImagePage.ImageSingle(
+                            // Coil's target lambda is an ordinary callback, not a coroutine, so
+                            // the suspend Image(...) cannot be called here directly. It used to be
+                            // wrapped in runBlocking, which froze the main thread for the whole
+                            // mipmap chain - past 2048px it resizes each level on Default and
+                            // uploads it to the GPU. Launching onto the composition's scope
+                            // instead keeps the UI thread free; see WebGpuDecode for the same call
+                            // made from a plain suspend fun.
+                            scope.launch {
+                                val page = ImagePage.ImageSingle(
                                     Image(
-                                        res.image,
-                                        res.width,
-                                        res.height,
+                                        (result as NewImageDecoder.DecodeResultImage).res.image,
+                                        result.res.width,
+                                        result.res.height,
                                         createMipMaps = true,
                                         backgroundColor = 0,
                                     ),
                                 )
-                            }
-                            state.apply {
-                                fetchPage = { index ->
-                                    if (index == 0) {
-                                        page
-                                    } else {
-                                        null
+                                state.apply {
+                                    fetchPage = { index ->
+                                        if (index == 0) {
+                                            page
+                                        } else {
+                                            null
+                                        }
                                     }
+                                    invalidate()
                                 }
-                                invalidate()
                             }
                         }
                         .build()

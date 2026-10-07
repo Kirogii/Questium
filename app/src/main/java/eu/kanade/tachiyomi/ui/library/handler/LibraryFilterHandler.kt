@@ -49,6 +49,10 @@ class LibraryFilterHandler(
         val skipOutside = preferences.skipOutsideReleasePeriod
         val filterDownloaded = if (downloadedOnly) TriState.ENABLED_IS else preferences.filterDownloaded
         val filterCategories = preferences.filterCategories
+        // Resolved once for the whole pass. These used to be rebuilt inside the per-item
+        // predicate, allocating two lists of tracker ids for every entry in the library on
+        // every filter recomputation.
+        val trackerFilter = TrackingFilterSet.of(trackingFilter)
 
         return items.filter { item ->
             if (!applyDownloadedFilter(item, filterDownloaded, mergedCache)) return@filter false
@@ -58,7 +62,7 @@ class LibraryFilterHandler(
             if (!applyTriState(item.libraryManga.manga.status.toInt() == SManga.COMPLETED, preferences.filterCompleted)) return@filter false
             if (skipOutside && !applyTriState(item.libraryManga.manga.fetchInterval < 0, preferences.filterIntervalCustom)) return@filter false
             if (!applyTriState(item.libraryManga.manga.isLewd(), preferences.filterLewd)) return@filter false
-            if (!applyTrackingFilter(item, trackMap, trackingFilter, trackedOverall)) return@filter false
+            if (!trackerFilter.matches(trackMap[item.id], trackedOverall)) return@filter false
             if (!applyCategoryFilter(item, filterCategories, includedCategories, excludedCategories)) return@filter false
             true
         }
@@ -78,25 +82,49 @@ class LibraryFilterHandler(
 
     private fun applyTriState(value: Boolean, filter: TriState): Boolean = applyFilter(filter) { value }
 
-    private fun applyTrackingFilter(
-        item: LibraryItem,
-        trackMap: Map<Long, List<Track>>,
-        trackingFilter: Map<Long, TriState>,
-        trackedOverall: TriState,
-    ): Boolean {
-        val tracks = trackMap[item.id].orEmpty()
-        when (trackedOverall) {
-            TriState.ENABLED_IS -> if (tracks.isEmpty()) return false
-            TriState.ENABLED_NOT -> if (tracks.isNotEmpty()) return false
-            TriState.DISABLED -> {}
+    /**
+     * The per-tracker include/exclude sets, split once per filtering pass.
+     *
+     * An entry is excluded if it is tracked on any excluded tracker, and included only if it
+     * is tracked on at least one included tracker. With no included set, exclusion alone
+     * decides; with no excluded set, inclusion alone decides. Both sets empty means "no
+     * per-tracker opinion", which must not hide anything.
+     */
+    internal data class TrackingFilterSet(
+        private val included: Set<Long>,
+        private val excluded: Set<Long>,
+    ) {
+        fun matches(tracks: List<Track>?, trackedOverall: TriState): Boolean {
+            val entries = tracks.orEmpty()
+            when (trackedOverall) {
+                TriState.ENABLED_IS -> if (entries.isEmpty()) return false
+                TriState.ENABLED_NOT -> if (entries.isNotEmpty()) return false
+                TriState.DISABLED -> Unit
+            }
+            if (included.isEmpty() && excluded.isEmpty()) return true
+            val isExcluded = excluded.isNotEmpty() && entries.fastAny { it.trackerId in excluded }
+            if (isExcluded) return false
+            return included.isEmpty() || entries.fastAny { it.trackerId in included }
         }
-        if (trackingFilter.isEmpty()) return true
-        val excluded = trackingFilter.mapNotNull { if (it.value == TriState.ENABLED_NOT) it.key else null }
-        val included = trackingFilter.mapNotNull { if (it.value == TriState.ENABLED_IS) it.key else null }
-        if (included.isEmpty() && excluded.isEmpty()) return true
-        val isExcluded = excluded.isNotEmpty() && tracks.fastAny { it.trackerId in excluded }
-        val isIncluded = included.isEmpty() || tracks.fastAny { it.trackerId in included }
-        return !isExcluded && isIncluded
+
+        companion object {
+            fun of(trackingFilter: Map<Long, TriState>): TrackingFilterSet {
+                if (trackingFilter.isEmpty()) return EMPTY
+                var included: Set<Long>? = null
+                var excluded: Set<Long>? = null
+                trackingFilter.forEach { (trackerId, state) ->
+                    when (state) {
+                        TriState.ENABLED_IS -> included = (included ?: emptySet()) + trackerId
+                        TriState.ENABLED_NOT -> excluded = (excluded ?: emptySet()) + trackerId
+                        TriState.DISABLED -> Unit
+                    }
+                }
+                if (included == null && excluded == null) return EMPTY
+                return TrackingFilterSet(included.orEmpty(), excluded.orEmpty())
+            }
+
+            private val EMPTY = TrackingFilterSet(emptySet(), emptySet())
+        }
     }
 
     private fun applyCategoryFilter(

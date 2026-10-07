@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.extension.model.LoadResult
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallReceiver
 import eu.kanade.tachiyomi.extension.util.ExtensionInstaller
 import eu.kanade.tachiyomi.extension.util.ExtensionLoader
+import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.util.system.toast
 import exh.log.xLogD
 import exh.source.BlacklistedSources
@@ -24,6 +25,7 @@ import exh.source.EHENTAI_EXT_SOURCES
 import exh.source.EXHENTAI_EXT_SOURCES
 import exh.source.ExhPreferences
 import exh.source.MERGED_SOURCE_ID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
@@ -37,11 +39,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import mihon.app.di.globalAppGraph
+import mihon.domain.extension.model.ExtensionStore
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.source.model.StubSource
 import tachiyomi.i18n.MR
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The manager of extensions installed as another apk which extend the available sources. It handles
@@ -57,6 +61,9 @@ class ExtensionManager(
     private val preferences: SourcePreferences = globalAppGraph.sourcePreferences,
     private val trustExtension: TrustExtension = globalAppGraph.trustExtension,
 ) {
+    // KMK -->
+    private val errorReporter: ExtensionErrorReporter = globalAppGraph.extensionErrorReporter
+    // KMK <--
 
     val scope = CoroutineScope(SupervisorJob())
 
@@ -73,10 +80,24 @@ class ExtensionManager(
      */
     private val installer by lazy { ExtensionInstaller(context) }
 
-    private val iconMap = mutableMapOf<String, Drawable>()
+    val installerFailureReasons: StateFlow<Map<String, String>> get() = installer.failureReasonsFlow
+
+    private val iconMap = ConcurrentHashMap<String, Drawable>()
 
     private val installedExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Installed>())
     val installedExtensionsFlow = installedExtensionMapFlow.mapExtensions(scope)
+
+    // Source id -> owning package. Resolving this by scanning every extension's source list made
+    // each lookup cost O(extensions x sources), and it runs per manga in several screens.
+    private val sourcePkgIndex = installedExtensionMapFlow
+        .map { extensions ->
+            buildMap<Long, String> {
+                extensions.values.forEach { extension ->
+                    extension.sources.forEach { put(it.id, extension.pkgName) }
+                }
+            }
+        }
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
 
     private val availableExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Available>())
 
@@ -97,21 +118,10 @@ class ExtensionManager(
 
     private var subLanguagesEnabledOnFirstRun = preferences.enabledLanguages().isSet()
 
-    fun getExtensionPackage(sourceId: Long): String? {
-        return installedExtensionsFlow.value.find { extension ->
-            extension.sources.any { it.id == sourceId }
-        }
-            ?.pkgName
-    }
+    fun getExtensionPackage(sourceId: Long): String? = sourcePkgIndex.value[sourceId]
 
-    fun getExtensionPackageAsFlow(sourceId: Long): Flow<String?> {
-        return installedExtensionsFlow.map { extensions ->
-            extensions.find { extension ->
-                extension.sources.any { it.id == sourceId }
-            }
-                ?.pkgName
-        }
-    }
+    fun getExtensionPackageAsFlow(sourceId: Long): Flow<String?> =
+        sourcePkgIndex.map { it[sourceId] }
 
     fun getAppIconForSource(sourceId: Long): Drawable? {
         val pkgName = getExtensionPackage(sourceId)
@@ -151,6 +161,20 @@ class ExtensionManager(
      * Loads and registers the installed extensions.
      */
     private suspend fun initExtensions() {
+        try {
+            loadAndRegisterExtensions()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            // Callers gate on isInitialized, so a throw here used to leave the whole app waiting
+            // on a flag that was never set. A failed load must still complete.
+            logcat(LogPriority.ERROR, e) { "[ExtInstall] initExtensions: extension load failed" }
+        } finally {
+            _isInitialized.value = true
+        }
+    }
+
+    private suspend fun loadAndRegisterExtensions() {
         logcat(LogPriority.INFO) { "[ExtInstall] initExtensions: starting extension load" }
         val extensions = ExtensionLoader.loadExtensions(context)
         logcat(LogPriority.INFO) { "[ExtInstall] initExtensions: loaded ${extensions.size} results (${extensions.count { it is LoadResult.Success }} success, ${extensions.count { it is LoadResult.Untrusted }} untrusted, ${extensions.count { it is LoadResult.Error }} error)" }
@@ -170,10 +194,86 @@ class ExtensionManager(
 
         extensions.filterIsInstance<LoadResult.Error>().forEach { error ->
             logcat(LogPriority.WARN) { "[ExtInstall] initExtensions: load error — ${error.reason}" }
+            // KMK -->
+            reportLoadFailure(error)
+            // KMK <--
         }
-
-        _isInitialized.value = true
     }
+
+    // KMK -->
+    /**
+     * A user-facing message for a failure. Extension exceptions frequently carry a bare host name,
+     * a URL, or nothing at all, so this falls back to the type rather than showing an empty prompt.
+     */
+    private fun Throwable.readableMessage(): String {
+        val message = localizedMessage?.trim()
+        return when {
+            !message.isNullOrEmpty() && message.length <= 300 -> message
+            else -> this::class.java.simpleName.ifEmpty { "Unknown error" }
+        }
+    }
+
+    /**
+     * An extension that cannot load is reported as a runtime failure too, so the user is asked to
+     * report it to its repository. The reason already identifies the failure; this only supplies the
+     * identity that [LoadResult.Error] now carries.
+     */
+    private fun reportLoadFailure(error: LoadResult.Error) {
+        val pkgName = error.pkgName ?: return
+        val store = storeFor(pkgName)
+        val name = error.extensionName ?: pkgName
+        errorReporter.report(
+            ExtensionErrorReport(
+                pkgName = pkgName,
+                extensionName = name,
+                versionName = error.versionName ?: "",
+                versionCode = error.versionCode,
+                reason = error.reason ?: "Failed to load",
+                repoName = store?.name ?: error.storeName,
+                repoWebsiteUrl = store?.contact?.website,
+                searchUrl = ExtensionRepoLinks.githubIssueSearchUrl(name, store),
+            ),
+        )
+    }
+
+    /**
+     * The repository that ships an extension. The installed copy carries its store once a repo refresh
+     * has matched it, which also covers an extension whose repo is no longer listed.
+     */
+    private fun storeFor(pkgName: String): ExtensionStore? {
+        val installed = installedExtensionMapFlow.value[pkgName]?.store
+        if (installed != null) return installed
+        val available = availableExtensionMapFlow.value.values.firstOrNull { it.pkgName == pkgName }
+        return available?.store
+    }
+
+    /**
+     * Reports a failure raised while an installed extension was in use. Resolves the extension and
+     * its repository from the source that failed, so the prompt names the right repository.
+     */
+    fun reportSourceError(source: Source?, throwable: Throwable) {
+        val src = source ?: return
+        val pkgName = getExtensionPackage(src.id) ?: return
+        val installed = installedExtensionMapFlow.value[pkgName]
+        val store = storeFor(pkgName)
+        val name = installed?.name ?: src.name
+
+        errorReporter.report(
+            ExtensionErrorReport(
+                pkgName = pkgName,
+                extensionName = name,
+                versionName = installed?.versionName ?: "",
+                versionCode = installed?.versionCode ?: 0L,
+                reason = throwable.readableMessage(),
+                repoName = store?.name ?: installed?.storeName,
+                repoWebsiteUrl = store?.contact?.website,
+                sourceName = src.name.takeIf { it != name },
+                stackTrace = throwable.stackTraceText(),
+                searchUrl = ExtensionRepoLinks.githubIssueSearchUrl(name, store),
+            ),
+        )
+    }
+    // KMK <--
 
     // EXH -->
     private fun <T : Extension> Map<String, T>.filterNotBlacklisted(): Map<String, T> {
@@ -262,48 +362,42 @@ class ExtensionManager(
     private fun updatedInstalledExtensionsStatuses(availableExtensions: List<Extension.Available>) {
         val installedExtensionsMap = installedExtensionMapFlow.value.toMutableMap()
         var changed = false
-        for ((pkgName, extension) in installedExtensionsMap) {
-            // KMK -->
-            // Match by signatureHash + pkgName first; fallback to pkgName-only
-            // when store signing key changes (re-signing causes mismatch)
-            val availableExt = availableExtensions.find {
-                it.signatureHash == extension.signatureHash && it.pkgName == pkgName
-            } ?: availableExtensions.find {
-                it.pkgName == pkgName
-            }
-            // KMK <--
 
-            if (availableExt == null &&
-                (!extension.isObsolete || /* KMK --> */ extension.hasUpdate /* KMK <-- */)
-            ) {
-                // Ext not found: Set isObsolete & clear hasUpdate
-                installedExtensionsMap[pkgName] = extension.copy(
-                    isObsolete = true,
-                    // KMK -->
-                    hasUpdate = false,
-                    // KMK <--
-                )
-                changed = true
+        // Indexed once: the previous form scanned the whole repo list for every installed extension,
+        // and the signature-qualified match compared against every entry rather than hashing.
+        val availableByKey = availableExtensions.associateBy { "${it.pkgName}_${it.signatureHash}" }
+        val availableByPkg = availableExtensions.groupBy { it.pkgName }
+
+        for ((pkgName, extension) in installedExtensionsMap) {
+            val availableForPkg = availableByPkg[pkgName]
+            val availableExt = availableForPkg?.let { candidates ->
+                availableByKey["${pkgName}_${extension.signatureHash}"] ?: candidates.firstOrNull()
+            }
+
+            val updated = when {
+                // No longer offered by any repo, so it can never be updated again.
+                availableExt == null -> extension.copy(isObsolete = true, hasUpdate = false)
                 // SY -->
-            } else if (extension.isBlacklisted() && !extension.isRedundant) {
-                installedExtensionsMap[pkgName] = extension.copy(isRedundant = true)
-                changed = true
+                extension.isBlacklisted() && !extension.isRedundant -> extension.copy(isRedundant = true)
                 // SY <--
-            } else if (availableExt != null) {
-                // Ext found: Update installed extensions with new information from repo
-                // Also clear isObsolete and set new repo Name if needed
-                val hasUpdate = extension.updateExists(availableExt)
                 // KMK -->
-                installedExtensionsMap[pkgName] = extension.copy(
-                    hasUpdate = hasUpdate,
+                else -> extension.copy(
+                    hasUpdate = extension.updateExists(availableExt),
                     store = availableExt.store,
                     isObsolete = false,
                     storeName = extension.storeName ?: availableExt.storeName,
                 )
                 // KMK <--
+            }
+
+            // Every branch used to set this unconditionally, so each refresh re-emitted the entire
+            // map and re-ran the notifier even when nothing had actually changed.
+            if (updated != extension) {
+                installedExtensionsMap[pkgName] = updated
                 changed = true
             }
         }
+
         if (changed) {
             installedExtensionMapFlow.value = installedExtensionsMap
         }
@@ -329,12 +423,8 @@ class ExtensionManager(
      * @param extension The extension to be updated.
      */
     fun updateExtension(extension: Extension.Installed): Flow<InstallStep> {
-        val availableExt = availableExtensionMapFlow.value[
-            extension.pkgName +
-                // KMK -->
-                "_${extension.signatureHash}",
-            // KMK <--
-        ] ?: return emptyFlow()
+        val availableExt = resolveAvailableExtension(extension.pkgName, extension.signatureHash)
+            ?: return emptyFlow()
         return installExtension(availableExt)
     }
 
@@ -448,6 +538,7 @@ class ExtensionManager(
 
         override fun onExtensionInstalled(extension: Extension.Installed) {
             logcat(LogPriority.INFO) { "[ExtInstall] onExtensionInstalled: ${extension.name} (${extension.pkgName}) v${extension.versionName}" }
+            iconMap.remove(extension.pkgName)
             registerNewExtension(extension.withUpdateCheck())
             updatePendingUpdatesCount()
             // KMK --> Only on install, not onExtensionUpdated below: these tiers count sources
@@ -459,6 +550,7 @@ class ExtensionManager(
 
         override fun onExtensionUpdated(extension: Extension.Installed) {
             logcat(LogPriority.INFO) { "[ExtInstall] onExtensionUpdated: ${extension.name} (${extension.pkgName}) v${extension.versionName}" }
+            iconMap.remove(extension.pkgName)
             registerUpdatedExtension(extension.withUpdateCheck())
             updatePendingUpdatesCount()
         }
@@ -472,6 +564,10 @@ class ExtensionManager(
 
         override fun onPackageUninstalled(pkgName: String) {
             logcat(LogPriority.INFO) { "[ExtInstall] onPackageUninstalled: $pkgName" }
+            iconMap.remove(pkgName)
+            // KMK -->
+            errorReporter.clear(pkgName)
+            // KMK <--
             ExtensionLoader.uninstallPrivateExtension(context, pkgName)
             unregisterExtension(pkgName)
             updatePendingUpdatesCount()
@@ -489,16 +585,22 @@ class ExtensionManager(
         }
     }
 
+    /**
+     * Finds the available counterpart of an installed extension.
+     *
+     * The badge and the button have to agree: the update badge falls back to matching on package
+     * name alone when a repo is re-signed, so a lookup that only used the signature-qualified key
+     * left the row advertising an update whose button did nothing when tapped.
+     */
+    private fun resolveAvailableExtension(pkgName: String, signatureHash: String): Extension.Available? {
+        val available = availableExtensionMapFlow.value
+        return available["${pkgName}_$signatureHash"]
+            ?: available.values.find { it.pkgName == pkgName && it.signatureHash == signatureHash }
+            ?: available.values.find { it.pkgName == pkgName }
+    }
+
     private fun Extension.Installed.updateExists(availableExtension: Extension.Available? = null): Boolean {
-        val availableExt = availableExtension
-            // KMK -->
-            // Map keys are "pkgName_signatureHash", so bare pkgName lookup always fails.
-            // Fall back to finding any available extension with matching pkgName + signatureHash.
-            ?: availableExtensionMapFlow.value["${pkgName}_$signatureHash"]
-            ?: availableExtensionMapFlow.value.values.find {
-                it.pkgName == pkgName && it.signatureHash == signatureHash
-            }
-            // KMK <--
+        val availableExt = availableExtension ?: resolveAvailableExtension(pkgName, signatureHash)
             ?: return false
 
         return (availableExt.versionCode > versionCode || availableExt.libVersion > libVersion)
@@ -506,7 +608,12 @@ class ExtensionManager(
 
     private fun updatePendingUpdatesCount() {
         val pendingUpdateCount = installedExtensionMapFlow.value.values.count { it.hasUpdate }
-        preferences.extensionUpdatesCount().set(pendingUpdateCount)
+        // This runs after every install event and every repo refresh, so the preference write is skipped
+        // unless the number actually moved. The dismiss stays unconditional at zero: returning
+        // early on an unchanged zero would leave a notification posted before a backup restore.
+        if (pendingUpdateCount != preferences.extensionUpdatesCount().get()) {
+            preferences.extensionUpdatesCount().set(pendingUpdateCount)
+        }
         if (pendingUpdateCount == 0) {
             ExtensionUpdateNotifier(context).dismiss()
         }

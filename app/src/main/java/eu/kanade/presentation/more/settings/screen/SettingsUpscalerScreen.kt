@@ -222,8 +222,13 @@ object SettingsUpscalerScreen : SearchableSettings {
                 Preference.PreferenceItem.CustomPreference(
                     title = "Upscale models",
                     // KMK --> native upscaler weights are only usable with the MTL engine
-                    // (nomtl builds force Simple mode, which needs no models).
+                    // (nomtl builds force Simple mode, which needs no models), and loading them
+                    // alongside the ORT/ncnn runtime is exactly the allocation the RAM gate
+                    // exists for. This row was mtlOnly only, so it happily offered several hundred
+                    // MB of weights on a device that would SIGSEGV using them - and it disagreed
+                    // with the MTL models group, which has always been ramGated.
                     mtlOnly = true,
+                    ramGated = true,
                     // KMK <--
                     content = {
                         Column(modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = 8.dp)) {
@@ -273,8 +278,10 @@ object SettingsUpscalerScreen : SearchableSettings {
                         }
                     },
                     enabled = enabled && !isSimple,
-                    // KMK -->
+                    // KMK --> Gated together with the status row so the download/clear pair
+                    // agrees on whether the weights are offered at all.
                     mtlOnly = true,
+                    ramGated = true,
                     // KMK <--
                 ),
             )
@@ -286,6 +293,7 @@ object SettingsUpscalerScreen : SearchableSettings {
                     enabled = enabled && !isSimple && modelStatus.state != eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelManager.State.DOWNLOADING,
                     // KMK -->
                     mtlOnly = true,
+                    ramGated = true,
                     // KMK <--
                 ),
             )

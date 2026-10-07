@@ -149,6 +149,16 @@
     <string name="crop_zoom_in">Zoom in</string>
     <string name="crop_zoom_out">Zoom out</string>
     <!-- KMK <-->
+    <!-- KMK --> How long a cover stays cached after its manga leaves the library, so re-adding a
+         title does not download an image that is already on disk.
+    <string name="pref_removed_cover_retention">Keep removed covers</string>
+    <string name="pref_removed_cover_retention_summary">How long a cover is kept after you remove a manga from the library. Longer means re-adding it shows the cover instantly, at the cost of disk space.</string>
+    <string name="pref_removed_cover_retention_immediate">Delete immediately</string>
+    <string name="pref_removed_cover_retention_1_day">1 day</string>
+    <string name="pref_removed_cover_retention_3_days">3 days</string>
+    <string name="pref_removed_cover_retention_7_days">7 days</string>
+    <string name="pref_removed_cover_retention_30_days">30 days</string>
+    <!-- KMK <-->
     <!-- Extension section -->
     <string name="extensions_page_need_refresh">Refresh extension page to update list.</string>
     <string name="extensions_page_more">More extensions...</string>
@@ -712,4 +722,16 @@
     <string name="vr_extension_failed">Extension installation failed</string>
     <string name="vr_source_languages">Source languages</string>
     <string name="vr_source_multilingual">Multilingual</string>
+    <string name="pref_export_database">Export database</string>
+    <string name="pref_export_database_summary">Write a snapshot of the library database to a file you choose</string>
+    <string name="database_export_success">Database exported</string>
+    <string name="database_export_checkpoint_failed">Export failed: the database could not be snapshotted. Try again with the app idle.</string>
+    <string name="database_export_failed">Database export failed</string>
+    <string name="ext_error_failed_to_load">Failed: %s</string>
+    <string name="ext_error_report_title">%1$s is not working</string>
+    <string name="ext_error_report_body">An extension called \u201c%1$s\u201d (version %2$s) from the \u201c%3$s\u201d repository hit an error:\n\n%4$s\n\nThis nearly always means the site changed and the extension has not caught up yet. Only the people who maintain that extension can fix it \u2014 this app cannot.\n\nTo report it:\n1. Open the GitHub search below, which looks for \u201c%1$s\u201d.\n2. Open the extension\u2019s own repository from the results.\n3. Check whether someone already reported it. If they did, add to that report instead of opening a new one. If not, open a new issue and say what you were doing.\n\nPlease report it there rather than in Houri support, which cannot act on it. And please do not post the same problem in several places at once \u2014 one clear report is much easier to act on than ten duplicates.</string>
+    <string name="ext_error_report_no_repo">The extension \u201c%1$s\u201d hit an error:\n\n%2$s\n\nThis nearly always means a website changed and the extension has not caught up yet. Only the people who maintain that extension can fix it \u2014 this app cannot.\n\nOpen the GitHub search below to find its repository, check whether the problem is already reported, and if not open an issue there. Please do not report it in Houri support, which cannot act on it.</string>
+    <string name="ext_error_search_github">Open the extension\u2019s issues on GitHub</string>
+    <string name="ext_error_report_dont_show_again">Don\u2019t show again for this version</string>
+    <string name="ext_error_copy_report">Copy error details</string>
 </resources>
