@@ -13,3 +13,16 @@ files moved. See .github/scripts/release_notes.py.
 ### Improve
 
 ### Fix
+
+### Fix
+
+- **Fixed the long-strip reader running out of memory and stalling the whole app.** A page that could
+  not finish loading was put back into the decode queue on every single frame, because the reader
+  re-queued anything it was asked to display. Each attempt allocated fresh decoder and network memory
+  and forced a garbage collection, so the heap filled as fast as it could be emptied — which took down
+  the entire app, not just the reader. Pages are now queued once, when the reader first asks for them,
+  and recovery is left to the existing check that runs only when something actually changes.
+- **Fixed pages in the long-strip reader staying at 0% while the pages around them loaded.** The page
+  you were looking at was placed at the back of the decode queue instead of the front, so anything the
+  reader had speculatively loaded jumped ahead of it and it could wait indefinitely. The page on screen
+  now decodes first.
