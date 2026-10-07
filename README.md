@@ -7,7 +7,6 @@
 
 *A manga reader built for Quest 3 and Quest 3S.*
 
-[![Discord](https://img.shields.io/discord/1540509997719355545.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/JcQZYvCbYH)
 [![Quest build](https://img.shields.io/github/actions/workflow/status/Kirogii/VR-Tachiyomi/quest_vr.yml?branch=feature%2Ffrosted-vr-library&label=Quest%20build)](https://github.com/Kirogii/VR-Tachiyomi/actions/workflows/quest_vr.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/PineappleTwilight/komikku-pineapple?labelColor=27303D&color=0877d2)](/LICENSE)
 
