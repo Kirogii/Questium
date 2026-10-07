@@ -136,18 +136,22 @@ internal fun WebGpuViewer.queueForDecode(page: ViewerReaderPage, prioritize: Boo
         when (page.state) {
             PageState.IDLE -> {
                 page.state = PageState.QUEUED
+                // The worker pops from the end, so the front of the queue is the next page decoded.
+                // This had it the other way round, which meant prioritize put the page the reader is
+                // actually looking at behind everything a speculative preload had queued, and it
+                // could sit at 0% indefinitely while its neighbours decoded.
                 if (prioritize) {
-                    decodeQueue.addLast(page)
-                } else {
                     decodeQueue.addFirst(page)
+                } else {
+                    decodeQueue.addLast(page)
                 }
                 lock.notify()
             }
 
             PageState.QUEUED -> {
-                // Already queued - move to front if prioritizing
+                // Already queued - move to the front if prioritising
                 if (prioritize && decodeQueue.remove(page)) {
-                    decodeQueue.addLast(page)
+                    decodeQueue.addFirst(page)
                 }
             }
 
@@ -194,6 +198,13 @@ internal fun WebGpuViewer.ensureDecoding(page: ViewerPage) {
         // A transition is drawn procedurally; there is nothing to decode.
         is ViewerTransitionPage -> Unit
         is ViewerReaderPage -> {
+            // One-shot per page. fetchPage runs every frame for every page in the render window, so
+            // queueing unconditionally turned any page that could not complete into a frame-rate
+            // retry loop: each pass allocated decoder and network buffers, the worker forced a GC on
+            // every failure, and the heap was exhausted while the whole app stalled behind the lock.
+            // Queueing once at first demand still closes the gap this was written for, and the
+            // signal-driven liveness sweep remains the recovery path for a genuine stall.
+            if (page.wantedByRender) return
             page.wantedByRender = true
             queueForDecode(page, prioritize = page === currentPage)
         }
