@@ -61,7 +61,10 @@ class ExtensionsScreenModel(
     private val extensionErrors = combine(
         globalAppGraph.extensionErrorReporter.errorsByPkg,
         installFailureReasons,
-    ) { loadErrors, installErrors ->
+        preferences.extensionErrorTextEnabled().changes(),
+    ) { loadErrors, installErrors, showText ->
+        // Recorded either way: the setting hides the label, it does not decide what happened.
+        if (!showText) return@combine emptyMap()
         buildMap<String, String> {
             loadErrors.forEach { (pkgName, report) -> put(pkgName, report.reason) }
             installErrors.forEach { (key, reason) -> put(key.substringBeforeLast("_"), reason) }

@@ -211,6 +211,9 @@ abstract class SearchScreenModel(
                         val page = withContext(coroutineDispatcher) {
                             source.getSearchManga(1, query.sanitize(), source.getFilterList())
                         }
+                        // KMK -->
+                        extensionManager.clearSourceError(source)
+                        // KMK <--
 
                         val titles = page.mangas
                             .map { it.toDomainManga(source.id) }
@@ -228,8 +231,12 @@ abstract class SearchScreenModel(
                             updateItem(source, SearchItemResult.Success(titles))
                         }
                     } catch (e: Exception) {
-                        // KMK -->
-                        globalAppGraph.extensionManager.reportSourceError(source, e)
+                        // KMK --> Recorded but never prompted. A global search queries every source
+                        // at once, so each broken one raises its own popup and they queue up over the
+                        // results - which is the one place the user is least able to act on any of
+                        // them. The failure still lands on the extensions page, and using the same
+                        // source directly still reports it.
+                        extensionManager.reportSourceError(source, e, prompt = false)
                         // KMK <--
                         if (isActive) {
                             updateItem(source, SearchItemResult.Error(e))

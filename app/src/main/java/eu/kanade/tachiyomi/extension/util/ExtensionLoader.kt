@@ -210,7 +210,7 @@ internal object ExtensionLoader {
                         throw e
                     } catch (e: Throwable) {
                         logcat(LogPriority.ERROR, e) { "[ExtInstall] Unexpected error loading extension ${it.packageInfo.packageName}" }
-                        attributedError(it.packageInfo, "Unexpected: ${e.message}")
+                        attributedError(it.packageInfo, "Unexpected: ${e.message}", cause = e)
                     }
                 }
             }.awaitAll()
@@ -391,7 +391,7 @@ internal object ExtensionLoader {
             ChildFirstPathClassLoader(appInfo.sourceDir, null, context.classLoader)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "[ExtInstall] Extension classloader error: $extName ($pkgName) — returning Error" }
-            return attributedError(pkgInfo, "Classloader error: ${e.message}")
+            return attributedError(pkgInfo, "Classloader error: ${e.message}", cause = e)
         }
 
         val sourceClassNames = appInfo.metaData.getString(METADATA_SOURCE_CLASS)
@@ -419,7 +419,7 @@ internal object ExtensionLoader {
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "[ExtInstall] Extension source load error: $extName ($it) — returning Error" }
-                    return attributedError(pkgInfo, "Source class load failed: ${e.message}")
+                    return attributedError(pkgInfo, "Source class load failed: ${e.message}", cause = e)
                 }
             }
 
@@ -525,12 +525,13 @@ internal object ExtensionLoader {
         }
     }
 
-    private fun attributedError(pkgInfo: PackageInfo, reason: String): LoadResult.Error {
+    private fun attributedError(pkgInfo: PackageInfo, reason: String, cause: Throwable? = null): LoadResult.Error {
         val appInfo = pkgInfo.applicationInfo
         val name = appInfo?.metaData?.getString(METADATA_NAME)
             ?: pkgInfo.packageName
         return LoadResult.Error(
             reason = reason,
+            cause = cause,
             pkgName = pkgInfo.packageName,
             extensionName = name,
             versionName = pkgInfo.versionName,

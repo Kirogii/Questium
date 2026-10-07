@@ -56,7 +56,10 @@ import eu.kanade.domain.base.BasePreferences
 import eu.kanade.domain.connections.service.ConnectionsPreferences
 import eu.kanade.domain.source.interactor.GetIncognitoState
 import eu.kanade.domain.sync.SyncPreferences
+import eu.kanade.presentation.browse.ExtensionErrorConfirm
+import eu.kanade.presentation.browse.ExtensionErrorDisableSystemDialog
 import eu.kanade.presentation.browse.ExtensionErrorReportDialog
+import eu.kanade.presentation.browse.ExtensionErrorVersionSuppressDialog
 import eu.kanade.presentation.components.AppStateBanners
 import eu.kanade.presentation.components.DownloadedOnlyBannerBackgroundColor
 import eu.kanade.presentation.components.IncognitoModeBannerBackgroundColor
@@ -83,6 +86,7 @@ import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
 import eu.kanade.tachiyomi.data.notification.NotificationReceiver
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.data.updater.RELEASE_URL
+import eu.kanade.tachiyomi.extension.ExtensionErrorReport
 import eu.kanade.tachiyomi.extension.api.ExtensionApi
 import eu.kanade.tachiyomi.extension.copyExtensionErrorToClipboard
 import eu.kanade.tachiyomi.ui.base.activity.BaseActivity
@@ -570,15 +574,43 @@ class MainActivity : BaseActivity() {
         val reporter = globalAppGraph.extensionErrorReporter
         val report by reporter.pendingPrompt.collectAsState()
 
-        val current = report
+        var confirm by remember { mutableStateOf<ExtensionErrorConfirm?>(null) }
+
+        // One dialog at a time: a confirmation replaces the popup that raised it rather than
+        // stacking on top, so dismissing the confirmation returns to the popup instead of leaving
+        // two dialogs competing for the same back press.
+        val current = if (confirm == null) report else null
         if (current != null) {
             ExtensionErrorReportDialog(
                 report = current,
+                extension = globalAppGraph.extensionManager.extensionFor(current.pkgName),
                 onOk = reporter::dismissPrompt,
-                onDontShowAgain = reporter::suppressCurrentVersion,
+                onDontShowAgain = {
+                    confirm = ExtensionErrorConfirm.Suppress(current)
+                    reporter.dismissPrompt()
+                },
+                onDisableSystem = {
+                    confirm = ExtensionErrorConfirm.DisableSystem
+                    reporter.dismissPrompt()
+                },
                 onSearchGitHub = { url -> context.openExtensionRepoLink(url) },
                 onCopyReport = { context.copyExtensionErrorToClipboard(current) },
             )
+        }
+
+        // Held in local state, not read back off the reporter: both actions below clear the report
+        // flow, so keying the confirmation off it would tear the dialog down mid-press.
+        when (val pending = confirm) {
+            is ExtensionErrorConfirm.Suppress -> ExtensionErrorVersionSuppressDialog(
+                report = pending.report,
+                onDismiss = { confirm = null },
+                onConfirm = { reporter.suppressCurrentVersion(pending.report) },
+            )
+            is ExtensionErrorConfirm.DisableSystem -> ExtensionErrorDisableSystemDialog(
+                onDismiss = { confirm = null },
+                onConfirm = { reporter.disableSystem() },
+            )
+            null -> Unit
         }
         // KMK <--
     }

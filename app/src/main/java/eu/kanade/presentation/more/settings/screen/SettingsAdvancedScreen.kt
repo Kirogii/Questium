@@ -868,6 +868,18 @@ object SettingsAdvancedScreen : SearchableSettings {
                         stringResource(MR.strings.app_name),
                     ),
                 ),
+                // KMK -->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = sourcePreferences.extensionWatchdogEnabled(),
+                    title = stringResource(KMR.strings.ext_watchdog_enabled),
+                    subtitle = stringResource(KMR.strings.ext_watchdog_enabled_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = sourcePreferences.extensionErrorTextEnabled(),
+                    title = stringResource(KMR.strings.ext_error_text_enabled),
+                    subtitle = stringResource(KMR.strings.ext_error_text_enabled_summary),
+                ),
+                // KMK <--
                 Preference.PreferenceItem.SwitchPreference(
                     preference = delegateSourcePreferences.delegateSources(),
                     title = stringResource(SYMR.strings.toggle_delegated_sources),
