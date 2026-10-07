@@ -8,12 +8,14 @@
 *A manga reader built for Quest 3 and Quest 3S.*
 
 [![Discord](https://img.shields.io/discord/1540509997719355545.svg?label=&labelColor=6A7EC2&color=7389D8&logo=discord&logoColor=FFFFFF)](https://discord.gg/JcQZYvCbYH)
-[![CI](https://img.shields.io/github/actions/workflow/status/PineappleTwilight/komikku-pineapple/build_push.yml?labelColor=27303D&label=CI)](https://github.com/PineappleTwilight/komikku-pineapple/actions/workflows/build_push.yml)
+[![Quest build](https://img.shields.io/github/actions/workflow/status/Kirogii/VR-Tachiyomi/quest_vr.yml?branch=feature%2Ffrosted-vr-library&label=Quest%20build)](https://github.com/Kirogii/VR-Tachiyomi/actions/workflows/quest_vr.yml)
 [![License: Apache-2.0](https://img.shields.io/github/license/PineappleTwilight/komikku-pineapple?labelColor=27303D&color=0877d2)](/LICENSE)
 
 ## Download
 
-[![Stable](https://img.shields.io/github/release/PineappleTwilight/komikku-pineapple.svg?maxAge=3600&label=Stable&labelColor=06599d&color=043b69)](https://github.com/PineappleTwilight/komikku-pineapple/releases/latest)
+[Download the v1 alpha APK](https://github.com/Kirogii/VR-Tachiyomi/releases/tag/v1)
+
+[Build and signing setup](.github/QUEST_BUILD.md)
 
 *Requires Android 8.0 or higher.*
 

@@ -20,7 +20,7 @@ func check() -> void:
         assert(reader.origin.global_transform.is_equal_approx(original), "Sticks cannot move or turn the viewpoint")
     reader.camera.rotation.y = 1.0
     reader.recenter()
-    assert(reader.workspace.hud.node.global_basis.is_equal_approx(reader.workspace.facing_basis()), "Recenter follows the user's heading")
+    assert(reader.workspace.hud.node.global_basis.orthonormalized().is_equal_approx(reader.workspace.facing_basis()), "Recenter follows the user's heading at any HUD scale")
     assert(reader.origin.global_transform.is_equal_approx(original), "Recenter moves the GUI, not the world")
     XRServer.remove_tracker(tracker)
     reader.queue_free()
