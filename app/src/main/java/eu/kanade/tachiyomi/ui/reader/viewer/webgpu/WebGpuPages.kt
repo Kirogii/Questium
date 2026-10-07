@@ -196,6 +196,15 @@ class ViewerReaderPage(
     var rescaleInFlight: Boolean = false
     // KMK <--
 
+    /**
+     * Set when the renderer actually asked for this page, which distinguishes a page that is on
+     * screen (or prewarmed) from one only a speculative preload walk ever touched. Read by the
+     * liveness sweep so a stalled page on screen is recovered without queueing shells that nothing
+     * will ever draw.
+     */
+    @Volatile
+    var wantedByRender: Boolean = false
+
     // KMK -->
     /**
      * Pre-translation page retained for the compare toggle. Set once on the
@@ -457,23 +466,24 @@ class ProgressPage(
         // monochrome vector, so a white tint is invisible on light reader backgrounds.
         sprite(texture, cx, cy, sizePx, dst, eased * 2f * PI.toFloat(), foregroundColor)
         // KMK <--
-        // KMK --> Percentage only once bytes actually arrive; unknown-length and cached
-        // loads never advance progressFlow, so 0% would stick forever. The spinning
-        // pineapple above is the indeterminate indicator until then.
-        if (progress > 0f) {
-            val textPx = (full * 0.09f).coerceAtLeast(12f)
-            text(
-                dst,
-                viewer.activity.baseContext,
-                FontFamily.Default,
-                "${(progress * 100).toInt()}%",
-                cx,
-                cy + sizePx * 0.5f + textPx * 1.1f,
-                textPx,
-                foregroundColor,
-                align = TextAlign.Center,
-            )
-        }
+        // KMK --> The percentage is always drawn, including while the load is
+        // indeterminate (cached or unknown-length, where progressFlow never advances and progress
+        // stays 0). Hiding it until bytes arrived left the placeholder as a bare spinner with no
+        // reading at all, which is indistinguishable from the stall it was meant to reassure about -
+        // "0%" reads as "started", the pineapple alone reads as "hung". Clamped so a progressFlow
+        // that overshoots cannot render past 100.
+        val textPx = (full * 0.09f).coerceAtLeast(12f)
+        text(
+            dst,
+            viewer.activity.baseContext,
+            FontFamily.Default,
+            "${(progress.coerceIn(0f, 1f) * 100).toInt()}%",
+            cx,
+            cy + sizePx * 0.5f + textPx * 1.1f,
+            textPx,
+            foregroundColor,
+            align = TextAlign.Center,
+        )
         // KMK <--
     }
 

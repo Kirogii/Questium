@@ -176,6 +176,32 @@ internal fun WebGpuViewer.queueForDecode(page: ViewerReaderPage, prioritize: Boo
 }
 
 /**
+ * Puts a page the renderer has asked for into the decode pipeline.
+ *
+ * Called from `fetchPage`, which is the only place that knows a page is genuinely wanted on screen
+ * right now. Every other queueing site is a speculative preload walking outward from currentPage,
+ * and its window is computed from the reach reported by the renderer on the *previous* pass - so a
+ * page the renderer walks to can sit outside it. That left the shell in the cache showing its
+ * placeholder with nothing scheduled: `getPage` had created it, `preloadPages` had not reached it,
+ * and no later call would. The gap then persisted as a spinning indicator with the pages around it
+ * decoded normally, which is exactly what scrolling back into an evicted zone produced.
+ *
+ * Queueing here makes the guarantee local - a page the renderer holds is a page being worked on -
+ * rather than depending on a speculative walk having covered it.
+ */
+internal fun WebGpuViewer.ensureDecoding(page: ViewerPage) {
+    when (page) {
+        // A transition is drawn procedurally; there is nothing to decode.
+        is ViewerTransitionPage -> Unit
+        is ViewerReaderPage -> {
+            page.wantedByRender = true
+            queueForDecode(page, prioritize = page === currentPage)
+        }
+        else -> Unit
+    }
+}
+
+/**
  * Releases a page the viewer believes is in flight but is not, so it can be worked on again.
  *
  * The recovery counterpart to [queueForDecode], which is deliberately conservative: it treats
@@ -860,7 +886,12 @@ internal suspend fun WebGpuViewer.decodeReaderPage(page: ViewerReaderPage) {
                     }
 
                     // Scrolled past: the frames left are work nothing will draw.
+                    // The page keeps whatever state it has rather than being force-reset here -
+                    // it is out of the cache, so a fresh shell will be built when it is next
+                    // wanted, and fetchPage's ensureDecoding queues that one. Marking it wanted
+                    // first is what makes that recovery certain if it is still cached.
                     if (!stillWanted) {
+                        page.wantedByRender = false
                         discardFrames()
                         try {
                             dec.close()

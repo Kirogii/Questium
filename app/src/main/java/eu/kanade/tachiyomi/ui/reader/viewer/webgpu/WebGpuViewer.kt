@@ -567,12 +567,22 @@ open class WebGpuViewer(
                 try {
                     val orphans = synchronized(lock) {
                         pageCache.values.filterIsInstance<ViewerReaderPage>().filter { page ->
+                            if (page.isDecoded || page.imagePage.destroyed) return@filter false
                             when (page.state) {
+                                // Queued but absent from the queue: nothing will ever pop it.
                                 PageState.QUEUED -> !decodeQueue.contains(page)
                                 // LOADING is only released when the bytes are already there: a page
                                 // genuinely fetching must keep its state, and queueForDecode will
                                 // promote it the moment it reports Ready.
                                 PageState.LOADING -> page.page.status == Page.State.Ready
+                                // The terminal case: not being worked on at all. The renderer
+                                // reached this page (fetchPage called ensureDecoding), so it is on
+                                // screen or prewarmed, and nothing else will schedule it - a decode
+                                // that bailed mid-flight, or a state left IDLE by an exit path,
+                                // strands it behind its placeholder indefinitely. Checking
+                                // wantedByRender is what keeps this from queueing speculative shells
+                                // that only a preload walk ever touched.
+                                PageState.IDLE -> page.wantedByRender && page.imagePage is ProgressPage
                                 else -> false
                             }
                         }
@@ -798,19 +808,25 @@ open class WebGpuViewer(
                 // (Pager mode keeps the full pipeline, including the existing()
                 // identity reuse inside buildSpreadPage.)
                 if (isContinuous) {
-                    if (index == 0) return@fetch current.imagePage
+                    if (index == 0) {
+                        ensureDecoding(current)
+                        return@fetch current.imagePage
+                    }
                     var page = current
                     val step = if (index > 0) 1 else -1
                     repeat(abs(index)) {
                         page = nextPage(page, step) ?: return@fetch null
                     }
+                    ensureDecoding(page)
                     return@fetch page.imagePage
                 }
                 // KMK <--
 
                 // For index 0, return the current spread
                 if (index == 0) {
-                    return@fetch buildSpreadPage(getSpreadAnchor(current))
+                    val anchor = getSpreadAnchor(current)
+                    ensureDecoding(anchor)
+                    return@fetch buildSpreadPage(anchor)
                 }
 
                 // Navigate by spreads from current
@@ -820,7 +836,9 @@ open class WebGpuViewer(
                     page = nextPage(page, step) ?: return@fetch null
                 }
 
-                return@fetch buildSpreadPage(page)
+                val anchor = getSpreadAnchor(page)
+                ensureDecoding(anchor)
+                return@fetch buildSpreadPage(anchor)
             }
 
             onTap = { offset ->
