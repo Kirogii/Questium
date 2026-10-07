@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.webgpu.GPUDevice
 import androidx.webgpu.GPUTexture
+import androidx.webgpu.GPUTextureView
 import ca.mpreg.webgpuviewer.draw.Draw
 import ca.mpreg.webgpuviewer.draw.TextAlign
 import ca.mpreg.webgpuviewer.draw.uploadTexture
@@ -458,13 +459,13 @@ class ProgressPage(
      * per GPU device and shared; the spin eases per revolution like the splash exit loop.
      */
     private fun drawSplashPineapple(cx: Float, cy: Float, full: Float, dst: GPUTexture) {
-        val texture = loadPineappleTexture() ?: return
+        val view = loadPineappleView() ?: return
         val sizePx = full * 0.55f
         val t = (System.currentTimeMillis() % 1200L) / 1200f
         val eased = if (t < 0.5f) 4f * t * t * t else 1f - (-2f * t + 2f).let { it * it * it } / 2f
         // KMK --> Tint with the reader on-background color, not white: ic_houri is a white
         // monochrome vector, so a white tint is invisible on light reader backgrounds.
-        sprite(texture, cx, cy, sizePx, dst, eased * 2f * PI.toFloat(), foregroundColor)
+        sprite(view, cx, cy, sizePx, dst, eased * 2f * PI.toFloat(), foregroundColor)
         // KMK <--
         // KMK --> The percentage is always drawn, including while the load is
         // indeterminate (cached or unknown-length, where progressFlow never advances and progress
@@ -503,6 +504,7 @@ class ProgressPage(
                 } catch (_: Exception) {
                 }
                 pineappleTexture = null
+                pineappleView = null
                 pineappleDevice = device
             }
             pineappleTexture?.let { return it }
@@ -517,6 +519,13 @@ class ProgressPage(
                 // publish if this texture still belongs to the current device.
                 if (pineappleDevice === device && pineappleTexture == null) {
                     pineappleTexture = texture
+                    // One view per texture, not per frame: render() runs for as long as this
+                    // placeholder is on screen and the spin is time-based, so this is every frame.
+                    pineappleView = try {
+                        texture?.createView()
+                    } catch (_: Exception) {
+                        null
+                    }
                 } else {
                     try {
                         texture?.destroy()
@@ -530,6 +539,12 @@ class ProgressPage(
                 uploadInFlight = false
             }
         }
+    }
+
+    /** The shared spinner's view, uploaded on first use alongside its texture. */
+    private fun loadPineappleView(): GPUTextureView? {
+        loadPineappleTexture() ?: return null
+        return synchronized(ProgressPage) { pineappleView }
     }
 
     private fun uploadPineappleTexture(): GPUTexture? {
@@ -574,6 +589,11 @@ class ProgressPage(
         @Volatile
         private var pineappleTexture: GPUTexture? = null
 
+        // KMK --> Built with the texture and rebuilt with it: a view is bound to its texture's
+        // device, so a device swap has to drop this alongside the texture above.
+        @Volatile
+        private var pineappleView: GPUTextureView? = null
+
         // KMK --> Device the cached texture was uploaded to; see loadPineappleTexture.
         @Volatile
         private var pineappleDevice: GPUDevice? = null
@@ -597,6 +617,7 @@ class ProgressPage(
                 } catch (_: Exception) {
                 }
                 pineappleTexture = null
+                pineappleView = null
                 pineappleDevice = null
             }
         }

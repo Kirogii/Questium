@@ -136,22 +136,20 @@ internal fun WebGpuViewer.queueForDecode(page: ViewerReaderPage, prioritize: Boo
         when (page.state) {
             PageState.IDLE -> {
                 page.state = PageState.QUEUED
-                // The worker pops from the end, so the front of the queue is the next page decoded.
-                // This had it the other way round, which meant prioritize put the page the reader is
-                // actually looking at behind everything a speculative preload had queued, and it
-                // could sit at 0% indefinitely while its neighbours decoded.
+                // The worker pops with removeLast(), so the tail is what decodes next and the head
+                // is what waits. A prioritised page therefore goes to the tail.
                 if (prioritize) {
-                    decodeQueue.addFirst(page)
-                } else {
                     decodeQueue.addLast(page)
+                } else {
+                    decodeQueue.addFirst(page)
                 }
                 lock.notify()
             }
 
             PageState.QUEUED -> {
-                // Already queued - move to the front if prioritising
+                // Already queued - move to the decoding end if prioritising
                 if (prioritize && decodeQueue.remove(page)) {
-                    decodeQueue.addFirst(page)
+                    decodeQueue.addLast(page)
                 }
             }
 
