@@ -311,7 +311,8 @@ private fun ExtensionItem(
     onClickItemSecondaryAction: (Extension) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val (extension, installStep) = item
+    val extension = item.extension
+    val installStep = item.installStep
     BaseBrowseItem(
         modifier = modifier
             .combinedClickable(
@@ -356,6 +357,9 @@ private fun ExtensionItem(
         ExtensionItemContent(
             extension = extension,
             installStep = installStep,
+            // KMK -->
+            errorReason = item.errorReason,
+            // KMK <--
             modifier = Modifier.weight(1f),
         )
     }
@@ -365,6 +369,9 @@ private fun ExtensionItem(
 private fun ExtensionItemContent(
     extension: Extension,
     installStep: InstallStep,
+    // KMK -->
+    errorReason: String? = null,
+    // KMK <--
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -376,6 +383,16 @@ private fun ExtensionItemContent(
             overflow = TextOverflow.Ellipsis,
             style = MaterialTheme.typography.bodyMedium,
         )
+
+        // KMK -->
+        if (!errorReason.isNullOrBlank()) {
+            Text(
+                text = stringResource(KMR.strings.ext_error_failed_to_load, errorReason),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        // KMK <--
 
         // Won't look good but it's not like we can ellipsize overflowing content
         FlowRow(

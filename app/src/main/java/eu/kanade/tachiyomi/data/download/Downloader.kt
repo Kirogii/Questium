@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.data.event.AppEvent
 import eu.kanade.tachiyomi.data.library.LibraryUpdateNotifier
 import eu.kanade.tachiyomi.data.notification.NotificationHandler
 import eu.kanade.tachiyomi.data.webhook.WebhookNotifier
+import eu.kanade.tachiyomi.extension.reportingSourceErrorsOrNull
 import eu.kanade.tachiyomi.source.UnmeteredSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -407,7 +408,11 @@ class Downloader(
             // If the page list already exists, start from the file
             val pageList = download.pages ?: run {
                 // Otherwise, pull page list from network and add them to download object
-                val pages = download.source.getPageList(download.chapter.toSChapter())
+                // KMK -->
+                val pages = reportingSourceErrorsOrNull(download.source) {
+                    download.source.getPageList(download.chapter.toSChapter())
+                }.orEmpty()
+                // KMK <--
 
                 if (pages.isEmpty()) {
                     throw Exception(context.stringResource(MR.strings.page_list_empty_error))

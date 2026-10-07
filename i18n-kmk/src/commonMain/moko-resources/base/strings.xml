@@ -624,4 +624,11 @@
     <string name="database_export_success">Database exported</string>
     <string name="database_export_checkpoint_failed">Export failed: the database could not be snapshotted. Try again with the app idle.</string>
     <string name="database_export_failed">Database export failed</string>
+    <string name="ext_error_failed_to_load">Failed: %s</string>
+    <string name="ext_error_report_title">%1$s is not working</string>
+    <string name="ext_error_report_body">An extension called \u201c%1$s\u201d (version %2$s) from the \u201c%3$s\u201d repository hit an error:\n\n%4$s\n\nThis nearly always means the site changed and the extension has not caught up yet. Only the people who maintain that extension can fix it \u2014 this app cannot.\n\nTo report it:\n1. Open the GitHub search below, which looks for \u201c%1$s\u201d.\n2. Open the extension\u2019s own repository from the results.\n3. Check whether someone already reported it. If they did, add to that report instead of opening a new one. If not, open a new issue and say what you were doing.\n\nPlease report it there rather than in Houri support, which cannot act on it. And please do not post the same problem in several places at once \u2014 one clear report is much easier to act on than ten duplicates.</string>
+    <string name="ext_error_report_no_repo">The extension \u201c%1$s\u201d hit an error:\n\n%2$s\n\nThis nearly always means a website changed and the extension has not caught up yet. Only the people who maintain that extension can fix it \u2014 this app cannot.\n\nOpen the GitHub search below to find its repository, check whether the problem is already reported, and if not open an issue there. Please do not report it in Houri support, which cannot act on it.</string>
+    <string name="ext_error_search_github">Open the extension\u2019s issues on GitHub</string>
+    <string name="ext_error_report_dont_show_again">Don\u2019t show again for this version</string>
+    <string name="ext_error_copy_report">Copy error details</string>
 </resources>

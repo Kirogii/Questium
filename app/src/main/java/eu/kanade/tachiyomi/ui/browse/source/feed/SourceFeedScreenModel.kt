@@ -245,7 +245,10 @@ open class SourceFeedScreenModel(
                                 )
                             }
                         }.mangas
-                    } catch (_: Exception) {
+                    } catch (e: Exception) {
+                        // KMK -->
+                        globalAppGraph.extensionManager.reportSourceError(source, e)
+                        // KMK <--
                         emptyList()
                     }
 

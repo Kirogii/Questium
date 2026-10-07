@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.extension.model.Extension
 import eu.kanade.tachiyomi.extension.model.InstallStep
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.system.LocaleHelper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,18 +44,49 @@ class ExtensionsScreenModel(
 
     private val currentDownloads = MutableStateFlow<Map<String, InstallStep>>(hashMapOf())
 
+    // KMK -->
+    private val installFailureReasons = globalAppGraph.extensionManager.installerFailureReasons
+
+    /**
+     * Failure text per package, for the row subtext.
+     *
+     * The installer's keys are `pkgName_signatureHash` while the reporter keys by package alone, so
+     * install reasons are re-keyed here and allowed to stand on their own. An install failure usually
+     * has no matching load or runtime failure to pair with, and merging only into an existing entry
+     * dropped exactly that case.
+     *
+     * Split on the *last* underscore: a package name may itself contain one, but the signature hash
+     * is hex and never does, so the last separator is always the reliable one.
+     */
+    private val extensionErrors = combine(
+        globalAppGraph.extensionErrorReporter.errorsByPkg,
+        installFailureReasons,
+    ) { loadErrors, installErrors ->
+        buildMap<String, String> {
+            loadErrors.forEach { (pkgName, report) -> put(pkgName, report.reason) }
+            installErrors.forEach { (key, reason) -> put(key.substringBeforeLast("_"), reason) }
+        }
+    }
+    // KMK <--
+
     init {
         val context = globalAppGraph.context
-        val extensionMapper: (Map<String, InstallStep>) -> ((Extension) -> ExtensionUiModel.Item) = { map ->
+        val extensionMapper: (
+            Map<String, InstallStep>,
+            Map<String, String>,
+        ) -> ((Extension) -> ExtensionUiModel.Item) = { downloads, errors ->
             {
                 ExtensionUiModel.Item(
                     it,
-                    map[
+                    downloads[
                         it.pkgName +
                             // KMK -->
                             "_${it.signatureHash}",
                         // KMK <--
                     ] ?: InstallStep.Idle,
+                    // KMK -->
+                    errors[it.pkgName],
+                    // KMK <--
                 )
             }
         }
@@ -72,9 +104,12 @@ class ExtensionsScreenModel(
                 // KMK <--
                 currentDownloads,
                 getExtensions.subscribe(),
-            ) { predicate, nsfwOnly, downloads, (_updates, _installed, _available, _untrusted) ->
+                // KMK -->
+                extensionErrors,
+                // KMK <--
+            ) { predicate, nsfwOnly, downloads, (_updates, _installed, _available, _untrusted), errors ->
                 buildMap {
-                    val updates = _updates.filter(predicate).map(extensionMapper(downloads))
+                    val updates = _updates.filter(predicate).map(extensionMapper(downloads, errors))
                         // KMK -->
                         .filter { !nsfwOnly || it.extension.isNsfw }
                     // KMK <--
@@ -82,11 +117,11 @@ class ExtensionsScreenModel(
                         put(ExtensionUiModel.Header.Resource(MR.strings.ext_updates_pending), updates)
                     }
 
-                    val installed = _installed.filter(predicate).map(extensionMapper(downloads))
+                    val installed = _installed.filter(predicate).map(extensionMapper(downloads, errors))
                         // KMK -->
                         .filter { !nsfwOnly || it.extension.isNsfw }
                     // KMK <--
-                    val untrusted = _untrusted.filter(predicate).map(extensionMapper(downloads))
+                    val untrusted = _untrusted.filter(predicate).map(extensionMapper(downloads, errors))
                         // KMK -->
                         .filter { !nsfwOnly || it.extension.isNsfw }
                     // KMK <--
@@ -103,7 +138,7 @@ class ExtensionsScreenModel(
                         .toSortedMap(LocaleHelper.comparator)
                         .map { (lang, exts) ->
                             ExtensionUiModel.Header.Text(LocaleHelper.getSourceDisplayName(lang, context)) to
-                                exts.map(extensionMapper(downloads))
+                                exts.map(extensionMapper(downloads, errors))
                         }
                     if (languagesWithExtensions.isNotEmpty()) {
                         putAll(languagesWithExtensions)
@@ -199,6 +234,10 @@ class ExtensionsScreenModel(
     fun cancelInstallUpdateExtension(extension: Extension) {
         extensionManager.cancelInstallUpdateExtension(extension)
         removeDownloadState(extension)
+        // KMK -->
+        // Dismissing the retained error is the user's way of saying "stop showing me this".
+        globalAppGraph.extensionErrorReporter.clear(extension.pkgName)
+        // KMK <--
     }
 
     private fun addDownloadState(extension: Extension, installStep: InstallStep) {
@@ -224,12 +263,23 @@ class ExtensionsScreenModel(
         }
     }
 
-    private suspend fun Flow<InstallStep>.collectToInstallUpdate(extension: Extension) =
+    private suspend fun Flow<InstallStep>.collectToInstallUpdate(extension: Extension) {
+        var lastStep = InstallStep.Idle
         this
-            .onEach { installStep -> addDownloadState(extension, installStep) }
+            .onEach { installStep ->
+                lastStep = installStep
+                addDownloadState(extension, installStep)
+            }
             .takeWhile { installStep -> installStep != InstallStep.Installed }
-            .onCompletion { removeDownloadState(extension) }
+            .onCompletion { cause ->
+                // An error has to persist: the row shows a retry affordance and the reason as
+                // subtext, and wiping it here made both disappear the moment the flow ended.
+                if (cause !is CancellationException && lastStep != InstallStep.Error) {
+                    removeDownloadState(extension)
+                }
+            }
             .collect()
+    }
 
     fun uninstallExtension(extension: Extension) {
         extensionManager.uninstallExtension(extension)
@@ -289,5 +339,9 @@ object ExtensionUiModel {
     data class Item(
         val extension: Extension,
         val installStep: InstallStep,
+        // KMK -->
+        /** Reason this extension last failed, shown as subtext under the name. */
+        val errorReason: String? = null,
+        // KMK <--
     )
 }

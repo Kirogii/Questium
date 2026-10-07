@@ -228,6 +228,9 @@ abstract class SearchScreenModel(
                             updateItem(source, SearchItemResult.Success(titles))
                         }
                     } catch (e: Exception) {
+                        // KMK -->
+                        globalAppGraph.extensionManager.reportSourceError(source, e)
+                        // KMK <--
                         if (isActive) {
                             updateItem(source, SearchItemResult.Error(e))
                         }

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.source.SourceFactory
 import eu.kanade.tachiyomi.util.lang.Hash
 import eu.kanade.tachiyomi.util.storage.copyAndSetReadOnlyTo
 import eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -202,9 +203,14 @@ internal object ExtensionLoader {
                 async(extensionsDispatcher) {
                     try {
                         loadExtension(context, it, extStores)
+                    } catch (e: CancellationException) {
+                        // Cancellation is not a load failure. Letting it be reported as an Error made
+                        // every child succeed, so awaitAll returned normally and the parent scope
+                        // could not unwind.
+                        throw e
                     } catch (e: Throwable) {
                         logcat(LogPriority.ERROR, e) { "[ExtInstall] Unexpected error loading extension ${it.packageInfo.packageName}" }
-                        LoadResult.Error("Unexpected: ${e.message}")
+                        attributedError(it.packageInfo, "Unexpected: ${e.message}")
                     }
                 }
             }.awaitAll()
@@ -217,25 +223,34 @@ internal object ExtensionLoader {
      * Returns a list rather than a Sequence on purpose: callers index into the result by package
      * name, and a lazy sequence would redo the archive parse on every one of those lookups.
      */
-    private fun readPrivateExtensions(context: Context, pkgManager: PackageManager): List<ExtensionInfo> =
-        getPrivateExtensionDir(context)
-            .listFiles()
-            ?.asSequence()
-            ?.filter { it.isFile && it.extension == PRIVATE_EXTENSION_EXTENSION }
-            ?.mapNotNull {
+    private fun readPrivateExtensions(context: Context, pkgManager: PackageManager): List<ExtensionInfo> {
+        val files = getPrivateExtensionDir(context).listFiles() ?: return emptyList()
+
+        // A staging file is only live between the copy and the rename that publishes it. A process
+        // death in that window leaves one behind forever, since nothing else ever deletes it.
+        files.filter { it.isFile && it.extension == PRIVATE_EXTENSION_STAGING_SUFFIX }
+            .forEach { it.delete() }
+
+        return files
+            .asSequence()
+            .filter { it.isFile && it.extension == PRIVATE_EXTENSION_EXTENSION }
+            .mapNotNull {
                 // Just in case, since Android 14+ requires them to be read-only
                 if (it.canWrite()) {
                     it.setReadOnly()
                 }
 
                 val path = it.absolutePath
-                pkgManager.getPackageArchiveInfo(path, PACKAGE_FLAGS)
-                    ?.apply { applicationInfo!!.fixBasePaths(path) }
+                pkgManager.getPackageArchiveInfo(path, PACKAGE_FLAGS)?.let { info ->
+                    val appInfo = info.applicationInfo ?: return@let null
+                    appInfo.fixBasePaths(path)
+                    info
+                }
             }
-            ?.filter { isPackageAnExtension(it) }
-            ?.map { ExtensionInfo(packageInfo = it, isShared = false) }
-            ?.toList()
-            ?: emptyList()
+            .filter { isPackageAnExtension(it) }
+            .map { ExtensionInfo(packageInfo = it, isShared = false) }
+            .toList()
+    }
 
     /**
      * Attempts to load an extension from the given package name. It checks if the extension
@@ -247,7 +262,8 @@ internal object ExtensionLoader {
             val extensionPackage = getExtensionInfoFromPkgName(context, pkgName)
             if (extensionPackage == null) {
                 logcat(LogPriority.WARN) { "[ExtInstall] Extension package is not found ($pkgName), attempt ${attempt + 1}/$MAX_LOAD_RETRIES" }
-                lastError = LoadResult.Error("Package not found: $pkgName")
+                // No PackageInfo to attribute this to: the archive or package is genuinely absent.
+                lastError = LoadResult.Error(reason = "Package not found: $pkgName", pkgName = pkgName)
                 if (attempt < MAX_LOAD_RETRIES - 1) {
                     kotlinx.coroutines.delay(RETRY_DELAY_MS)
                 }
@@ -255,7 +271,7 @@ internal object ExtensionLoader {
             }
             return loadExtension(context, extensionPackage)
         }
-        return lastError ?: LoadResult.Error("Package not found: $pkgName")
+        return lastError ?: LoadResult.Error(reason = "Package not found: $pkgName", pkgName = pkgName)
     }
 
     fun getExtensionPackageInfoFromPkgName(context: Context, pkgName: String): PackageInfo? {
@@ -324,7 +340,7 @@ internal object ExtensionLoader {
 
         if (versionName.isNullOrEmpty()) {
             logcat(LogPriority.WARN) { "[ExtInstall] Missing versionName for extension $extName — returning Error" }
-            return LoadResult.Error("Missing versionName: $pkgName")
+            return attributedError(pkgInfo, "Missing versionName: $pkgName")
         }
 
         // Validate lib version
@@ -337,13 +353,13 @@ internal object ExtensionLoader {
             logcat(LogPriority.WARN) {
                 "[ExtInstall] Lib version is $libVersion, while only version(s) ${SUPPORTED_LIB_VERSIONS.joinToString()} are supported — returning Error"
             }
-            return LoadResult.Error("Unsupported lib version $libVersion for $pkgName")
+            return attributedError(pkgInfo, "Unsupported lib version $libVersion for $pkgName")
         }
 
         val signatures = getSignatures(pkgInfo)
         if (signatures.isNullOrEmpty()) {
             logcat(LogPriority.WARN) { "[ExtInstall] Package $pkgName isn't signed — returning Error" }
-            return LoadResult.Error("Package not signed: $pkgName")
+            return attributedError(pkgInfo, "Package not signed: $pkgName")
         } else if (!trustExtension.isTrusted(pkgInfo, signatures)) {
             val extension = Extension.Untrusted(
                 extName,
@@ -368,20 +384,20 @@ internal object ExtensionLoader {
             appInfo.metaData.getInt(METADATA_NSFW) == 1
         if (!shouldLoadNsfwSource() && isNsfw) {
             logcat(LogPriority.WARN) { "[ExtInstall] NSFW extension $pkgName not allowed — returning Error" }
-            return LoadResult.Error("NSFW disabled: $pkgName")
+            return attributedError(pkgInfo, "NSFW disabled: $pkgName")
         }
 
         val classLoader = try {
             ChildFirstPathClassLoader(appInfo.sourceDir, null, context.classLoader)
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "[ExtInstall] Extension classloader error: $extName ($pkgName) — returning Error" }
-            return LoadResult.Error("Classloader error: ${e.message}")
+            return attributedError(pkgInfo, "Classloader error: ${e.message}")
         }
 
         val sourceClassNames = appInfo.metaData.getString(METADATA_SOURCE_CLASS)
         if (sourceClassNames.isNullOrEmpty()) {
             logcat(LogPriority.WARN) { "[ExtInstall] Missing $METADATA_SOURCE_CLASS metadata for extension $extName — returning Error" }
-            return LoadResult.Error("Missing source class metadata: $pkgName")
+            return attributedError(pkgInfo, "Missing source class metadata: $pkgName")
         }
 
         val sources = sourceClassNames
@@ -403,7 +419,7 @@ internal object ExtensionLoader {
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "[ExtInstall] Extension source load error: $extName ($it) — returning Error" }
-                    return LoadResult.Error("Source class load failed: ${e.message}")
+                    return attributedError(pkgInfo, "Source class load failed: ${e.message}")
                 }
             }
 
@@ -478,8 +494,12 @@ internal object ExtensionLoader {
      * @return List SHA256 digest of the signatures
      */
     private fun getSignatures(pkgInfo: PackageInfo): List<String>? {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signingInfo = pkgInfo.signingInfo!!
+        // Every dereference below is nullable in the platform API and this is called with whatever the
+        // package manager returned for a possibly malformed archive. Force-unwrapping here threw out of
+        // installPrivateExtensionFile, which has no try/catch around this call; null is already the
+        // handled "not signed" answer.
+        val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = pkgInfo.signingInfo ?: return null
             if (signingInfo.hasMultipleSigners()) {
                 signingInfo.apkContentsSigners
             } else {
@@ -489,8 +509,7 @@ internal object ExtensionLoader {
             @Suppress("DEPRECATION")
             pkgInfo.signatures
         }
-            ?.map { Hash.sha256(it.toByteArray()) }
-            ?.toList()
+        return signatures?.map { Hash.sha256(it.toByteArray()) }?.toList()
     }
 
     /**
@@ -504,6 +523,20 @@ internal object ExtensionLoader {
         if (publicSourceDir == null) {
             publicSourceDir = apkPath
         }
+    }
+
+    private fun attributedError(pkgInfo: PackageInfo, reason: String): LoadResult.Error {
+        val appInfo = pkgInfo.applicationInfo
+        val name = appInfo?.metaData?.getString(METADATA_NAME)
+            ?: pkgInfo.packageName
+        return LoadResult.Error(
+            reason = reason,
+            pkgName = pkgInfo.packageName,
+            extensionName = name,
+            versionName = pkgInfo.versionName,
+            versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo),
+            signatureHash = getSignatures(pkgInfo)?.firstOrNull(),
+        )
     }
 
     private data class ExtensionInfo(

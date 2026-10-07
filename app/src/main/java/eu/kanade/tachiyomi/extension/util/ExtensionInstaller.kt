@@ -4,9 +4,6 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
-import dev.zacsweers.metro.AppScope
-import dev.zacsweers.metro.Inject
-import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.extension.installer.Installer
 import eu.kanade.tachiyomi.extension.model.Extension
@@ -20,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.launch
@@ -45,6 +43,23 @@ internal class ExtensionInstaller(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val activeJobs = ConcurrentHashMap<String, Job>()
     private val activeSteps = ConcurrentHashMap<Long, MutableStateFlow<InstallStep>>()
+
+    private val reasonKeys = ConcurrentHashMap<Long, String>()
+
+    private val failureReasons = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    /** Latest failure text per `pkgName_signatureHash`, used as subtext on the list row. */
+    val failureReasonsFlow: StateFlow<Map<String, String>> = failureReasons.asStateFlow()
+
+    private fun setFailureReason(key: String, reason: String) {
+        failureReasons.value = failureReasons.value + (key to reason)
+    }
+
+    private fun clearFailureReason(key: String) {
+        if (failureReasons.value.containsKey(key)) {
+            failureReasons.value = failureReasons.value - key
+        }
+    }
     // KMK <--
     private val extensionInstaller = Injekt.get<BasePreferences>().extensionInstaller()
 
@@ -67,6 +82,9 @@ internal class ExtensionInstaller(
 
         val step = MutableStateFlow(InstallStep.Pending)
         activeSteps[downloadId] = step
+        reasonKeys[downloadId] = pkgName
+        // A retry must not inherit the reason from the attempt it is replacing.
+        clearFailureReason(pkgName)
 
         val job = scope.launch {
             val tmpFile = File(context.cacheDir, "extension_$pkgName.apk")
@@ -98,6 +116,7 @@ internal class ExtensionInstaller(
                 } else {
                     logcat(LogPriority.ERROR, e)
                     step.value = InstallStep.Error
+                    setFailureReason(pkgName, e.friendlyInstallReason())
                 }
                 // KMK -->
                 tmpFile.delete()
@@ -111,6 +130,7 @@ internal class ExtensionInstaller(
             .onCompletion {
                 activeJobs.remove(pkgName)
                 activeSteps.remove(downloadId)
+                reasonKeys.remove(downloadId)
                 job.cancel()
             }
     }
@@ -136,11 +156,16 @@ internal class ExtensionInstaller(
                     if (ExtensionLoader.installPrivateExtensionFile(context, tempFile)) {
                         updateInstallStep(downloadId, InstallStep.Installed)
                     } else {
-                        updateInstallStep(downloadId, InstallStep.Error)
+                        updateInstallStep(
+                            downloadId,
+                            InstallStep.Error,
+                            "The file was rejected as an extension. It may be damaged, not signed, " +
+                                "or from a different repository.",
+                        )
                     }
                 } catch (e: Exception) {
                     logcat(LogPriority.ERROR, e) { "Failed to read downloaded extension file." }
-                    updateInstallStep(downloadId, InstallStep.Error)
+                    updateInstallStep(downloadId, InstallStep.Error, e.friendlyInstallReason())
                 }
 
                 tempFile.delete()
@@ -188,8 +213,20 @@ internal class ExtensionInstaller(
      * @param downloadId The id of the download.
      * @param step New install step.
      */
-    fun updateInstallStep(downloadId: Long, step: InstallStep) {
+    fun updateInstallStep(downloadId: Long, step: InstallStep, reason: String? = null) {
         activeSteps[downloadId]?.let { it.value = step }
+        if (step == InstallStep.Error && reason != null) {
+            reasonKeys[downloadId]?.let { setFailureReason(it, reason) }
+        }
+    }
+
+    /**
+     * Install failures are shown to the user as text, and a raw exception message is frequently a
+     * bare host name or null. This keeps it readable while still carrying the underlying cause.
+     */
+    private fun Throwable.friendlyInstallReason(): String {
+        val detail = localizedMessage?.trim()?.takeIf { it.isNotEmpty() && it.length <= 160 }
+        return detail?.let { "Download or install failed: $it" } ?: "Download or install failed."
     }
 
     companion object {

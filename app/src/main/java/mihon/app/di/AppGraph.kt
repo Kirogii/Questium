@@ -79,6 +79,7 @@ import eu.kanade.tachiyomi.data.sync.service.GoogleDriveSyncService
 import eu.kanade.tachiyomi.data.track.TrackerManager
 import eu.kanade.tachiyomi.data.updater.AppUpdateChecker
 import eu.kanade.tachiyomi.data.webhook.WebhookNotifier
+import eu.kanade.tachiyomi.extension.ExtensionErrorReporter
 import eu.kanade.tachiyomi.extension.ExtensionManager
 import eu.kanade.tachiyomi.extension.util.ExtensionInstallActivity
 import eu.kanade.tachiyomi.network.NetworkHelper
@@ -279,6 +280,7 @@ interface AppGraph : ViewModelGraph {
     val sourceManager: SourceManager
     val trackerManager: TrackerManager
     val extensionManager: ExtensionManager
+    val extensionErrorReporter: ExtensionErrorReporter
     val chapterCache: ChapterCache
     val downloadCache: DownloadCache
     val networkHelper: NetworkHelper
