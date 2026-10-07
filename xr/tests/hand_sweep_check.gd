@@ -6,7 +6,7 @@ var hand: XRHandTracker
 func _initialize() -> void:
     check.call_deferred()
 
-func sample(point: Vector3, valid: bool = true, pinch: bool = false) -> void:
+func sample(point: Vector3, valid: bool = true, pinch: bool = false, delta: float = 0.12) -> void:
     hand.has_tracking_data = valid
     var world: Vector3 = reader.book.to_global(point)
     var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
@@ -14,7 +14,7 @@ func sample(point: Vector3, valid: bool = true, pinch: bool = false) -> void:
         hand.set_hand_joint_flags(joint, flags)
         var position := world + (Vector3.UP * (0.01 if pinch else 0.08) if joint == XRHandTracker.HAND_JOINT_THUMB_TIP else Vector3.ZERO)
         hand.set_hand_joint_transform(joint, Transform3D(Basis.IDENTITY, reader.origin.to_local(position)))
-    reader._process(0.02)
+    reader._process(delta)
 
 func stroke(side: int, distance: float = 0.24) -> void:
     sample(Vector3(side * distance, 0, 0.08))
@@ -58,8 +58,10 @@ func check() -> void:
     assert(reader.holder.is_empty(), "Other hand cannot steal the book during a page sweep")
     sample(Vector3(0.06, 0, 0.12))
     var curl: float = reader.book.turn_progress
-    sample(Vector3(-0.06, 0, 0.12))
-    assert(reader.book.turn_progress > curl and reader.book.turn_progress > 0.5, "The curl follows hand travel across the spine")
+    sample(Vector3(0.04, 0, 0.12))
+    assert(reader.book.turn_progress > curl, "The curl follows hand travel toward the spine")
+    sample(Vector3(0.02, 0, 0.12))
+    assert(reader.book.turn_progress >= 0.5, "Reaching the middle completes the turn")
     sample(Vector3(-0.17, 0, 0.09))
     sample(Vector3(-0.23, 0, 0.08))
     await create_timer(0.35).timeout
@@ -74,11 +76,11 @@ func check() -> void:
     assert(reader.book.turn_direction == 1, "Returning to the original edge re-arms the next forward sweep without a large lift")
     reset()
     stroke(1)
-    sample(Vector3(0.1, 0, 0.08), false)
+    sample(Vector3(0.1, 0, 0.08), false, false, 0.16)
     assert(reader.book.turn_direction == 0 and reader.book.first_page == 0, "Tracking loss cancels without saving a new spread")
     reset()
     stroke(1)
-    sample(Vector3(0.1, 0, 0.25))
+    sample(Vector3(0.1, 0, 0.30))
     await create_timer(0.35).timeout
     assert(reader.book.first_page == 0, "Lifting before the midpoint settles back")
     reset()

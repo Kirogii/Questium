@@ -459,13 +459,11 @@ func close_book(return_home: bool = true) -> void:
         workspace.show_section("Home")
 
 func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
-    var left_aim = tracked.get("left", {}).get("aim")
-    if is_instance_valid(left_aim) and left_aim.is_button_pressed("menu_gesture"):
-        facing = true
     palm_dwell = palm_dwell + delta if facing else 0.0
     palm_hidden = 0.0 if facing else palm_hidden + delta
     var was_visible := toolbar.visible
-    var active := toolbar_forced or (facing and palm_dwell > 0.15)
+    var natural_hands := tracked.values().any(func(value): return value.get("natural_hand", false))
+    var active := (toolbar_forced and not natural_hands) or (facing and palm_dwell > 0.10)
     toolbar.visible = active and not chapter_token.is_empty()
     if is_instance_valid(native_controls):
         native_controls.visible = active and (not chapter_token.is_empty() or library_panel.visible)
@@ -473,7 +471,7 @@ func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
         # Palm attachment is the requested behavior; the reference alone
         # cannot establish its original attachment strategy.
         var position := at + Vector3.UP * 0.06
-        if toolbar_forced or at.is_zero_approx():
+        if not natural_hands and not facing:
             position = camera.global_position - camera.global_basis.z * 0.55 - Vector3.UP * 0.28
         toolbar.global_position = position
         toolbar.look_at(camera.global_position, Vector3.UP, true)
@@ -730,6 +728,7 @@ func _process(_delta: float) -> void:
         var pressed := false
         var valid := false
         var natural_hand := false
+        var chopping := false
         var tip := controller.global_position
         var pointer_basis := controller.global_basis
         var direction := -controller.global_basis.z
@@ -739,20 +738,25 @@ func _process(_delta: float) -> void:
         tracked[hand].grip.visible = false
         if HandVisual.natural_tracking(tracker):
             tracked[hand].hand_root.visible = HandVisual.can_render(tracker)
+            natural_hand = true
             var required := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
-            valid = (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
+            var palm := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
+            if hand != preferred_hand and hand_controls.seeker_facing(tracker):
+                palm_visible = true
+                palm_position = palm.origin
+            chopping = hand_controls.edge_hand(tracker, tracked[hand].get("chopping", false))
+            var palm_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & required) != 0
+            var pinch_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
+            valid = pinch_tracked or (chopping and palm_tracked)
+            chopping = chopping and palm_tracked
             if valid:
                 natural_hand = true
                 tracked[hand].can_grab = true
                 tracked[hand].can_ui = true
                 tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP).origin
                 pointer_basis = origin.global_basis * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).basis
-                var palm := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
-                if hand != preferred_hand and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & required) != 0 and (-palm.basis.y).dot((camera.global_position - palm.origin).normalized()) > 0.78 and palm.origin.distance_to(camera.global_position) < 0.75:
-                    palm_visible = true
-                    palm_position = palm.origin
                 var thumb := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_THUMB_TIP).origin
-                pressed = tip.distance_to(thumb) < (PINCH_RELEASE_DISTANCE if tracked[hand].pressed else PINCH_START_DISTANCE)
+                pressed = pinch_tracked and tip.distance_to(thumb) < (PINCH_RELEASE_DISTANCE if tracked[hand].pressed else PINCH_START_DISTANCE)
                 tracked[hand].was_fist = tracked[hand].get("fist", false)
                 tracked[hand].fist = hand_controls.is_fist(tracker, tracked[hand].was_fist)
                 tracked[hand].finger_extended = hand_controls.finger_extended(tracker)
@@ -769,6 +773,7 @@ func _process(_delta: float) -> void:
             tracked[hand].grip.visible = valid
             pressed = ui.controller_input(hand, controller) if valid else false
         tracked[hand].natural_hand = natural_hand
+        tracked[hand].chopping = chopping
         if valid:
             tracked[hand].ray.visible = library_panel.visible or hand == preferred_hand
             if not natural_hand: pointer_origin = tip
@@ -776,18 +781,19 @@ func _process(_delta: float) -> void:
             tracked[hand].ray.look_at(pointer_origin + direction, Vector3.UP)
         ui_hand = hand
         var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand, _delta)
-        var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick, pressed and not tracked[hand].get("fist", false))
-        var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick, pressed and not tracked[hand].get("fist", false))
-        var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not resizing and not joystick, pressed, _delta)
+        var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
+        var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
+        var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not resizing and not joystick and not chopping, pressed, _delta)
         var fist: bool = natural_hand and tracked[hand].get("fist", false)
         var sweep_tip := tip
-        if valid and natural_hand and not fist and hand_controls.edge_hand(tracker):
+        if valid and natural_hand and not fist and chopping:
             sweep_tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
         if fist and not resizing:
             tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
-        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not resizing and not scrolling and not fist and not joystick, pressed, _delta)
-        var touching: bool = hand_touch.update(hand, tip, valid and natural_hand and not sweeping and not resizing and not scrolling and not fist, pressed)
-        if not sweeping and not touching and not resizing and not scrolling and not joystick:
+        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
+        var chopping_book: bool = chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
+        var touching: bool = hand_touch.update(hand, tip, valid and natural_hand and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
+        if not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick:
             _pointer(hand, tip if not natural_hand or fist or _reader_at(tip) != null else pointer_origin, direction, pressed or fist, valid, pointer_basis)
         tracked[hand].tip = tip
         tracked[hand].valid = valid

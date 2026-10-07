@@ -734,4 +734,13 @@
     <string name="ext_error_search_github">Open the extension\u2019s issues on GitHub</string>
     <string name="ext_error_report_dont_show_again">Don\u2019t show again for this version</string>
     <string name="ext_error_copy_report">Copy error details</string>
+    <string name="vr_repository_add">Add Repository</string>
+    <string name="vr_repository_url">Repository URL</string>
+    <string name="vr_repository_help">Paste the extension repository URL.</string>
+    <string name="vr_repository_installed">Installed repositories</string>
+    <string name="vr_repository_empty">No repositories added.</string>
+    <string name="vr_repository_required">Enter a repository URL.</string>
+    <string name="vr_repository_adding">Adding repository…</string>
+    <string name="vr_repository_added">Repository added.</string>
+    <string name="vr_repository_failed">Unable to add repository.</string>
 </resources>

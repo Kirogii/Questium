@@ -107,6 +107,15 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             "Force two pages" to KMR.strings.vr_force_spread,
             "Force long scroll" to KMR.strings.vr_force_scroll,
             "Choose Source" to KMR.strings.vr_source_choose,
+            "Add Repository" to KMR.strings.vr_repository_add,
+            "Repository URL" to KMR.strings.vr_repository_url,
+            "Paste the extension repository URL." to KMR.strings.vr_repository_help,
+            "Installed repositories" to KMR.strings.vr_repository_installed,
+            "No repositories added." to KMR.strings.vr_repository_empty,
+            "Enter a repository URL." to KMR.strings.vr_repository_required,
+            "Adding repository…" to KMR.strings.vr_repository_adding,
+            "Repository added." to KMR.strings.vr_repository_added,
+            "Unable to add repository." to KMR.strings.vr_repository_failed,
             "Source languages" to KMR.strings.vr_source_languages,
             "Multilingual" to KMR.strings.vr_source_multilingual,
             "Search sources" to KMR.strings.vr_source_search,
@@ -228,6 +237,8 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         when (request.getString("action")) {
             "sources" -> sources()
             "extensions" -> extensions()
+            "repositories" -> repositories()
+            "add_repository" -> addRepository(request.getString("url"))
             "install_extension" -> {
                 val extension = graph.extensionManager.availableExtensionsFlow.value
                     .firstOrNull { it.pkgName == request.getString("package") } ?: error("Extension is unavailable")
@@ -278,6 +289,27 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     }
 
     private fun send(data: JSONObject) = emitSignal("response", data.toString())
+
+    private suspend fun repositories() {
+        val items = JSONArray()
+        graph.getExtensionStores.get().forEach {
+            items.put(JSONObject().put("title", it.name).put("url", it.indexUrl))
+        }
+        send(JSONObject().put("kind", "repositories").put("items", items))
+    }
+
+    private suspend fun addRepository(url: String) {
+        val result = kotlinx.coroutines.withTimeoutOrNull(30_000) { graph.addExtensionStore(url.trim()) }
+            ?: Result.failure(IllegalStateException("Unable to add repository."))
+        send(
+            JSONObject().put("kind", "repository_status").put("success", result.isSuccess)
+                .put("message", if (result.isSuccess) "Repository added." else result.exceptionOrNull()?.message ?: "Unable to add repository."),
+        )
+        if (result.isSuccess) {
+            repositories()
+            extensions()
+        }
+    }
 
     private suspend fun sources() {
         graph.sourceManager.isInitialized.first { it }

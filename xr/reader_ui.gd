@@ -81,7 +81,7 @@ func icon_button(parent: Container, icon: String, callback: Callable, size: Vect
     return button
 
 func build() -> void:
-    var panel: Dictionary = reader._panel(reader.book, Vector2(0.60, 0.145), Vector2i(1000, 242), Vector3(0, -0.27, 0.03))
+    var panel: Dictionary = reader._panel(reader.book, Vector2(0.34, 0.082), Vector2i(1000, 242), Vector3.ZERO)
     reader.toolbar_view = panel.viewport
     var column: VBoxContainer = panel.content
     reader.title = label(column, "VR Komikku", 30)

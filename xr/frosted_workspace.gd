@@ -58,6 +58,13 @@ var active_book: SpatialBook
 var enabled_languages: Array = ["en"]
 var language_panel: Dictionary
 var language_list: VBoxContainer
+var repository_panel: Dictionary
+var repository_url: LineEdit
+var repository_status: Label
+var repository_list: VBoxContainer
+var repository_add: Button
+var repositories: Array = []
+var repository_pending := false
 var hud_scale := 0.5
 var gui_distance := 0.62
 var popup_order := 10
@@ -96,7 +103,7 @@ func popup_ray(start: Vector3, direction: Vector3) -> bool:
     return false
 
 func roots() -> Array:
-    var nodes: Array = [hud.node, badge.node, preview.node, info.node, picker.node, language_panel.node, reader.ui.options]
+    var nodes: Array = [hud.node, badge.node, preview.node, info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
     for model in reader.books:
         if model.visible: nodes.append(model)
     return nodes
@@ -179,6 +186,7 @@ func build() -> void:
     sources.custom_minimum_size.y = 54
     source_row.add_child(sources)
     button(source_row, "Choose Source", func(): show_sources(false))
+    button(source_row, "Add Repository", show_repositories)
     var cog := button(source_row, "", show_languages)
     cog.icon = preload("res://icons/settings.svg")
     cog.tooltip_text = reader._label("Source languages")
@@ -283,6 +291,7 @@ func build() -> void:
     picker_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     picker_scroll.add_child(picker_list)
     button(picker.content, "🛍 Install more extension sources", func(): show_sources(true))
+    button(picker.content, "Add Repository", show_repositories)
     button(picker.content, "Close", func(): picker.node.visible = false)
     picker.node.visible = false
     language_panel = panel(Vector2(0.38, 0.48), Vector2i(480, 600))
@@ -299,6 +308,28 @@ func build() -> void:
     language_scroll.add_child(language_list)
     button(language_panel.content, "Close", func(): language_panel.node.visible = false)
     language_panel.node.visible = false
+    repository_panel = panel(Vector2(0.48, 0.55), Vector2i(680, 780))
+    var repository_header := HBoxContainer.new()
+    repository_panel.content.add_child(repository_header)
+    label(repository_header, "Add Repository", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    reader.ui.icon_button(repository_header, "close", func(): repository_panel.node.visible = false, Vector2(48, 48))
+    var repository_help := label(repository_panel.content, "Paste the extension repository URL.", 20)
+    repository_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    repository_url = edit(repository_panel.content, "Repository URL")
+    repository_url.text_submitted.connect(func(_value: String): add_repository())
+    repository_add = button(repository_panel.content, "Add Repository", add_repository)
+    repository_status = label(repository_panel.content, "", 20)
+    repository_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    label(repository_panel.content, "Installed repositories", 24)
+    var repository_scroll := ScrollContainer.new()
+    repository_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+    repository_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+    repository_panel.content.add_child(repository_scroll)
+    repository_list = VBoxContainer.new()
+    repository_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    repository_scroll.add_child(repository_list)
+    button(repository_panel.content, "Close", func(): repository_panel.node.visible = false)
+    repository_panel.node.visible = false
     reader.ui.options.reparent(reader, true)
     update_navigation()
     recenter()
@@ -422,6 +453,32 @@ func show_sources(available: bool) -> void:
         reader._request("sources")
     render_sources()
 
+func show_repositories() -> void:
+    repository_panel.node.global_transform = Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0, 0, -gui_distance))
+    raise_popup(repository_panel.node)
+    reader._request("repositories")
+
+func add_repository() -> void:
+    if repository_pending: return
+    var url := repository_url.text.strip_edges()
+    if url.is_empty():
+        repository_status.text = reader._label("Enter a repository URL.")
+        return
+    repository_pending = true
+    repository_add.disabled = true
+    repository_status.text = reader._label("Adding repository…")
+    reader._request("add_repository", {"url": url})
+
+func render_repositories() -> void:
+    clear(repository_list)
+    if repositories.is_empty(): label(repository_list, "No repositories added.", 20)
+    for entry in repositories:
+        var name_label := label(repository_list, str(entry.title), 22)
+        name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        var url_label := label(repository_list, str(entry.url), 16)
+        url_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        repository_list.add_child(HSeparator.new())
+
 func render_sources() -> void:
     clear(picker_list)
     picker_status.text = reader._label("No extensions available from configured repositories.") if browsing_extensions and extensions.is_empty() else ""
@@ -498,6 +555,7 @@ func show_section(name: String) -> void:
     previewing = false
     info.node.visible = false
     picker.node.visible = false
+    repository_panel.node.visible = false
     keyboard.node.visible = false
     preview.node.visible = false
     badge.node.visible = name != "Reader"
@@ -750,6 +808,14 @@ func consume(data: Dictionary) -> bool:
         "extensions":
             extensions = data.get("items", [])
             render_sources()
+        "repositories":
+            repositories = data.get("items", [])
+            render_repositories()
+        "repository_status":
+            repository_pending = false
+            repository_add.disabled = false
+            repository_status.text = reader._label(str(data.message))
+            if data.get("success", false): repository_url.text = ""
         "keyboard_text":
             if is_instance_valid(keyboard_target) and str(data.get("field", "")) == str(keyboard_target.get_instance_id()):
                 keyboard_target.text = str(data.text)
@@ -790,6 +856,10 @@ func consume(data: Dictionary) -> bool:
                 if is_instance_valid(target): target.texture_normal = texture
                 if id == selected_manga and previewing: reader.book.set_cover(texture)
         "error":
+            if repository_pending:
+                repository_pending = false
+                repository_add.disabled = false
+                repository_status.text = str(data.get("message", "Unable to add repository."))
             message.text = str(data.get("message", "Unable to load content"))
             description.text = message.text
             read_button.text = reader._label("Resume" if not resume_chapter.is_empty() else "Read")
@@ -872,6 +942,7 @@ func recenter(head_pose: Variant = null) -> void:
     info.node.global_transform = Transform3D(facing, head + facing * Vector3(0.48, 0, -0.96))
     keyboard.node.global_transform = Transform3D(facing, head + facing * Vector3(0, -0.65, -1.15))
     reader.ui.options.global_transform = Transform3D(facing, head + facing * Vector3(-0.66, 0, -1.04))
+    repository_panel.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0, -gui_distance))
     if previewing:
         badge.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0.26, -1.04))
         if opening and opening.is_running(): opening.kill()
@@ -890,7 +961,7 @@ func dock_pose(index: int) -> Transform3D:
 func handle_at(point: Vector3) -> Node3D:
     var hits: Array = []
     for target in reader.panels:
-        if target.node not in [hud.node, preview.node, info.node, picker.node, language_panel.node, reader.ui.options] or not target.node.is_visible_in_tree(): continue
+        if target.node not in [hud.node, preview.node, info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options] or not target.node.is_visible_in_tree(): continue
         var local: Vector3 = target.node.to_local(point)
         if absf(local.x) <= target.size.x * 0.5 and absf(local.y) <= target.size.y * 0.5 and absf(local.z) <= 0.12:
             hits.append({"node": target.node, "priority": int(target.node.get_meta("popup_priority", 0)), "depth": absf(local.z)})

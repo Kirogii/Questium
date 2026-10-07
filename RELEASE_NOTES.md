@@ -9,6 +9,7 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Add extension repositories directly from the VR Sources section, using the Quest keyboard and showing configured repositories.
 - Rebrand the app as Questium with a single Touch controller logo.
 - Use the app's actual library, source search, manga details and chapter history in the frosted VR interface; chapter selection opens the spatial book.
 - Quest reader: rounded book toolbar and Book Options popup, configurable controller buttons with labeled Touch Plus diagrams, hand switching, haptic feedback, and white page grab bars.
@@ -16,6 +17,7 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Make chopping-hand page turns easier to start, continuously curl toward the hand during slow swipes, and complete fast flicks before reaching the middle. Keep long-page finger scrolling separate from chopping gestures.
 - Publish the signed Quest alpha as v1.0.0 and show version 1.0.0 in the APK.
 - Include all upstream commits through Houri v1.23.9, including extension management fixes and long-page memory improvements.
 - Build Quest APKs in GitHub Actions with automatic Godot setup, signed artifacts and a dedicated alpha prerelease.
@@ -37,6 +39,7 @@ files moved. See .github/scripts/release_notes.py.
 - Replace the three-window workspace with a single frosted Home, Source Search and Reader interface in the VR room; selecting a cover brings out the physical book preview.
 
 ### Fix
+- Attach the page seeker to the non-dominant open hand while it faces you; hide it when the hand turns away instead of leaving it below your view.
 - Keep tracked hands visible when the native Quest mesh is delayed or unavailable by using a bundled skinned fallback; support unspecified tracking-source data and retain hand visuals during brief fingertip occlusion.
 - Prevent distant second-hand pinches from resizing a held book; preserve its pose when either hand lets go, and keep cover handles reachable throughout their hinge movement.
 - Prevent the More/settings screen from crashing while loading the Questium logo; compact oversized logo paths below Android's resource string limit, including launcher variants.

@@ -29,6 +29,28 @@ func _check() -> void:
     reader.ui.perform("Book Options")
     reader._palm_toolbar(false, Vector3.ZERO, 0.1)
     assert(reader.toolbar.visible, "Controller menu reveals the toolbar without hands")
+    reader.tracked["left"] = {"natural_hand": true}
+    reader._palm_toolbar(true, palm, 0.2)
+    assert(reader.toolbar.global_position.is_equal_approx(palm + Vector3.UP * 0.06), "Forced controller menu cannot detach seeker from a tracked hand")
+    reader._palm_toolbar(false, palm, 0.2)
+    assert(not reader.toolbar.visible, "Forced menu cannot leave seeker at the bottom of vision during hand tracking")
+    var hand := XRHandTracker.new()
+    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
+    var hand_position: Vector3 = reader.camera.global_position - reader.camera.global_basis.z * 0.4
+    var normal: Vector3 = reader.camera.global_position - hand_position
+    var hand_basis := Basis.looking_at(normal).rotated(Vector3.RIGHT, PI / 2)
+    hand.set_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM, flags)
+    hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, Transform3D(reader.origin.global_basis.inverse() * hand_basis, reader.origin.to_local(hand_position)))
+    for pair in [[XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP], [XRHandTracker.HAND_JOINT_MIDDLE_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_MIDDLE_FINGER_TIP]]:
+        hand.set_hand_joint_flags(pair[0], flags)
+        hand.set_hand_joint_flags(pair[1], flags)
+        hand.set_hand_joint_transform(pair[0], Transform3D(Basis.IDENTITY, Vector3.ZERO))
+        hand.set_hand_joint_transform(pair[1], Transform3D(Basis.IDENTITY, Vector3.UP * 0.08))
+    assert(reader.hand_controls.seeker_facing(hand), "Open chopping hand facing the user reveals seeker even with missing thumb")
+    var rotated := hand.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
+    rotated.basis = rotated.basis.rotated(Vector3.UP, PI / 2)
+    hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, rotated)
+    assert(not reader.hand_controls.seeker_facing(hand), "Edge-on hand turned away does not reveal seeker")
     reader.queue_free()
     await process_frame
     print("PASS: palm dwell, attachment, grace, captured stability and controller reveal")

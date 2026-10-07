@@ -43,13 +43,23 @@ func thumb_up(tracker: XRHandTracker) -> bool:
     var axis: Vector3 = reader.origin.global_basis * (thumb - base)
     return axis.length() > 0.025 and axis.normalized().dot(Vector3.UP) > 0.72
 
-func edge_hand(tracker: XRHandTracker) -> bool:
+func open_hand(tracker: XRHandTracker) -> bool:
     var open := 0
     for pair in [[XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP], [XRHandTracker.HAND_JOINT_MIDDLE_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_MIDDLE_FINGER_TIP], [XRHandTracker.HAND_JOINT_RING_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_RING_FINGER_TIP], [XRHandTracker.HAND_JOINT_PINKY_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_PINKY_FINGER_TIP]]:
-        if (tracker.get_hand_joint_flags(pair[1]) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0: continue
+        if (tracker.get_hand_joint_flags(pair[0]) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0 or (tracker.get_hand_joint_flags(pair[1]) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0: continue
         if tracker.get_hand_joint_transform(pair[0]).origin.distance_to(tracker.get_hand_joint_transform(pair[1]).origin) > 0.045: open += 1
+    return open >= 2
+
+func edge_hand(tracker: XRHandTracker, holding: bool = false) -> bool:
+    if not open_hand(tracker): return false
     var normal: Vector3 = reader.origin.global_basis * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).basis.y
-    return open >= 3 and absf(normal.normalized().dot(reader.book.global_basis.x.normalized())) > 0.5
+    return absf(normal.normalized().dot(reader.book.global_basis.x.normalized())) > (0.15 if holding else 0.30)
+
+func seeker_facing(tracker: XRHandTracker) -> bool:
+    if (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0 or not open_hand(tracker): return false
+    var palm: Transform3D = reader.origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
+    var toward_head: Vector3 = reader.camera.global_position - palm.origin
+    return toward_head.length() > 0.12 and toward_head.length() < 0.85 and absf(palm.basis.y.normalized().dot(toward_head.normalized())) > 0.55
 
 func joystick(hand: String, tracker: XRHandTracker, valid: bool, delta: float) -> bool:
     if not valid or not thumb_up(tracker) or not reader.holder.is_empty() or not reader.ui_owner.is_empty() or not reader.window_holder.is_empty():
