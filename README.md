@@ -13,7 +13,7 @@
 
 ## Download
 
-[Download the v1 alpha APK](https://github.com/Kirogii/VR-Tachiyomi/releases/tag/v1)
+[Download the v1.0.0 alpha APK](https://github.com/Kirogii/VR-Tachiyomi/releases/tag/v1.0.0)
 
 [Build and signing setup](.github/QUEST_BUILD.md)
 

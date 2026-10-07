@@ -157,13 +157,11 @@ func _build_tracking() -> void:
         grip.pose = "grip"
         grip.show_when_tracked = true
         origin.add_child(grip)
-        var visual := preload("res://controller_visual.gd").new(hand)
-        grip.add_child(visual)
         if ClassDB.class_exists("OpenXRFbRenderModel"):
             var controller_model = ClassDB.instantiate("OpenXRFbRenderModel")
             controller_model.set("render_model_type", 0 if hand == "left" else 1)
             grip.add_child(controller_model)
-            controller_model.connect("openxr_fb_render_model_loaded", func(): visual.native_loaded(); print("VR controller model loaded: ", hand))
+            controller_model.connect("openxr_fb_render_model_loaded", func(): print("VR controller model loaded: ", hand))
         var hand_root := XRNode3D.new()
         hand_root.tracker = "/user/hand_tracker/" + hand
         hand_root.pose = "default"
@@ -191,7 +189,7 @@ func _build_tracking() -> void:
         var aim := XRController3D.new()
         aim.tracker = "/user/fbhandaim/" + hand
         origin.add_child(aim)
-        tracked[hand] = {"controller": controller, "pressed": false, "hand_root": hand_root, "ray": pointer, "grip": grip, "controller_visual": visual, "native_mesh": hand_visual.native != null, "native_skeleton": hand_visual.native, "hand_visual": hand_visual, "aim": aim, "material": hand_material}
+        tracked[hand] = {"controller": controller, "pressed": false, "hand_root": hand_root, "ray": pointer, "grip": grip, "native_mesh": hand_visual.native != null, "native_skeleton": hand_visual.native, "hand_visual": hand_visual, "aim": aim, "material": hand_material}
         print("VR hand visual registered: ", hand, " native=", hand_visual.native != null, " fallback bones=", hand_visual.fallback_skeleton.get_bone_count())
 
 func _label(text: String) -> String:
@@ -461,6 +459,9 @@ func close_book(return_home: bool = true) -> void:
         workspace.show_section("Home")
 
 func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
+    var left_aim = tracked.get("left", {}).get("aim")
+    if is_instance_valid(left_aim) and left_aim.is_button_pressed("menu_gesture"):
+        facing = true
     palm_dwell = palm_dwell + delta if facing else 0.0
     palm_hidden = 0.0 if facing else palm_hidden + delta
     var was_visible := toolbar.visible
@@ -697,7 +698,6 @@ func _set_passthrough(enabled: bool) -> void:
     var supported := xr and xr.get_supported_environment_blend_modes().has(XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND)
     var active: bool = enabled and supported
     passthrough_enabled = active
-    print("VR passthrough active=", active, " alpha blend supported=", supported)
     if is_instance_valid(room):
         room.visible = not active
     get_viewport().transparent_bg = active

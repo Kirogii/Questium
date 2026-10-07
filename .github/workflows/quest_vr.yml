@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches: [master, main, 'feature/**']
-    tags: [v1]
+    tags: [v1.0.0]
 permissions:
   contents: read
 concurrency:
@@ -40,6 +40,8 @@ jobs:
       - name: Verify vector resource limits
         run: python3 .github/scripts/check_vector_paths.py
       - name: Build standalone Quest APK
+        env:
+          VR_RELEASE_VERSION: v1.0.0
         run: ./gradlew :app:stageNomtlDebugQuestApk -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
       - name: Stage Quest APK
         run: |
@@ -100,7 +102,7 @@ jobs:
           path: quest-apk/*
           if-no-files-found: error
   release:
-    if: github.ref == 'refs/tags/v1'
+    if: github.ref == 'refs/tags/v1.0.0'
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -115,8 +117,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v1 >/dev/null 2>&1; then
-            gh release upload v1 quest-apk/* --clobber
+          if gh release view v1.0.0 >/dev/null 2>&1; then
+            gh release upload v1.0.0 quest-apk/* --clobber
+            gh release edit v1.0.0 --title alpha --prerelease --draft=false
           else
-            gh release create v1 quest-apk/* --verify-tag --title alpha --prerelease --notes-file .github/alpha-release.md
+            gh release create v1.0.0 quest-apk/* --verify-tag --title alpha --prerelease --notes-file .github/alpha-release.md
           fi

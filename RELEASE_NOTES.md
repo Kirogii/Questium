@@ -16,11 +16,12 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Publish the signed Quest alpha as v1.0.0 and show version 1.0.0 in the APK.
 - Include all upstream commits through Houri v1.23.9, including extension management fixes and long-page memory improvements.
 - Build Quest APKs in GitHub Actions with automatic Godot setup, signed artifacts and a dedicated alpha prerelease.
 - Make the VR library half-sized and closer, allow resizing its top corners, and retain their placement until manually recentered. A thumb-up fist adjusts workspace distance.
 - Turn pages with an open hand from the white side bars, including quick inward swipes; improve extended-finger scrolling and stabilize hand pointers during pinches.
-- Show fallback controller models and add source language selection with English enabled by default.
+- Use native controller models and add source language selection with English enabled by default.
 - Launch directly into darkened passthrough, with smaller book previews and reader defaults, accessible preview actions, and scrolling book options with bounded titles.
 - Use the Quest system keyboard from textboxes, browse source icons in a scrolling picker, and search/install extension sources from VR.
 - Carry books with a curled fist, resize physical spreads with both top corners, swipe long pages with a light fingertip motion, and keep the palm guide attached only while facing you. Recenter places the book beside the HUD.

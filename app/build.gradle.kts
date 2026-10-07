@@ -40,7 +40,8 @@ android {
 
         // These need to be updated for every new release that should be automatically pushed
         versionCode = 197
-        versionName = "1.23.9"
+        versionName = providers.environmentVariable("VR_RELEASE_VERSION")
+            .map { it.removePrefix("v") }.getOrElse("1.23.9")
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -74,7 +75,11 @@ android {
     buildTypes {
         val debug by getting {
             applicationIdSuffix = ".dev"
-            versionNameSuffix = "-${getCommitCount()}"
+            versionNameSuffix = if (providers.environmentVariable("VR_RELEASE_VERSION").isPresent) {
+                ""
+            } else {
+                "-${getCommitCount()}"
+            }
             isPseudoLocalesEnabled = true
         }
         val release by getting {

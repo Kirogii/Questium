@@ -65,7 +65,9 @@ func check() -> void:
     assert(gui.gui_distance < before, "Thumb-up fist pulled toward the head brings GUI closer")
     reader.hand_controls.cancel()
     reader._build_tracking()
-    assert(reader.tracked.right.controller_visual.fallback.get_child_count() >= 6, "Controllers have a visible fallback while native models load")
+    assert(reader.tracked.right.grip != null, "Native controllers have a tracked grip root")
+    if ClassDB.class_exists("OpenXRFbRenderModel"):
+        assert(reader.tracked.right.grip.get_child_count() > 0, "Native controller render model is registered")
     tracker.set_hand_joint_flags(XRHandTracker.HAND_JOINT_WRIST, flags)
     tracker.set_hand_joint_flags(XRHandTracker.HAND_JOINT_MIDDLE_FINGER_METACARPAL, flags)
     tracker.set_hand_joint_transform(XRHandTracker.HAND_JOINT_WRIST, Transform3D(Basis.IDENTITY, Vector3.ZERO))

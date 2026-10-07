@@ -13,4 +13,4 @@ Configure these **repository Actions secrets**:
 
 Trusted branch/tag/manual runs sign with `apksigner`, verify the signature and upload the APK plus SHA256 checksum. Pull requests only produce a debug-signed validation artifact and never receive signing secrets. Private keys stay outside Git; retain an offline backup because Android updates must use the same certificate.
 
-Pushing tag `v1` publishes the prerelease named `alpha`; the inherited upstream release workflow skips that tag. Run **Quest VR APK** manually to build another signed artifact without publishing. The alpha APK retains the no-MTL debug application ID and development flags.
+Pushing tag `v1.0.0` publishes the prerelease named `alpha`; the inherited upstream release workflow skips that tag. The build sets `VR_RELEASE_VERSION=v1.0.0`, producing Android versionName `1.0.0` without the development commit suffix. Run **Quest VR APK** manually to build another signed artifact without publishing. The alpha APK retains the no-MTL debug application ID and development flags.
