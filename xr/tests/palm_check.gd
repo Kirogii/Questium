@@ -38,7 +38,7 @@ func _check() -> void:
     var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
     var hand_position: Vector3 = reader.camera.global_position - reader.camera.global_basis.z * 0.4
     var normal: Vector3 = reader.camera.global_position - hand_position
-    var hand_basis := Basis.looking_at(normal).rotated(Vector3.RIGHT, PI / 2)
+    var hand_basis := Basis.looking_at(normal).rotated(Vector3.RIGHT, -PI / 2)
     hand.set_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM, flags)
     hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, Transform3D(reader.origin.global_basis.inverse() * hand_basis, reader.origin.to_local(hand_position)))
     for pair in [[XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP], [XRHandTracker.HAND_JOINT_MIDDLE_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_MIDDLE_FINGER_TIP]]:
@@ -48,6 +48,11 @@ func _check() -> void:
         hand.set_hand_joint_transform(pair[1], Transform3D(Basis.IDENTITY, Vector3.UP * 0.08))
     assert(reader.hand_controls.seeker_facing(hand), "Open chopping hand facing the user reveals seeker even with missing thumb")
     var rotated := hand.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
+    var palm_basis := rotated.basis
+    rotated.basis = palm_basis.rotated(Vector3.UP, PI)
+    hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, rotated)
+    assert(not reader.hand_controls.seeker_facing(hand), "Back of hand toward the face must never reveal the seeker")
+    rotated.basis = palm_basis
     rotated.basis = rotated.basis.rotated(Vector3.UP, PI / 2)
     hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, rotated)
     assert(not reader.hand_controls.seeker_facing(hand), "Edge-on hand turned away does not reveal seeker")

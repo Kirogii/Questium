@@ -145,8 +145,15 @@ func _ready() -> void:
         _load_desktop_pages()
         book.visible = not local_pages.is_empty()
     _set_passthrough(true)
+    if bridge and bridge.has_method("keyboardProbeEnabled") and bridge.call("keyboardProbeEnabled"):
+        _probe_keyboard.call_deferred()
     if xr and xr.has_signal("pose_recentered"):
         xr.connect("pose_recentered", func(): _cancel_interactions(); recenter.call_deferred())
+
+func _probe_keyboard() -> void:
+    await get_tree().create_timer(2.0).timeout
+    workspace.show_sources(false)
+    workspace.picker_search.grab_focus()
 
 func _build_tracking() -> void:
     for hand in ["left", "right"]:
@@ -794,8 +801,9 @@ func _process(_delta: float) -> void:
             tracked[hand].ray.global_position = pointer_origin
             tracked[hand].ray.look_at(pointer_origin + direction, Vector3.UP)
         ui_hand = hand
+        var closing: bool = hand_touch.update_close(hand, tip, valid and finger_tracked and natural_hand, pressed)
         var touching_popup: bool = natural_hand and finger_tracked and hand_touch.near_popup(tip)
-        var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand, _delta)
+        var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand and not closing, _delta)
         var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
         var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
         var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not touching_popup and not resizing and not joystick and not chopping, pressed, _delta)
@@ -805,10 +813,10 @@ func _process(_delta: float) -> void:
             sweep_tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
         if fist and not resizing:
             tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
-        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not touching_popup and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
+        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not closing and not touching_popup and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
         var chopping_book: bool = not touching_popup and chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
-        var touching: bool = hand_touch.update(hand, tip, valid and finger_tracked and natural_hand and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
-        if not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick:
+        var touching: bool = hand_touch.update(hand, tip, valid and finger_tracked and natural_hand and not closing and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
+        if not closing and not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick:
             _pointer(hand, tip if not natural_hand or fist or _reader_at(tip) != null else pointer_origin, direction, pressed or fist, valid, pointer_basis)
         tracked[hand].tip = tip
         tracked[hand].valid = valid

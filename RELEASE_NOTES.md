@@ -18,6 +18,7 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Keep the Quest keyboard connected to the selected textbox, support fingertip taps on the book's close button, and show the hand seeker only when the palm faces you.
 - Make fingertip taps work on library and popup buttons even when the thumb is obscured, capture fast taps on resized panels, and smooth hand-pointer jitter without freezing aim during pinches.
 - Center popups closer in front of the HUD, minimize them when tapping or grabbing the HUD, use a full-height tinted sidebar with a bottom Settings button, and show preview action labels on hover.
 - Make the floating title pill smaller and closer to the HUD, keep it aligned when moving the HUD, and match the Settings button width to Recenter.

@@ -6,9 +6,52 @@ var reader: Node3D
 var samples: Dictionary = {}
 var owner := ""
 var panel: Dictionary = {}
+var close_samples: Dictionary = {}
+var close_owner := ""
+var close_book: SpatialBook
 
 func _init(host: Node3D) -> void:
     reader = host
+
+func update_close(hand: String, tip: Vector3, valid: bool, pinched: bool) -> bool:
+    if close_owner == hand:
+        if not valid or pinched or not is_instance_valid(close_book) or not close_book.is_visible_in_tree():
+            cancel_close()
+            return true
+        var offset: Vector3 = close_book.to_local(tip) - close_book.close_marker.position
+        var depth: float = offset.z * close_book.global_basis.z.length()
+        if Vector2(offset.x, offset.y).length() > 0.045 or depth < -0.065:
+            cancel_close()
+            return true
+        if depth > 0.025:
+            var target := close_book
+            cancel_close()
+            reader._activate_book(target)
+            reader.close_book()
+        return true
+    if not valid or pinched or not close_owner.is_empty() or not owner.is_empty() or not reader.ui_owner.is_empty() or not reader.holder.is_empty() or near_popup(tip):
+        close_samples.erase(hand)
+        return false
+    for target in reader.books:
+        if not target.is_visible_in_tree() or target.preview_only: continue
+        var offset: Vector3 = target.to_local(tip) - target.close_marker.position
+        var depth: float = offset.z * target.global_basis.z.length()
+        if Vector2(offset.x, offset.y).length() > 0.04 or depth < -0.065 or depth > 0.14: continue
+        var previous: Dictionary = close_samples.get(hand, {})
+        var armed: bool = previous.get("book") == target and previous.get("armed", false)
+        close_samples[hand] = {"book": target, "armed": armed or depth > 0.018}
+        if armed and depth <= 0.008:
+            close_owner = hand
+            close_book = target
+        # A close-button approach must not become a page swipe or body grab.
+        return true
+    close_samples.erase(hand)
+    return false
+
+func cancel_close() -> void:
+    close_owner = ""
+    close_book = null
+    close_samples.clear()
 
 func update(hand: String, tip: Vector3, valid: bool, pinched: bool) -> bool:
     if owner == hand:
@@ -78,6 +121,7 @@ func near_popup(tip: Vector3) -> bool:
     return false
 
 func cancel() -> void:
+    cancel_close()
     if not owner.is_empty():
         # Release outside controls so tracking loss cannot activate a button.
         if not reader.ui_capture.is_empty():

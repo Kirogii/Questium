@@ -1,13 +1,18 @@
 package eu.kanade.tachiyomi.ui.vr
 
 // KMK -->
+import android.app.Dialog
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.BitmapRegionDecoder
+import android.graphics.Color
 import android.graphics.Rect
+import android.graphics.drawable.ColorDrawable
 import android.text.Editable
 import android.text.TextWatcher
-import android.view.ViewGroup
+import android.view.KeyEvent
+import android.view.WindowInsets
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
@@ -56,6 +61,8 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     private var reader: ReaderViewModel? = null
     private val readers = ConcurrentHashMap<String, ReaderViewModel>()
     private var keyboardInput: EditText? = null
+    private var keyboardDialog: Dialog? = null
+    private var keyboardField: String? = null
     private val settings by lazy { VrSettingsBridge(host, ::send) }
 
     init {
@@ -82,35 +89,80 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     @UsedByGodot
     fun showKeyboard(text: String, field: String) {
         host.runOnUiThread {
-            keyboardInput?.let { (it.parent as? ViewGroup)?.removeView(it) }
-            val input = EditText(host).apply {
+            if (keyboardField == field && keyboardDialog?.isShowing == true) return@runOnUiThread
+            keyboardDialog?.dismiss()
+            // A focusable window owns the InputConnection. The Godot render
+            // surface otherwise takes focus back from an editor in its decor.
+            val dialog = Dialog(host)
+            val input = object : EditText(host) {
+                override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
+                    if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) dialog.dismiss()
+                    return super.onKeyPreIme(keyCode, event)
+                }
+            }.apply {
                 setSingleLine(true)
                 inputType = android.text.InputType.TYPE_CLASS_TEXT
-                imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI
+                imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
                 setText(text)
                 setSelection(text.length)
                 alpha = 0f
             }
             keyboardInput = input
-            val root = settings.keyboardRoot() ?: host.window.decorView as ViewGroup
-            root.addView(input, FrameLayout.LayoutParams(1, 1))
+            keyboardDialog = dialog
+            keyboardField = field
+            val root = FrameLayout(host).apply {
+                addView(input, FrameLayout.LayoutParams(240, 64))
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                var keyboardWasVisible = false
+                root.setOnApplyWindowInsetsListener { _, insets ->
+                    val visible = insets.isVisible(WindowInsets.Type.ime())
+                    if (visible) {
+                        keyboardWasVisible = true
+                    } else if (keyboardWasVisible && dialog.isShowing) {
+                        dialog.dismiss()
+                    }
+                    insets
+                }
+            }
+            dialog.setContentView(root)
+            dialog.window?.apply {
+                setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            }
             input.addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    send(JSONObject().put("kind", "keyboard_text").put("text", s.toString()).put("field", field))
+                    if (keyboardInput === input) {
+                        send(JSONObject().put("kind", "keyboard_text").put("text", s.toString()).put("field", field))
+                    }
                 }
                 override fun afterTextChanged(s: Editable?) = Unit
             })
-            input.setOnEditorActionListener { _, _, _ ->
+            input.setOnEditorActionListener { _, action, event ->
+                val submit = action in setOf(EditorInfo.IME_ACTION_SEARCH, EditorInfo.IME_ACTION_DONE, EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND) ||
+                    (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
+                if (!submit) return@setOnEditorActionListener false
                 send(JSONObject().put("kind", "keyboard_text").put("text", input.text.toString()).put("submitted", true).put("field", field))
                 (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
                     .hideSoftInputFromWindow(input.windowToken, 0)
-                root.removeView(input)
-                keyboardInput = null
+                dialog.dismiss()
                 true
             }
+            dialog.setOnDismissListener {
+                if (keyboardInput === input) {
+                    send(JSONObject().put("kind", "keyboard_text").put("text", input.text.toString()).put("closed", true).put("field", field))
+                    keyboardInput = null
+                    keyboardDialog = null
+                    keyboardField = null
+                }
+            }
+            dialog.show()
+            dialog.window?.setLayout(240, 64)
             input.requestFocus()
             input.post {
+                if (keyboardInput !== input || !dialog.isShowing) return@post
                 (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
                     .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
             }
@@ -580,7 +632,10 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     }
 
     fun close() {
-        host.runOnUiThread { settings.close() }
+        host.runOnUiThread {
+            keyboardDialog?.dismiss()
+            settings.close()
+        }
         pageJobs.values.forEach { it.cancel() }
         pageJobs.clear()
         session.deleteRecursively()

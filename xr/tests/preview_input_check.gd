@@ -19,10 +19,17 @@ func check() -> void:
     ui.show_sources(true)
     assert(ui.picker_list.get_child_count() == 1, "Extension browser is separate from installed sources")
     ui.keyboard_target = ui.search
+    ui.keyboard_field = str(ui.search.get_instance_id()) + ":1"
     ui.consume({"kind": "keyboard_text", "field": "stale", "text": "wrong"})
     assert(ui.search.text.is_empty(), "Stale keyboard sessions cannot overwrite another textbox")
-    ui.consume({"kind": "keyboard_text", "field": str(ui.search.get_instance_id()), "text": "native text"})
+    ui.consume({"kind": "keyboard_text", "field": ui.keyboard_field, "text": "native text"})
     assert(ui.search.text == "native text", "Quest keyboard text reaches the focused field")
+    ui.keyboard_field = str(ui.search.get_instance_id()) + ":2"
+    ui.consume({"kind": "keyboard_text", "field": str(ui.search.get_instance_id()) + ":1", "text": "old session"})
+    assert(ui.search.text == "native text", "Old keyboard instance cannot overwrite a reopened textbox")
+    ui.search.set_meta("native_keyboard_open", true)
+    ui.consume({"kind": "keyboard_text", "field": ui.keyboard_field, "text": "finished", "closed": true})
+    assert(ui.search.text == "finished" and not ui.search.has_meta("native_keyboard_open"), "Dismiss keeps typed text and allows reopening")
     ui.select_book({"id": "first", "title": "First book"})
     await create_timer(0.55).timeout
     reader._response(JSON.stringify({"kind": "chapter", "token": "first-token", "count": 4, "start": 0, "title": "First book"}))

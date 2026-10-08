@@ -54,6 +54,8 @@ var installed_sources: Array = []
 var extensions: Array = []
 var browsing_extensions := false
 var keyboard_requested_at := -1000
+var keyboard_session := 0
+var keyboard_field := ""
 var active_book: SpatialBook
 var enabled_languages: Array = ["en"]
 var language_panel: Dictionary
@@ -472,13 +474,16 @@ func glass(node: Node3D, size: Vector2) -> void:
     node.add_child(mesh)
 
 func show_keyboard(target: LineEdit) -> void:
+    if keyboard_target == target and target.has_meta("native_keyboard_open"): return
     if keyboard_target == target and Time.get_ticks_msec() - keyboard_requested_at < 350: return
     keyboard_requested_at = Time.get_ticks_msec()
     keyboard_target = target
+    keyboard_session += 1
+    keyboard_field = str(target.get_instance_id()) + ":" + str(keyboard_session)
     keyboard.node.visible = false
     if reader.bridge and reader.bridge.has_method("showKeyboard"):
         target.set_meta("native_keyboard_open", true)
-        reader.bridge.call("showKeyboard", target.text, str(target.get_instance_id()))
+        reader.bridge.call("showKeyboard", target.text, keyboard_field)
     elif DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
         DisplayServer.virtual_keyboard_show(target.text)
 
@@ -861,14 +866,17 @@ func consume(data: Dictionary) -> bool:
             repository_status.text = reader._label(str(data.message))
             if data.get("success", false): repository_url.text = ""
         "keyboard_text":
-            if is_instance_valid(keyboard_target) and str(data.get("field", "")) == str(keyboard_target.get_instance_id()):
+            if is_instance_valid(keyboard_target) and str(data.get("field", "")) == keyboard_field:
                 keyboard_target.text = str(data.text)
                 keyboard_target.caret_column = keyboard_target.text.length()
                 keyboard_target.text_changed.emit(keyboard_target.text)
-                if data.get("submitted", false):
+                if reader.bridge and reader.bridge.has_method("keyboardProbeEnabled") and reader.bridge.call("keyboardProbeEnabled"):
+                    reader.bridge.call("keyboardProbeResult", keyboard_target.text)
+                if data.get("submitted", false) or data.get("closed", false):
                     keyboard_target.remove_meta("native_keyboard_open")
-                    keyboard_target.text_submitted.emit(keyboard_target.text)
+                    if data.get("submitted", false): keyboard_target.text_submitted.emit(keyboard_target.text)
                     keyboard_target.release_focus()
+                    keyboard_field = ""
         "install_status":
             message.text = str(data.message)
             picker_status.text = reader._label(str(data.message))

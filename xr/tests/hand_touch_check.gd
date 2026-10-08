@@ -61,6 +61,24 @@ func check() -> void:
     touch.update("right", fast_front, true, false)
     await process_frame
     assert(clicks[0] == 3)
+    touch.cancel()
+    panel.node.visible = false
+    reader.book.visible = true
+    reader.book.token = "close-test"
+    reader.chapter_token = "close-test"
+    var close_front: Vector3 = reader.book.to_global(reader.book.close_marker.position + Vector3(0, 0, 0.045))
+    var close_contact: Vector3 = reader.book.to_global(reader.book.close_marker.position + Vector3(0, 0, 0.002))
+    assert(touch.update_close("right", close_contact, true, false))
+    assert(touch.close_owner.is_empty(), "Appearing inside X cannot close a book")
+    touch.update_close("right", close_front, true, false)
+    touch.update_close("right", close_contact, true, false)
+    assert(touch.close_owner == "right", "Physical X tap captures without pinching")
+    touch.update_close("right", close_contact, false, false)
+    assert(reader.book.visible and touch.close_owner.is_empty(), "Tracking loss must cancel the close tap")
+    touch.update_close("right", close_front, true, false)
+    touch.update_close("right", close_contact, true, false)
+    touch.update_close("right", close_front, true, false)
+    assert(not reader.book.visible and reader.book.token.is_empty(), "Withdraw after X tap closes the book once")
     reader.queue_free()
     await process_frame
     print("PASS: direct fingertip tap, ownership, tracking-loss cancellation, pinch exclusion and book occlusion")

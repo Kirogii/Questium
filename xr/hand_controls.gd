@@ -59,7 +59,9 @@ func seeker_facing(tracker: XRHandTracker) -> bool:
     if (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0 or not open_hand(tracker): return false
     var palm: Transform3D = reader.origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
     var toward_head: Vector3 = reader.camera.global_position - palm.origin
-    return toward_head.length() > 0.12 and toward_head.length() < 0.85 and absf(palm.basis.y.normalized().dot(toward_head.normalized())) > 0.55
+    # OpenXR -Y points out of the palm; +Y faces the back of the hand.
+    # Keep the sign: an absolute dot also reveals the menu with the palm away.
+    return toward_head.length() > 0.12 and toward_head.length() < 0.85 and (-palm.basis.y).normalized().dot(toward_head.normalized()) > 0.75
 
 func joystick(hand: String, tracker: XRHandTracker, valid: bool, delta: float) -> bool:
     if not valid or not thumb_up(tracker) or not reader.holder.is_empty() or not reader.ui_owner.is_empty() or not reader.window_holder.is_empty():
