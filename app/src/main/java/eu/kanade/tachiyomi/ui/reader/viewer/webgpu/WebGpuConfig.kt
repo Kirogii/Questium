@@ -85,21 +85,6 @@ class WebGpuConfig(
 
     // KMK -->
     /**
-     * Rotate a wide page a quarter turn so it fills its spread half instead of being fitted to
-     * half the screen width, which on a portrait screen leaves a black band above and below it.
-     * Mirrors [PagerConfig.dualPageRotateToFit], which the pager applies to the encoded bytes;
-     * WebGPU has no encode step to hook, so it is applied to the decoded pixels instead.
-     */
-    var dualPageRotateToFit = readerPreferences.dualPageRotateToFit().get()
-        private set
-
-    /** Quarter-turn direction: inverted picks anticlockwise, matching [PagerConfig.dualPageRotateToFitInvert]. */
-    var dualPageRotateToFitInvert = readerPreferences.dualPageRotateToFitInvert().get()
-        private set
-    // KMK <--
-
-    // KMK -->
-    /**
      * Transient spread-shift toggle, ported from the legacy pager's shift button
      * ([eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerConfig.shiftDoublePage]):
      * when true, dual-page pairing starts at page 0 instead of leaving the
@@ -353,11 +338,13 @@ class WebGpuConfig(
                 { emitSettingsChange() },
             )
 
-        // KMK -->
-        // These two are shown in the paged reader group, which covers this viewer as well as the
-        // classic pager, so they have to be honoured here or the toggle is dead in WebGPU: a wide
-        // page paired into a spread is rotated a quarter turn to fit its half instead of being
-        // letterboxed into a short band. See WebGpuDecodePipeline for where that lands.
+// KMK -->
+        // dualPageRotateToFit/Invert are declared on ViewerConfig with a protected setter, so
+        // assigning them here is the whole of the wiring - but nothing in this viewer assigned
+        // them, so they stayed false and the option did nothing here. The paged reader settings
+        // group covers this viewer as well as the classic pager, which made the gap invisible:
+        // the toggle was right there in the settings and dead. The pager rotates the encoded
+        // bytes; WebGPU has no encode step, so it rotates the decoded pixels instead.
         readerPreferences.dualPageRotateToFit()
             .register(
                 { dualPageRotateToFit = it },
