@@ -223,6 +223,7 @@ open class WebGpuViewer(
                 }
             }
             pageCache.clear()
+            stuckRecords.clear()
             loneIndices.clear()
             val previous = currentPage
             currentPage = (previous as? ViewerReaderPage)?.page?.let { getPage(it, previous) }
@@ -271,6 +272,16 @@ open class WebGpuViewer(
 
     // Page cache - keyed by stable PageKey for O(1) lookup
     internal val pageCache = LinkedHashMap<PageKey, ViewerPage>()
+
+    /**
+     * How the liveness sweep has had to recover each page, keyed like [pageCache] so a shell that is
+     * torn down and rebuilt cannot reset its own record by being replaced.
+     *
+     * Deliberately viewer-level rather than a field on the shell: the escalation this drives
+     * rebuilds the page, and a counter living on the shell would start over on the new one, which is
+     * precisely the loop it exists to stop.
+     */
+    internal val stuckRecords = HashMap<PageKey, StuckPageRecord>()
 
     // Decode queue - pages waiting to be decoded, processed LIFO (last = highest priority)
     internal val decodeQueue = ArrayDeque<ViewerReaderPage>()
@@ -591,14 +602,31 @@ open class WebGpuViewer(
                         }
                     }
                     if (orphans.isEmpty()) continue
-                    logcat(LogPriority.WARN) {
-                        "Re-driving ${orphans.size} stuck page(s): " +
-                            orphans.joinToString { "${it.page.chapter.chapter.id}/${it.page.index}=${it.state}" }
+                    // A page inside its cooldown is not an event: logging it would be the spew this
+                    // sweep is meant to stop, and re-driving it is what could not terminate.
+                    var reArm = false
+                    val acted = ArrayList<ViewerReaderPage>(orphans.size)
+                    orphans.forEach { page ->
+                        when (requeueStuckPage(page)) {
+                            StuckRecovery.REDRIVEN, StuckRecovery.REBUILT -> acted += page
+                            StuckRecovery.DEFERRED -> reArm = true
+                            StuckRecovery.GONE -> Unit
+                        }
                     }
-                    // Re-checked under the lock inside requeueStuckPage: the scan above is a
-                    // snapshot, and a page that started genuinely loading in between must not be
-                    // reset out from under its own coroutine.
-                    orphans.forEach { requeueStuckPage(it) }
+                    if (acted.isEmpty()) {
+                        // Every orphan was cooling down. The signal that woke this pass is spent, so
+                        // nothing would come back to retry them - re-arm once the cooldown is up,
+                        // which is what keeps a slow page still being retried rather than dropped.
+                        if (reArm) {
+                            delay(STUCK_REDRIVE_COOLDOWN_MS)
+                            stuckSignal.trySend(Unit)
+                        }
+                        continue
+                    }
+                    logcat(LogPriority.WARN) {
+                        "Re-driving ${acted.size} stuck page(s): " +
+                            acted.joinToString { "${it.page.chapter.chapter.id}/${it.page.index}=${it.state}" }
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -976,6 +1004,7 @@ open class WebGpuViewer(
                         }
                     }
                     pageCache.clear()
+                    stuckRecords.clear()
                     loneIndices.clear()
 
                     currentPage = (currentPage as? ViewerReaderPage)?.page?.let { getPage(it) }
@@ -1409,6 +1438,7 @@ open class WebGpuViewer(
                 }
             }
             pageCache.clear()
+            stuckRecords.clear()
             loneIndices.clear()
             try {
                 lock.notifyAll()
