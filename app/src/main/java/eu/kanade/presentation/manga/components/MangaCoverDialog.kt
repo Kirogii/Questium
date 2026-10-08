@@ -70,6 +70,7 @@ import tachiyomi.presentation.core.components.material.Scaffold
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.clickableNoIndication
 import tachiyomi.presentation.core.util.collectAsState
+import java.util.concurrent.atomic.AtomicReference
 
 @Composable
 fun MangaCoverDialog(
@@ -206,14 +207,27 @@ fun MangaCoverDialog(
         ) { contentPadding ->
             // Mihon -->
             if (useNewRenderer) {
-                val state = remember(manga.id) { ImageViewerState() }
+                // KMK --> Re-keyed on the cover, not only on the manga id. The crop editor stacks on
+                // top of this dialog, so setting a custom cover replaces the image behind an id that
+                // never changes while the dialog is still composed - and keyed on the id alone the
+                // request was never re-issued, so the dialog went on drawing the cover the user had
+                // just replaced. `coverLastModified` is the same signal MangaKeyer keys the cache on,
+                // so this cannot drift from what Coil considers a different image.
+                val coverKey = manga.id to manga.coverLastModified
+                val state = remember(coverKey) { ImageViewerState() }
                 val scope = rememberCoroutineScope()
-                DisposableEffect(state) {
+                // The page the renderer is fed, held here rather than captured in a fetch closure so
+                // a re-keyed request can free the one it replaces: an ImagePage owns uploaded GPU
+                // textures, and dropping the last reference leaks them.
+                val installedPage = remember(coverKey) { AtomicReference<ImagePage.ImageSingle?>(null) }
+                DisposableEffect(state, installedPage) {
+                    state.fetchPage = { index -> if (index == 0) installedPage.get() else null }
                     onDispose {
                         state.fetchPage = { null }
+                        installedPage.getAndSet(null)?.cleanup()
                     }
                 }
-                LaunchedEffect(manga.id) {
+                LaunchedEffect(coverKey) {
                     ImageRequest.Builder(view.context)
                         .data(manga)
                         .size(Size.ORIGINAL)
@@ -237,16 +251,8 @@ fun MangaCoverDialog(
                                         backgroundColor = 0,
                                     ),
                                 )
-                                state.apply {
-                                    fetchPage = { index ->
-                                        if (index == 0) {
-                                            page
-                                        } else {
-                                            null
-                                        }
-                                    }
-                                    invalidate()
-                                }
+                                installedPage.getAndSet(page)?.cleanup()
+                                state.invalidate()
                             }
                         }
                         .build()
