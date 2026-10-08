@@ -27,7 +27,6 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
-import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import eu.kanade.tachiyomi.util.system.createReaderThemeContext
@@ -493,23 +492,14 @@ open class WebGpuViewer(
             decodeQueue.clear()
             // Snapshot to avoid ConcurrentModification if cleanup triggers callbacks
             val snapshot = pageCache.values.toList()
-            snapshot.forEach {
-                it.state = PageState.IDLE
-                // KMK -->
-                (it as? ViewerReaderPage)?.let { readerPage ->
-                    try {
-                        readerPage.spreadPage?.cleanup()
-                    } catch (_: Exception) {
-                    }
-                    readerPage.spreadBytes = null
-                    readerPage.rescaleInFlight = false
-                    readerPage.cleanupCompare()
-                    readerPage.wantedByRender = false
-                }
-                // KMK <--
-                try {
-                    it.imagePage.cleanup()
-                } catch (_: Exception) {
+            snapshot.forEach { page ->
+                // A transition page owns only its own placeholder; a reader page owns the spread,
+                // the rescale and the translation pair as well, so it goes through the one owner.
+                if (page is ViewerReaderPage) {
+                    releasePageResources(page)
+                } else {
+                    page.state = PageState.IDLE
+                    runCatching { page.imagePage.cleanup() }
                 }
             }
             pageCache.clear()
@@ -678,24 +668,14 @@ open class WebGpuViewer(
         synchronized(lock) {
             decodeQueue.clear()
             val snapshot = pageCache.values.toList()
-            snapshot.forEach {
-                it.state = PageState.IDLE
-                (it as? ViewerReaderPage)?.let { readerPage ->
-                    try {
-                        resetSpreadHeightRetry(readerPage)
-                    } catch (_: Exception) {
-                    }
-                    try {
-                        readerPage.spreadPage?.cleanup()
-                    } catch (_: Exception) {
-                    }
-                    readerPage.spreadBytes = null
-                    readerPage.rescaleInFlight = false
-                    readerPage.cleanupCompare()
-                }
-                try {
-                    it.imagePage.cleanup()
-                } catch (_: Exception) {
+            snapshot.forEach { page ->
+                // A transition page owns only its own placeholder; a reader page owns the spread,
+                // the rescale and the translation pair as well, so it goes through the one owner.
+                if (page is ViewerReaderPage) {
+                    releasePageResources(page)
+                } else {
+                    page.state = PageState.IDLE
+                    runCatching { page.imagePage.cleanup() }
                 }
             }
             pageCache.clear()
@@ -997,24 +977,7 @@ open class WebGpuViewer(
      */
     protected open fun moveRight() {
         pager.state.getPage(0)?.let { page ->
-            if (config.navigateToPan) {
-                val minX = page.minX(page.scale)
-                val maxX = page.maxX(page.scale)
-                // Where a running pan is headed, else where it sits.
-                val currentX = page.animationTargetX ?: page.x
-
-                val c = if (isVertical && config.imageZoomType == ReaderPageImageView.ZoomStartPosition.RIGHT) -1 else 1
-                val x = (currentX - c / page.scale).coerceIn(minX, maxX)
-                if (x != page.x) {
-                    if (page.animationJob?.isActive == true && page.animationTargetX == x) {
-                        page.animationJob?.cancel()
-                    } else {
-                        page.animateTo(targetX = x, targetY = page.y)
-                        return
-                    }
-                }
-            }
-
+            if (config.navigateToPan && panTowardNextPage(page)) return
             navigateSpread(1)
         }
     }
@@ -1024,26 +987,57 @@ open class WebGpuViewer(
      */
     protected open fun moveLeft() {
         pager.state.getPage(0)?.let { page ->
-            if (config.navigateToPan) {
-                val minX = page.minX(page.scale)
-                val maxX = page.maxX(page.scale)
-                val currentX = page.animationTargetX ?: page.x
-
-                val c = if (isVertical && config.imageZoomType == ReaderPageImageView.ZoomStartPosition.RIGHT) -1 else 1
-                val x = (currentX + c / page.scale).coerceIn(minX, maxX)
-                if (x != page.x) {
-                    if (page.animationJob?.isActive == true && page.animationTargetX == x) {
-                        page.animationJob?.cancel()
-                    } else {
-                        page.animateTo(targetX = x, targetY = page.y)
-                        return
-                    }
-                }
-            }
-
+            if (config.navigateToPan && panTowardPreviousPage(page)) return
             navigateSpread(-1)
         }
     }
+
+    /**
+     * Steps the current page one viewport along the axis it actually turns on, and reports whether
+     * it did.
+     *
+     * Pan has to run on the page-turn axis. Panning X while the strip is vertical slides the page
+     * sideways instead of advancing: with the page panned into a corner the pan range is open, so
+     * "next page" dragged the reader to the opposite corner of the same page and only turned the
+     * page once the sideways travel ran out. The pager's own viewer pans vertically for this
+     * reason ([eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView.panDown]).
+     *
+     * Both directions walk the offset *down* for next and *up* for previous: a larger offset pushes
+     * the content down/right, which shows the top/left of the page, so advancing means revealing
+     * what lies beyond and the offset has to shrink.
+     *
+     * Returns false when the page has no travel left on that axis, which is the caller's cue to
+     * turn the page instead.
+     */
+    private fun panOneViewport(page: ImagePage, forward: Boolean): Boolean {
+        val step = 1f / page.scale
+        if (isVertical) {
+            val current = page.animationTargetY ?: page.y
+            val target = (if (forward) current - step else current + step)
+                .coerceIn(page.minY(page.scale), page.maxY(page.scale))
+            if (target == page.y) return false
+            if (page.animationJob?.isActive == true && page.animationTargetY == target) {
+                page.animationJob?.cancel()
+                return false
+            }
+            page.animateTo(targetX = page.x, targetY = target)
+            return true
+        }
+        val current = page.animationTargetX ?: page.x
+        val target = (if (forward) current - step else current + step)
+            .coerceIn(page.minX(page.scale), page.maxX(page.scale))
+        if (target == page.x) return false
+        if (page.animationJob?.isActive == true && page.animationTargetX == target) {
+            page.animationJob?.cancel()
+            return false
+        }
+        page.animateTo(targetX = target, targetY = page.y)
+        return true
+    }
+
+    private fun panTowardNextPage(page: ImagePage) = panOneViewport(page, forward = true)
+
+    private fun panTowardPreviousPage(page: ImagePage) = panOneViewport(page, forward = false)
 
     /** Target anchor page one spread past [from], in [direction] (positive = forward). */
     internal fun nextPage(from: ViewerPage, direction: Int): ViewerPage? {

@@ -16,7 +16,6 @@ import tachiyomi.core.common.util.system.logcat
 import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.WeakHashMap
-import kotlin.math.roundToInt
 
 // Dual-page spread height matching. Split out of the spread-pairing code because it is a
 // self-contained state machine: decide whether a spread needs a pass, coalesce the retries while a
@@ -161,13 +160,14 @@ internal fun WebGpuViewer.maybeScheduleSpreadHeightMatch(
         retrySpreadHeightMatchSoon(anchorPage, spread, nextReaderPage)
         return
     }
-    val hasBytes: Boolean
-    val inFlight: Boolean
-    synchronized(lock) {
-        hasBytes = shorterPage.spreadBytes != null
-        inFlight = shorterPage.rescaleInFlight
-    }
-    if (!shouldAttemptSpreadRescale(hasBytes, inFlight, plan)) return
+    // Both fields are volatile, and this runs once per spread per rendered frame - it is reached
+    // from buildSpreadPage, which fetchPage(0) calls every frame. Taking the viewer's global lock
+    // here put a shared monitor on the render path, contending with the decode worker's cleanup and
+    // every getPage. Reading them plainly is enough: this only decides whether to *offer* the
+    // rescale, and scheduleSpreadHeightMatch re-checks rescaleInFlight under the lock before
+    // claiming the page, so a torn read here can at worst queue one redundant attempt that is then
+    // dropped there.
+    if (!shouldAttemptSpreadRescale(shorterPage.spreadBytes != null, shorterPage.rescaleInFlight, plan)) return
     scheduleSpreadHeightMatch(shorterPage, plan.targetHeight)
 }
 
@@ -350,9 +350,11 @@ internal suspend fun WebGpuViewer.rescaleImageToHeight(bytes: ByteArray, targetH
         bmp
     }
 
-    val scaledWidth = (srcWidth.toFloat() * targetHeight / srcHeight)
-        .roundToInt()
-        .coerceIn(1, 8192)
+    // The requires above already bound all three operands to 8..8192, so the helper's non-positive
+    // guard cannot fire and its clamp is the same one the inline math applied.
+    val scaledWidth = requireNotNull(scaledSpreadWidth(srcWidth, srcHeight, targetHeight)) {
+        "unreachable for validated ${srcWidth}x$srcHeight -> $targetHeight"
+    }
 
     if (scaledWidth * targetHeight > 16 * 1024 * 1024) {
         srcBitmap.recycle()

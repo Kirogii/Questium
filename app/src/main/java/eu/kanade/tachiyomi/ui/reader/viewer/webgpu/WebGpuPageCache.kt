@@ -109,6 +109,39 @@ internal fun WebGpuViewer.syncPageList(chapters: ViewerChapters): Boolean {
 }
 
 /**
+ * Everything a [ViewerReaderPage] owns, released in one place.
+ *
+ * A shell holds more than its [ImagePage]: a spread composed from it, the source bytes a
+ * height-match rescale would need, a rescale already running against them, the pair of pages a
+ * translation swap parked, and the coalesced retry job armed for that rescale. Any of those
+ * outlives the image and holds GPU memory or a coroutine, so dropping the shell without releasing
+ * them leaks.
+ *
+ * This existed as six hand-copied subsets, and they had already drifted - which is how
+ * `wantedByRender` ended up cleared on the eviction path but not the device-loss path, leaving a
+ * shell the one-shot [ensureDecoding] would refuse to re-queue. One list, one owner.
+ *
+ * Takes no lock: [ViewerPage.state] and every field here are volatile, and `cleanup()` only posts
+ * its GPU work to a background scope rather than performing it, so a caller holding [lock] is
+ * neither needed nor harmed.
+ */
+internal fun WebGpuViewer.releasePageResources(page: ViewerReaderPage) {
+    // Before the image goes: cleanupCompare compares its two parked pages against the current one
+    // to decide which is the owner, so it has to run while the current one is still set.
+    resetSpreadHeightRetry(page)
+    runCatching { page.spreadPage?.cleanup() }
+    page.spreadPage = null
+    runCatching { page.cleanupCompare() }
+    page.spreadBytes = null
+    page.rescaleInFlight = false
+    // ensureDecoding is one-shot against this flag, so a shell that is being dropped must stop
+    // counting as renderer-demanded or it can never be queued again if it is ever handed back.
+    page.wantedByRender = false
+    page.state = PageState.IDLE
+    runCatching { page.imagePage.cleanup() }
+}
+
+/**
  * Drops cached shells for pages a split has replaced, and reports the page the viewer should
  * land on if it was showing one of them.
  *
@@ -132,13 +165,8 @@ private fun WebGpuViewer.evictReplacedPages(): ViewerReaderPage? {
         orphaned.forEach { shell ->
             pageCache.remove(pageKey(shell))
             decodeQueue.remove(shell)
-            shell.wantedByRender = false
+            releasePageResources(shell)
             stuckSignal.trySend(Unit)
-            runCatching {
-                shell.spreadPage?.cleanup()
-                shell.spreadBytes = null
-                shell.imagePage.cleanup()
-            }
         }
         // Read through a local: currentPage is a var, so the compiler will not smart-cast it past
         // the check below, and the shell is the only thing still holding the page once it is
@@ -513,24 +541,14 @@ internal fun WebGpuViewer.evictFarthestPage(reference: ViewerPage? = null) {
 
     pageCache.remove(pageKey(toRemove))
     decodeQueue.remove(toRemove)
-    toRemove.state = PageState.IDLE
     // Removing a page from the queue is what can strand an unrelated in-flight page, so the sweep
     // runs here rather than on a timer.
     stuckSignal.trySend(Unit)
-    // KMK -->
-    (toRemove as? ViewerReaderPage)?.let {
-        // An evicted anchor is terminal for its height-match: drop any coalesced retry
-        // with it so a dead spread can never spin. Fresh bytes on re-decode re-arm.
-        resetSpreadHeightRetry(it)
-        // A dropped shell must stop counting as renderer-demanded: ensureDecoding is one-shot
-        // against this flag, so a shell that kept it can never be queued again by a return to
-        // the page it still names.
-        it.wantedByRender = false
-        it.spreadPage?.cleanup()
-        it.spreadBytes = null
+    if (toRemove is ViewerReaderPage) {
+        releasePageResources(toRemove)
+    } else {
+        toRemove.imagePage.cleanup()
     }
-    // KMK <--
-    toRemove.imagePage.cleanup()
 }
 
 /**

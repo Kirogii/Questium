@@ -12,17 +12,6 @@ internal const val SPREAD_MIN_SIDE_DIM = 8
 /** Hard ceiling for any rescaled spread dimension. */
 internal const val SPREAD_MAX_DIM = 8192
 
-/**
- * Scale factor bringing the shorter side up to the taller height, or null when there is
- * nothing to do: equal heights, non-positive (destroyed/placeholder) dims, or an inverted
- * call that would shrink the taller side. Pure math, no Android dependency.
- */
-internal fun spreadHeightMatchFactor(shorterHeight: Int, tallerHeight: Int): Float? {
-    if (shorterHeight <= 0 || tallerHeight <= 0) return null
-    if (shorterHeight >= tallerHeight) return null
-    return tallerHeight.toFloat() / shorterHeight
-}
-
 /** Clamp any spread dimension into the uploadable 1..[SPREAD_MAX_DIM] range. Pure math. */
 internal fun clampSpreadDim(value: Int): Int = value.coerceIn(1, SPREAD_MAX_DIM)
 

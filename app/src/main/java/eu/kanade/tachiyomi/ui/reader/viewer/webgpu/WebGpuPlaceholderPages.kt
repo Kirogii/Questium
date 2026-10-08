@@ -179,6 +179,33 @@ class ProgressPage(
         // KMK <--
     }
 
+    // KMK -->
+    // The resolved view for the frame, and the shared-cache generation it was resolved at.
+    // render() runs for every frame a placeholder is on screen, and re-resolving meant taking the
+    // companion's lock and re-reading the GPUDevice each time - a global monitor on the render
+    // path, held for as long as a page takes to load. The generation only moves on a device change,
+    // a publish or a destroy, so this is a volatile read on the fast path.
+    @Volatile
+    private var spinView: GPUTextureView? = null
+
+    @Volatile
+    private var spinViewGeneration: Long = -1L
+
+    private fun loadPineappleView(): GPUTextureView? {
+        if (pineappleGeneration == spinViewGeneration) return spinView
+        val view = resolvePineappleView()
+        spinView = view
+        // Read after resolving, so a generation that moved mid-resolve is not cached as current.
+        spinViewGeneration = pineappleGeneration
+        return view
+    }
+
+    private fun resolvePineappleView(): GPUTextureView? {
+        loadPineappleTexture() ?: return null
+        return synchronized(ProgressPage) { pineappleView }
+    }
+    // KMK <--
+
     private fun loadPineappleTexture(): GPUTexture? {
         // KMK --> The upload binds the texture to the creating GPUDevice, so the shared
         // cache must follow device recreation (device-lost re-init) - a texture from
@@ -197,6 +224,7 @@ class ProgressPage(
                 pineappleTexture = null
                 pineappleView = null
                 pineappleDevice = device
+                pineappleGeneration++
             }
             pineappleTexture?.let { return it }
             if (uploadInFlight) return null
@@ -217,6 +245,7 @@ class ProgressPage(
                     } catch (_: Exception) {
                         null
                     }
+                    pineappleGeneration++
                 } else {
                     try {
                         texture?.destroy()
@@ -230,12 +259,6 @@ class ProgressPage(
                 uploadInFlight = false
             }
         }
-    }
-
-    /** The shared spinner's view, uploaded on first use alongside its texture. */
-    private fun loadPineappleView(): GPUTextureView? {
-        loadPineappleTexture() ?: return null
-        return synchronized(ProgressPage) { pineappleView }
     }
 
     private fun uploadPineappleTexture(): GPUTexture? {
@@ -289,6 +312,12 @@ class ProgressPage(
         @Volatile
         private var pineappleDevice: GPUDevice? = null
 
+        // KMK --> Bumped on every change to the shared texture or view - device swap, first
+        // publish, teardown. A placeholder caches the view it resolved against the generation it
+        // read, so it re-resolves exactly when the view it holds has stopped being the current one.
+        @Volatile
+        private var pineappleGeneration: Long = 0L
+
         // KMK --> Guards concurrent first-frame uploads: without it every
         // ProgressPage rendering its first frame uploads its own copy and all
         // but one leak. The per-frame spin itself is driven by the viewer's
@@ -310,6 +339,7 @@ class ProgressPage(
                 pineappleTexture = null
                 pineappleView = null
                 pineappleDevice = null
+                pineappleGeneration++
             }
         }
         // KMK <--

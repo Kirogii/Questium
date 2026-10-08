@@ -214,17 +214,8 @@ internal fun WebGpuViewer.tearDownStuckPage(page: ViewerReaderPage): StuckRecove
         if (page.imagePage.destroyed) return StuckRecovery.GONE
         pageCache.remove(pageKey(page))
         decodeQueue.remove(page)
-        page.state = PageState.IDLE
-        // Not just `wantedByRender`: the one-shot in ensureDecoding reads it to mean "the renderer
-        // already asked for this shell", so leaving it true on a shell that is about to be dropped
-        // only matters if that exact shell is ever handed back - which the liveness sweep then
-        // treats as already-demanded and never re-queues.
-        page.wantedByRender = false
-        resetSpreadHeightRetry(page)
     }
-    page.spreadPage?.cleanup()
-    page.spreadBytes = null
-    page.imagePage.cleanup()
+    releasePageResources(page)
     return StuckRecovery.REBUILT
 }
 // Mihon <--
