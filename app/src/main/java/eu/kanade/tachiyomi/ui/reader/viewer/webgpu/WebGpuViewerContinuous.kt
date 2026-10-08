@@ -7,6 +7,9 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import kotlin.math.max
 
+/** Ceiling on how far past the baseline window [cacheSize] grows to follow the drawn reach. */
+private const val MAX_CACHED_REACH = 6
+
 class WebGpuViewerContinuous(activity: ReaderActivity, val useGap: Boolean = false) :
     WebGpuViewer(activity, isReversed = false, isVertical = true, pager = ImageViewContinuous(activity)) {
 
@@ -16,19 +19,36 @@ class WebGpuViewerContinuous(activity: ReaderActivity, val useGap: Boolean = fal
     // decoded rather than merely reserved - so the window follows what the last frame reached.
     // KMK --> Pref acts as a raisable floor; live reach always wins so shrinking the
     // pref can never starve the visible viewport.
-    override val preloadAhead get() = max(max(3, config.preloadAhead), state.pagesBelow)
-    override val preloadBehind get() = max(max(1, config.preloadBehind), state.pagesAbove)
+    //
+    // Clamped to MAX_CACHED_REACH, which is what cacheSize is budgeted against: the render walk is
+    // allowed to reach further than the cache holds (so the screen is fully painted when zoomed
+    // out), but a speculative preload that wide created more shells than the cache keeps and
+    // evicted pages it had just queued. Pages past the clamp are still decoded - the renderer asks
+    // for them itself through fetchPage - so the cap costs reach-ahead, not correctness.
+    override val preloadAhead get() =
+        max(max(3, config.preloadAhead), state.pagesBelow.coerceAtMost(MAX_CACHED_REACH))
+    override val preloadBehind get() =
+        max(max(1, config.preloadBehind), state.pagesAbove.coerceAtMost(MAX_CACHED_REACH))
     // KMK <--
 
-    // The state reaches MAX_VISIBLE_PAGES either side of the current page whatever the zoom - to
-    // measure the document's end as well as to draw - and every page in that reach is created on
-    // demand here. A chapter boundary holds both edge windows plus the transition page plus
-    // swap residue at once (up to ~13 live shells), so the cache keeps that whole working
-    // set: evicting a half-visible decoded page reverts it to a placeholder and its
-    // re-decode shifts every slot below it, which read as constant flicker at chapter
-    // edges. Low-RAM devices keep the old tighter budget instead of risking OOM.
-    override val cacheSize get() =
-        (if (isLowRamDevice) 3 else 7) + 2 * ImageViewerContinuousState.MAX_VISIBLE_PAGES
+    // The state walks at least MAX_VISIBLE_PAGES either side of the current page - to measure
+    // the document's end as well as to draw - and further when the zoom puts more of them on
+    // screen. Every page in that reach is created on demand here. A chapter boundary holds both
+    // edge windows plus the transition page plus swap residue at once (up to ~13 live shells), so
+    // the cache keeps that whole working set: evicting a half-visible decoded page reverts it to a
+    // placeholder and its re-decode shifts every slot below it, which read as constant flicker at
+    // chapter edges. Low-RAM devices keep the old tighter budget instead of risking OOM.
+    //
+    // KMK --> The reach therefore follows what the last frame drew rather than sitting at the
+    // baseline count: a cache that cannot hold its own drawn window evicts pages that are on screen.
+    // Capped because a decoded webtoon segment is ~47MB of texture, so the working set has to stay
+    // bounded no matter how far out the reader has zoomed.
+    override val cacheSize: Int
+        get() {
+            val drawn = max(state.pagesBelow, state.pagesAbove).coerceAtMost(MAX_CACHED_REACH)
+            return (if (isLowRamDevice) 3 else 7) +
+                2 * max(ImageViewerContinuousState.MAX_VISIBLE_PAGES, drawn)
+        }
 
     private val state get() = (pager as ImageViewContinuous).state
 
@@ -45,6 +65,13 @@ class WebGpuViewerContinuous(activity: ReaderActivity, val useGap: Boolean = fal
         // change, so scrolling back up over it and down again selects that last page again.
         state.onPageScrolledThrough = onScrolledThrough@{ imagePage ->
             val chapter = (imagePage as? TransitionPage)?.prevChapter ?: return@onScrolledThrough
+            // Only while the chapter is still the active one. Once the reader has entered the next
+            // chapter the same transition page keeps reporting on every pass back over it, and each
+            // report ran loadNewChapter again - a fresh ChapterLoader, a read-timer restart and a
+            // whole viewerChapters swap - which invalidated every neighbour-link memo and re-walked
+            // the page window on the way. The chapter advances on its own when the reader's own
+            // page crossing lands in it, which is the report that matters.
+            if (chapter !== viewerChapters?.currChapter) return@onScrolledThrough
             val lastPage = chapter.pages?.lastOrNull() ?: return@onScrolledThrough
             activity.onPageSelected(lastPage)
         }

@@ -394,32 +394,36 @@ private fun CropAdjustControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            // Signed for the viewport, not the image: nudging "up" moves the framing up the picture,
+            // which draws the image further down and so takes a larger positive offset. Nudging the
+            // image itself the other way leaves every arrow showing the part of the cover above the
+            // one asked for.
             RepeatIconButton(
                 icon = Icons.Outlined.ArrowUpward,
                 contentDescription = stringResource(KMR.strings.crop_move_up),
                 enabled = enabled,
-                onStep = { onNudge(0f, -NUDGE_FRACTION) },
+                onStep = { onNudge(0f, NUDGE_FRACTION) },
             )
             Row {
                 RepeatIconButton(
                     icon = Icons.Outlined.ArrowBack,
                     contentDescription = stringResource(KMR.strings.crop_move_left),
                     enabled = enabled,
-                    onStep = { onNudge(-NUDGE_FRACTION, 0f) },
+                    onStep = { onNudge(NUDGE_FRACTION, 0f) },
                 )
                 Box(modifier = Modifier.size(CONTROL_BUTTON_SIZE))
                 RepeatIconButton(
                     icon = Icons.Outlined.ArrowForward,
                     contentDescription = stringResource(KMR.strings.crop_move_right),
                     enabled = enabled,
-                    onStep = { onNudge(NUDGE_FRACTION, 0f) },
+                    onStep = { onNudge(-NUDGE_FRACTION, 0f) },
                 )
             }
             RepeatIconButton(
                 icon = Icons.Outlined.ArrowDownward,
                 contentDescription = stringResource(KMR.strings.crop_move_down),
                 enabled = enabled,
-                onStep = { onNudge(0f, NUDGE_FRACTION) },
+                onStep = { onNudge(0f, -NUDGE_FRACTION) },
             )
         }
         Box(modifier = Modifier.weight(1f))

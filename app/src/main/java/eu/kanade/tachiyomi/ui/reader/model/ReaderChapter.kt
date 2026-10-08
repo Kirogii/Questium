@@ -5,7 +5,20 @@ import eu.kanade.tachiyomi.data.database.models.Chapter
 import eu.kanade.tachiyomi.ui.reader.loader.PageLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import tachiyomi.core.common.util.system.logcat
+import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Identity index over one page list, plus the list it was built from.
+ *
+ * The list reference is what makes it safe: [positionOf] only trusts the indices when they came
+ * from the exact list instance it just read, so a reader racing [replacePages] either sees the
+ * previous pair (and rebuilds) or the new one - never new indices against an old list.
+ */
+private class PositionIndex(
+    val pages: List<ReaderPage>,
+    val indices: IdentityHashMap<ReaderPage, Int>,
+)
 
 data class ReaderChapter(val chapter: Chapter) {
 
@@ -51,7 +64,15 @@ data class ReaderChapter(val chapter: Chapter) {
     fun replacePages(newPages: List<ReaderPage>) {
         state = State.Loaded(newPages)
         pageListVersionCounter.incrementAndGet()
+        // Build the identity index here rather than lazily, so the loader thread pays this once
+        // instead of the reader's render thread paying it on its first lookup after every load.
+        val indices = IdentityHashMap<ReaderPage, Int>(newPages.size.coerceAtLeast(1) * 2)
+        newPages.forEachIndexed { index, p -> indices[p] = index }
+        positionIndex = PositionIndex(newPages, indices)
     }
+
+    @Volatile
+    private var positionIndex: PositionIndex? = null
 
     /**
      * Position of [page] in the current page list, or -1 when it is not in it.
@@ -59,8 +80,19 @@ data class ReaderChapter(val chapter: Chapter) {
      * [Page.index] cannot answer this: it is assigned when the list is built and is immutable,
      * so a page inserted later (a split segment) sits at a position its index does not name. Match
      * by identity, since two distinct pages can legitimately share an index across a chapter swap.
+     *
+     * Backed by an [IdentityHashMap] rather than a linear scan: the continuous viewer resolves this
+     * for every page either side of the anchor on every rendered frame, so a 500-page webtoon
+     * chapter was paying 500 identity comparisons per lookup, times dozens of lookups per frame.
      */
-    fun positionOf(page: ReaderPage): Int = pages?.indexOfFirst { it === page } ?: -1
+    fun positionOf(page: ReaderPage): Int {
+        val list = pages ?: return -1
+        positionIndex?.takeIf { it.pages === list }?.let { return it.indices[page] ?: -1 }
+        val rebuilt = IdentityHashMap<ReaderPage, Int>(list.size.coerceAtLeast(1) * 2)
+        list.forEachIndexed { index, p -> rebuilt[p] = index }
+        positionIndex = PositionIndex(list, rebuilt)
+        return rebuilt[page] ?: -1
+    }
 
     /**
      * The page that now stands where [page] used to, or null when [page] is still in the list.

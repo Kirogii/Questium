@@ -76,6 +76,9 @@ private const val CHAPTER_EDGE_PRELOAD = 4
 /** Sentinel for "this chapter slot has never been reconciled", and for an absent neighbour. */
 private const val UNSEEN_VERSION = -1
 
+/** How far either side of the anchor [continuousPage] will cache; wider asks walk uncached. */
+private const val CONTINUOUS_PAGE_CACHE_RADIUS = 64
+
 open class WebGpuViewer(
     val activity: ReaderActivity,
     val isReversed: Boolean,
@@ -220,6 +223,7 @@ open class WebGpuViewer(
                 }
             }
             pageCache.clear()
+            stuckRecords.clear()
             loneIndices.clear()
             val previous = currentPage
             currentPage = (previous as? ViewerReaderPage)?.page?.let { getPage(it, previous) }
@@ -268,6 +272,16 @@ open class WebGpuViewer(
 
     // Page cache - keyed by stable PageKey for O(1) lookup
     internal val pageCache = LinkedHashMap<PageKey, ViewerPage>()
+
+    /**
+     * How the liveness sweep has had to recover each page, keyed like [pageCache] so a shell that is
+     * torn down and rebuilt cannot reset its own record by being replaced.
+     *
+     * Deliberately viewer-level rather than a field on the shell: the escalation this drives
+     * rebuilds the page, and a counter living on the shell would start over on the new one, which is
+     * precisely the loop it exists to stop.
+     */
+    internal val stuckRecords = HashMap<PageKey, StuckPageRecord>()
 
     // Decode queue - pages waiting to be decoded, processed LIFO (last = highest priority)
     internal val decodeQueue = ArrayDeque<ViewerReaderPage>()
@@ -588,14 +602,31 @@ open class WebGpuViewer(
                         }
                     }
                     if (orphans.isEmpty()) continue
-                    logcat(LogPriority.WARN) {
-                        "Re-driving ${orphans.size} stuck page(s): " +
-                            orphans.joinToString { "${it.page.chapter.chapter.id}/${it.page.index}=${it.state}" }
+                    // A page inside its cooldown is not an event: logging it would be the spew this
+                    // sweep is meant to stop, and re-driving it is what could not terminate.
+                    var reArm = false
+                    val acted = ArrayList<ViewerReaderPage>(orphans.size)
+                    orphans.forEach { page ->
+                        when (requeueStuckPage(page)) {
+                            StuckRecovery.REDRIVEN, StuckRecovery.REBUILT -> acted += page
+                            StuckRecovery.DEFERRED -> reArm = true
+                            StuckRecovery.GONE -> Unit
+                        }
                     }
-                    // Re-checked under the lock inside requeueStuckPage: the scan above is a
-                    // snapshot, and a page that started genuinely loading in between must not be
-                    // reset out from under its own coroutine.
-                    orphans.forEach { requeueStuckPage(it) }
+                    if (acted.isEmpty()) {
+                        // Every orphan was cooling down. The signal that woke this pass is spent, so
+                        // nothing would come back to retry them - re-arm once the cooldown is up,
+                        // which is what keeps a slow page still being retried rather than dropped.
+                        if (reArm) {
+                            delay(STUCK_REDRIVE_COOLDOWN_MS)
+                            stuckSignal.trySend(Unit)
+                        }
+                        continue
+                    }
+                    logcat(LogPriority.WARN) {
+                        "Re-driving ${acted.size} stuck page(s): " +
+                            acted.joinToString { "${it.page.chapter.chapter.id}/${it.page.index}=${it.state}" }
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -688,7 +719,67 @@ open class WebGpuViewer(
             // Every writer already sets this under the viewer's lock, so mirroring here keeps the
             // flow and the field consistent without each call site having to do both.
             currentPageFlow.value = value
+            if (continuousPageAnchor !== value) {
+                continuousPageAnchor = value
+                continuousPageKnown.fill(false)
+            }
         }
+
+    // KMK --> Page-lookup cache for continuous mode. The render walk asks fetchPage for every page
+    // in the window on every frame, and each ask walked the neighbour chain from the anchor - so a
+    // window reaching six pages below cost 1+2+3+4+5+6 chain steps, all of it on the main thread
+    // inside the viewer's lock. Filled in as the walk goes, so the whole window costs one pass.
+    // Invalidated whenever the anchor moves; entries hold page identities, and a decode swaps a
+    // page's image rather than its identity, so a shell landing mid-frame is still seen.
+    private val continuousPageSlots = arrayOfNulls<ViewerPage>(2 * CONTINUOUS_PAGE_CACHE_RADIUS + 1)
+    private val continuousPageKnown = BooleanArray(2 * CONTINUOUS_PAGE_CACHE_RADIUS + 1)
+
+    @Volatile
+    private var continuousPageAnchor: ViewerPage? = null
+
+    private fun continuousPage(index: Int): ViewerPage? {
+        if (index !in -CONTINUOUS_PAGE_CACHE_RADIUS..CONTINUOUS_PAGE_CACHE_RADIUS) {
+            return walkContinuousPage(index)
+        }
+        val slot = index + CONTINUOUS_PAGE_CACHE_RADIUS
+        if (continuousPageKnown[slot]) return continuousPageSlots[slot]
+
+        val anchor = continuousPageAnchor ?: currentPage ?: return null
+        if (continuousPageAnchor !== anchor) {
+            continuousPageAnchor = anchor
+            continuousPageKnown.fill(false)
+        }
+        continuousPageSlots[CONTINUOUS_PAGE_CACHE_RADIUS] = anchor
+        continuousPageKnown[CONTINUOUS_PAGE_CACHE_RADIUS] = true
+
+        // Walks outward from the anchor, recording every index it passes so a later ask for a
+        // nearby index is a cache hit instead of a fresh chain walk.
+        var page: ViewerPage? = anchor
+        val step = if (index > 0) 1 else -1
+        var at = 0
+        while (at != index) {
+            page = if (step > 0) page?.next else page?.prev
+            at += step
+            val atSlot = at + CONTINUOUS_PAGE_CACHE_RADIUS
+            if (page == null) {
+                continuousPageSlots[atSlot] = null
+                continuousPageKnown[atSlot] = true
+                return null
+            }
+            continuousPageSlots[atSlot] = page
+            continuousPageKnown[atSlot] = true
+        }
+        return page
+    }
+
+    private fun walkContinuousPage(index: Int): ViewerPage? {
+        var page: ViewerPage? = currentPage ?: return null
+        val step = if (index > 0) 1 else -1
+        repeat(abs(index)) {
+            page = (if (step > 0) page?.next else page?.prev) ?: return null
+        }
+        return page
+    }
 
     // KMK --> User-tunable preload window; continuous takes max() with live reach.
     open val preloadAhead get() = config.preloadAhead
@@ -808,15 +899,8 @@ open class WebGpuViewer(
                 // (Pager mode keeps the full pipeline, including the existing()
                 // identity reuse inside buildSpreadPage.)
                 if (isContinuous) {
-                    if (index == 0) {
-                        ensureDecoding(current)
-                        return@fetch current.imagePage
-                    }
-                    var page = current
-                    val step = if (index > 0) 1 else -1
-                    repeat(abs(index)) {
-                        page = nextPage(page, step) ?: return@fetch null
-                    }
+                    val page = continuousPage(index)
+                    if (page == null) return@fetch null
                     ensureDecoding(page)
                     return@fetch page.imagePage
                 }
@@ -920,6 +1004,7 @@ open class WebGpuViewer(
                         }
                     }
                     pageCache.clear()
+                    stuckRecords.clear()
                     loneIndices.clear()
 
                     currentPage = (currentPage as? ViewerReaderPage)?.page?.let { getPage(it) }
@@ -1353,6 +1438,7 @@ open class WebGpuViewer(
                 }
             }
             pageCache.clear()
+            stuckRecords.clear()
             loneIndices.clear()
             try {
                 lock.notifyAll()
@@ -1429,21 +1515,11 @@ open class WebGpuViewer(
         } catch (_: Exception) {}
     }
 
-    private var isIdle = true
-    private var awaitingIdleViewerChapters: ViewerChapters? = null
-
     /**
-     * Tells this viewer to set the given [chapters] as active. If the pager is currently idle,
-     * it sets the chapters immediately, otherwise they are saved and set when it becomes idle.
-     * Mirrors [eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer.setChapters] for modular parity.
+     * Tells this viewer to set the given [chapters] as active. Mirrors
+     * [eu.kanade.tachiyomi.ui.reader.viewer.pager.PagerViewer.setChapters] for modular parity.
      */
-    override fun setChapters(chapters: ViewerChapters) {
-        if (!isIdle) {
-            awaitingIdleViewerChapters = chapters
-            return
-        }
-        setChaptersInternal(chapters)
-    }
+    override fun setChapters(chapters: ViewerChapters) = setChaptersInternal(chapters)
 
     private fun pageBelongsToChapters(page: ViewerPage, chapters: ViewerChapters): Boolean = when (page) {
         is ViewerReaderPage ->
@@ -1558,35 +1634,25 @@ open class WebGpuViewer(
                                 startDocY
                             }
                             if (!nowDocY.isFinite() || !startDocY.isFinite() || abs(nowDocY - startDocY) > 2f) return@launch
-                            when {
-                                deferredStored.isV2 -> {
-                                    val pos = ca.mpreg.webgpuviewer.viewer.ImageViewerContinuousState.ContinuousPosition(
-                                        documentY = deferredStored.offsetRatio,
-                                        scale = deferredStored.zoom,
-                                        offsetX = deferredStored.offsetX,
-                                        pageIndexHint = deferredStored.pageIndex,
-                                        fractionWithinPage = deferredStored.fraction,
-                                    )
-                                    st.restorePosition(pos, animate = false)
-                                }
-                                else -> {
-                                    // legacy fraction 0..1 — restore by page+fraction.
-                                    // Suppress callbacks: the scroll walk would re-drive
-                                    // currentPage mid-restore and jump somewhere random.
-                                    val cb = st.onPageChange
-                                    st.onPageChange = null
-                                    try {
-                                        if (deferredStored.fraction.isFinite() && deferredStored.fraction > 0f) {
-                                            st.scrollToPage(deferredStored.pageIndex, deferredStored.fraction)
-                                        }
-                                    } finally {
-                                        st.onPageChange = cb
-                                    }
-                                    val maxOffsetX = maxOf(0f, (deferredStored.zoom - 1f) / (2f * deferredStored.zoom))
-                                    st.scale = deferredStored.zoom.coerceIn(st.minScale, st.maxScale)
-                                    st.offsetX = deferredStored.offsetX.coerceIn(-maxOffsetX, maxOffsetX)
-                                }
-                            }
+                            // KMK --> pageIndexHint is relative to the state's anchor page, not
+                            // absolute - resolveDocumentYForRestore hands it to documentYForPageIndex,
+                            // which subtracts the anchor's own index from it. The deferred restore
+                            // only runs when the anchor was rebuilt from the saved page itself
+                            // (!alreadyInsideNewChapter, see needsDeferredRestore), so the saved page
+                            // IS the anchor and the hint is 0. Passing the stored absolute index
+                            // instead made the walk step `absolute - anchor` pages in the wrong
+                            // direction - wrong position, and an O(absolute) chain walk.
+                            st.restorePosition(
+                                ca.mpreg.webgpuviewer.viewer.ImageViewerContinuousState.ContinuousPosition(
+                                    documentY = deferredStored.offsetRatio,
+                                    scale = deferredStored.zoom,
+                                    offsetX = deferredStored.offsetX,
+                                    pageIndexHint = 0,
+                                    fractionWithinPage = deferredStored.fraction,
+                                ),
+                                animate = false,
+                            )
+                            // KMK <--
                             try {
                                 pager.state.invalidate()
                             } catch (_: Exception) {}

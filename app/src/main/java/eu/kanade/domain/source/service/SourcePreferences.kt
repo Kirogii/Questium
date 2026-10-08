@@ -79,6 +79,26 @@ class SourcePreferences(
         Preference.appStateKey("extension_error_prompts_suppressed"),
         emptySet(),
     )
+
+    /**
+     * Whether the watchdog popup may be shown at all. On by default - a broken extension is a
+     * silent failure otherwise, and nothing in the UI explains why a source returns nothing.
+     *
+     * Deliberately not an appState key: it is a user-facing setting that should survive a clear
+     * and follow a backup, unlike the shown/suppressed sets above which are per-install bookkeeping.
+     */
+    fun extensionWatchdogEnabled() = preferenceStore.getBoolean("extension_watchdog_enabled", true)
+
+    /**
+     * Whether a failing extension shows its failure as text on the extensions page. On by default.
+     *
+     * Separate from [extensionWatchdogEnabled] because the two answer different questions: that one
+     * is about being interrupted with a popup, this one is about the quiet label under the row.
+     * Turning the watchdog off leaves the text in place, and turning this off leaves the popups
+     * working. Switching it off hides the text only - failures are still recorded, so turning it
+     * back on brings back what is currently true rather than starting from nothing.
+     */
+    fun extensionErrorTextEnabled() = preferenceStore.getBoolean("extension_error_text_enabled", true)
     // KMK <--
 
     fun trustedExtensions() = preferenceStore.getStringSet(

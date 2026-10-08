@@ -120,6 +120,15 @@ class ExtensionManager(
 
     fun getExtensionPackage(sourceId: Long): String? = sourcePkgIndex.value[sourceId]
 
+    /**
+     * The installed extension owning [pkgName], for showing its icon next to an error about it.
+     *
+     * Read from the flow's current value rather than collected: this backs a single icon in a
+     * dialog that is already up, and subscribing a flow per prompt would outlive it. Null when the
+     * extension has since been uninstalled, which the caller renders without an icon.
+     */
+    fun extensionFor(pkgName: String): Extension.Installed? = installedExtensionMapFlow.value[pkgName]
+
     fun getExtensionPackageAsFlow(sourceId: Long): Flow<String?> =
         sourcePkgIndex.map { it[sourceId] }
 
@@ -217,8 +226,16 @@ class ExtensionManager(
      * An extension that cannot load is reported as a runtime failure too, so the user is asked to
      * report it to its repository. The reason already identifies the failure; this only supplies the
      * identity that [LoadResult.Error] now carries.
+     *
+     * Only failures that actually threw are tracked. The loader returns an Error for a handful of
+     * conditions that are not faults - an unsigned or absent package, an unsupported lib version,
+     * NSFW content being switched off - and each of those is only ever a line logged at error
+     * level. Tracking them marked working extensions as broken, and NSFW in particular turned a
+     * deliberate setting into an error the user was then invited to report upstream. [cause] being
+     * null is how those are told apart from a genuine crash while loading.
      */
     private fun reportLoadFailure(error: LoadResult.Error) {
+        val cause = error.cause ?: return
         val pkgName = error.pkgName ?: return
         val store = storeFor(pkgName)
         val name = error.extensionName ?: pkgName
@@ -228,9 +245,10 @@ class ExtensionManager(
                 extensionName = name,
                 versionName = error.versionName ?: "",
                 versionCode = error.versionCode,
-                reason = error.reason ?: "Failed to load",
+                reason = error.reason ?: cause.readableMessage(),
                 repoName = store?.name ?: error.storeName,
                 repoWebsiteUrl = store?.contact?.website,
+                stackTrace = cause.stackTraceText(),
                 searchUrl = ExtensionRepoLinks.githubIssueSearchUrl(name, store),
             ),
         )
@@ -250,8 +268,11 @@ class ExtensionManager(
     /**
      * Reports a failure raised while an installed extension was in use. Resolves the extension and
      * its repository from the source that failed, so the prompt names the right repository.
+     *
+     * [prompt] false records the failure without raising a popup - for the global search, which hits
+     * every source at once and would otherwise stack a prompt over every broken result.
      */
-    fun reportSourceError(source: Source?, throwable: Throwable) {
+    fun reportSourceError(source: Source?, throwable: Throwable, prompt: Boolean = true) {
         val src = source ?: return
         val pkgName = getExtensionPackage(src.id) ?: return
         val installed = installedExtensionMapFlow.value[pkgName]
@@ -271,7 +292,25 @@ class ExtensionManager(
                 stackTrace = throwable.stackTraceText(),
                 searchUrl = ExtensionRepoLinks.githubIssueSearchUrl(name, store),
             ),
+            prompt = prompt,
         )
+    }
+
+    /**
+     * A source call for [source] completed without failing, so whatever was recorded for its
+     * extension no longer holds. Cleared rather than left in place because most failures that
+     * reach here are the site being briefly unavailable rather than the scraper being broken:
+     * a 500, a 421, a rate limit or a dropped connection all recover on their own, and an
+     * extension that keeps its error badge after it is plainly working again reads as still
+     * broken on the extensions page.
+     *
+     * Only the recorded failure goes - the user's own "don't tell me again" choices are about
+     * being interrupted and stay, so a repeat of the same failure does not start popping up again.
+     */
+    fun clearSourceError(source: Source?) {
+        val src = source ?: return
+        val pkgName = getExtensionPackage(src.id) ?: return
+        errorReporter.clear(pkgName)
     }
     // KMK <--
 

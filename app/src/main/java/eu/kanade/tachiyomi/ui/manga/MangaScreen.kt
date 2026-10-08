@@ -660,7 +660,7 @@ class MangaScreen(
                             onDismissRequest = { pendingCropUri = null },
                             onCropped = { cropped ->
                                 pendingCropUri = null
-                                sm.editCover(context, cropped)
+                                sm.editCover(context, cropped) { screenModel.refreshManga() }
                                 // KMK --> Only onCropped, not onUseOriginal: choosing the
                                 // original is not a crop.
                                 runCatching {
@@ -669,7 +669,7 @@ class MangaScreen(
                             },
                             onUseOriginal = {
                                 pendingCropUri = null
-                                sm.editCover(context, source)
+                                sm.editCover(context, source) { screenModel.refreshManga() }
                             },
                         )
                     }

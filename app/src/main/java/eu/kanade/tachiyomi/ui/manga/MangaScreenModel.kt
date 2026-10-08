@@ -369,6 +369,23 @@ class MangaScreenModel(
         mangaInfoTranslationController.setShowTranslated(show)
     }
 
+    /**
+     * Re-reads the manga into state after something outside this screen model changed it.
+     *
+     * The manga here is fetched once and held, not observed, so anything that edits the row behind
+     * its back - a new cover, chiefly - leaves this copy stale. A stale cover matters more than other
+     * fields: `coverLastModified` is part of the cover's image cache key, so holding the old value
+     * keeps the key unchanged and the previously cached cover is what stays on screen, which reads as
+     * the edit having been lost until the process is restarted.
+     */
+    fun refreshManga() {
+        val mangaId = manga?.id ?: return
+        screenModelScope.launchIO {
+            val updated = mangaRepository.getMangaById(mangaId)
+            updateSuccessState { it.copy(manga = updated) }
+        }
+    }
+
     fun refreshMangaInfo() {
         mangaInfoTranslationController.refresh()
     }

@@ -234,7 +234,7 @@ open class SourceFeedScreenModel(
             feedSavedSearch.map { sourceFeed ->
                 async {
                     val page = try {
-                        withContext(coroutineDispatcher) {
+                        val fetched = withContext(coroutineDispatcher) {
                             when (sourceFeed) {
                                 is SourceFeedUI.Browse -> source.getPopularManga(1)
                                 is SourceFeedUI.Latest -> source.getLatestUpdates(1)
@@ -244,7 +244,11 @@ open class SourceFeedScreenModel(
                                     filters = getFilterList(sourceFeed.savedSearch, source),
                                 )
                             }
-                        }.mangas
+                        }
+                        // KMK -->
+                        globalAppGraph.extensionManager.clearSourceError(source)
+                        // KMK <--
+                        fetched.mangas
                     } catch (e: Exception) {
                         // KMK -->
                         globalAppGraph.extensionManager.reportSourceError(source, e)

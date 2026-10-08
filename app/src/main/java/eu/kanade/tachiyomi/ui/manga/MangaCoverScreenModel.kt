@@ -114,13 +114,16 @@ class MangaCoverScreenModel(
      *
      * @param context Context.
      * @param data uri of the cover resource.
+     * @param onCoverUpdated run once the new cover is stored, so the caller can refresh whatever copy
+     * of the manga it is holding - this model writes the row but does not own the screen showing it.
      */
-    fun editCover(context: Context, data: Uri) {
+    fun editCover(context: Context, data: Uri, onCoverUpdated: () -> Unit = {}) {
         val manga = state.value ?: return
         screenModelScope.launchIO {
             context.contentResolver.openInputStream(data)?.use {
                 try {
                     manga.editCover(globalAppGraph.localCoverManager, it, updateManga, coverCache)
+                    onCoverUpdated()
                     notifyCoverUpdated(context)
                 } catch (e: Exception) {
                     notifyFailedCoverUpdate(context, e)

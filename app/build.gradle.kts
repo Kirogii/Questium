@@ -39,9 +39,9 @@ android {
         applicationId = "app.houri"
 
         // These need to be updated for every new release that should be automatically pushed
-        versionCode = 197
+        versionCode = 201
         versionName = providers.environmentVariable("VR_RELEASE_VERSION")
-            .map { it.removePrefix("v") }.getOrElse("1.23.9")
+            .map { it.removePrefix("v") }.getOrElse("1.0.1")
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
