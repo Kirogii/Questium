@@ -37,6 +37,25 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.12] - 2026-10-08
+### New
+- **I'm in the thick of it and everybody knows.** Hey guys, Houri dev here. I'm in the thick of it and everybody knows. Or do they? This release answers the age-old question of "even though we can, should we?". Spoiler alert: the answer is **yes**.
+### Improve
+- **A new manga cover now shows up straight away** instead of the old one sticking around until the
+  app is restarted. The details screen was holding its own copy of the series, so the change was
+  written to disk but the screen kept drawing the cover it already had cached.
+- **The nudge buttons in the cover editor now move the framing the way they say.** Pressing "up"
+  showed more of the cover below the one you were looking at rather than above it.
+### Fix
+- **Fixed the reader getting stuck on a page until the app was force-killed.** Scrolling quickly could
+  leave a page permanently loading, and the recovery meant to rescue it was the thing keeping it
+  there: every retry created the condition that scheduled the next one, so it span thousands of
+  times a second and dragged the memory up with it. Retries are now spaced out, and a page that keeps
+  failing is rebuilt from scratch rather than retried against state that has wedged it.
+- **Fixed the cover editor carrying on working after the page it was cropping was gone**, which
+  logged a spurious failure while tearing down.
+
+
 ## [v1.23.11] - 2026-10-08
 ### Fix
 - **Fixed a crash that closed the app while reading in the WebGPU reader.** 1.23.10 released the
