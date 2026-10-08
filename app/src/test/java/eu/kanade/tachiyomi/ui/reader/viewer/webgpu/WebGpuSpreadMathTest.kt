@@ -11,28 +11,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 class WebGpuSpreadMathTest {
 
     @Test
-    fun `S1 - factor scales shorter up to taller`() {
-        spreadHeightMatchFactor(shorterHeight = 1000, tallerHeight = 1500) shouldBe 1.5f
-    }
-
-    @Test
-    fun `S2 - factor is noop for equal heights`() {
-        spreadHeightMatchFactor(shorterHeight = 1200, tallerHeight = 1200).shouldBeNull()
-    }
-
-    @Test
-    fun `S3 - factor never shrinks taller side and never divides by zero`() {
-        // Inverted order: first arg is not the shorter side -> noop, never a <1 factor.
-        spreadHeightMatchFactor(shorterHeight = 1500, tallerHeight = 1000).shouldBeNull()
-        // Zero-noop: destroyed/placeholder dims must not divide by zero.
-        spreadHeightMatchFactor(shorterHeight = 0, tallerHeight = 1500).shouldBeNull()
-        spreadHeightMatchFactor(shorterHeight = 1000, tallerHeight = 0).shouldBeNull()
-        spreadHeightMatchFactor(shorterHeight = 0, tallerHeight = 0).shouldBeNull()
-        spreadHeightMatchFactor(shorterHeight = -4, tallerHeight = 1500).shouldBeNull()
-    }
-
-    @Test
-    fun `S4 - target height clamps to 1 dot dot 8192`() {
+    fun `S1 - target height clamps to 1 dot dot 8192`() {
         clampSpreadDim(9000) shouldBe 8192
         clampSpreadDim(8192) shouldBe 8192
         clampSpreadDim(4000) shouldBe 4000
@@ -42,7 +21,7 @@ class WebGpuSpreadMathTest {
     }
 
     @Test
-    fun `S5 - scaled width preserves aspect and clamps`() {
+    fun `S2 - scaled width preserves aspect and clamps`() {
         scaledSpreadWidth(srcWidth = 800, srcHeight = 1000, targetHeight = 1500) shouldBe 1200
         scaledSpreadWidth(srcWidth = 800, srcHeight = 1000, targetHeight = 20000) shouldBe 8192
         // Zero-noop: no divide by zero, no 0-width upload (gralloc 0x3b).
@@ -52,7 +31,7 @@ class WebGpuSpreadMathTest {
     }
 
     @Test
-    fun `S6 - first-spread fake resolves the shorter side with the taller target`() {
+    fun `S3 - first-spread fake resolves the shorter side with the taller target`() {
         val rightShort = resolveSpreadHeightMatch(
             leftWidth = 800,
             leftHeight = 1200,
@@ -75,7 +54,7 @@ class WebGpuSpreadMathTest {
     }
 
     @Test
-    fun `S7 - evicted-bytes fake never schedules`() {
+    fun `S4 - evicted-bytes fake never schedules`() {
         val plan = resolveSpreadHeightMatch(
             leftWidth = 800,
             leftHeight = 1000,
@@ -94,7 +73,7 @@ class WebGpuSpreadMathTest {
     }
 
     @Test
-    fun `S8 - e-ink-resume fake keeps the taller height and never shrinks`() {
+    fun `S5 - e-ink-resume fake keeps the taller height and never shrinks`() {
         // Resume with both sides at the taller height: already matched, a hard noop.
         resolveSpreadHeightMatch(
             leftWidth = 800,

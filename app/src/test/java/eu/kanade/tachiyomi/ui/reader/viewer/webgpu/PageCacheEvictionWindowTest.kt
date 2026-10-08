@@ -53,10 +53,15 @@ class PageCacheEvictionWindowTest {
     }
 
     @Test
-    fun `a zero preload window still keeps the anchor slot`() {
+    fun `a zero preload window still keeps the anchor and one slack slot each side`() {
+        // The slack is unconditional: it is what protects a spread partner or a transition page,
+        // which occupies the neighbouring slot whatever the reach is asked to be. A reach of zero
+        // therefore still keeps +-1, and only distance 2 is a victim.
         isInsidePreloadWindow(0, ahead = 0, behind = 0) shouldBe true
-        isInsidePreloadWindow(1, ahead = 0, behind = 0) shouldBe false
-        isInsidePreloadWindow(-1, ahead = 0, behind = 0) shouldBe false
+        isInsidePreloadWindow(1, ahead = 0, behind = 0) shouldBe true
+        isInsidePreloadWindow(-1, ahead = 0, behind = 0) shouldBe true
+        isInsidePreloadWindow(2, ahead = 0, behind = 0) shouldBe false
+        isInsidePreloadWindow(-2, ahead = 0, behind = 0) shouldBe false
     }
 
     @Test
