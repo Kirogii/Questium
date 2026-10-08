@@ -38,6 +38,7 @@ kotlin {
 }
 
 dependencies {
+    api(projects.upscaleRuntime)
     api(projects.core.common)
     api(libs.okhttp.core)
     api(kotlinx.coroutines.core)

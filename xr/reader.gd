@@ -25,6 +25,7 @@ var hand_controls: RefCounted
 var room: Node3D
 var books: Array[SpatialBook] = []
 var reader_filters: Dictionary = {}
+var render_revision := ""
 var toolbar: Node3D
 var toolbar_forced := false
 var palm_dwell := 0.0
@@ -567,9 +568,18 @@ func _response(json: String) -> void:
     if workspace and workspace.consume(data):
         return
     match data.get("kind", ""):
+        "reader_render":
+            render_revision = str(data.get("revision", ""))
+            for model in books:
+                model.upscale_enabled = bool(data.get("books", {}).get(model.token, false))
+                if not model.token.is_empty():
+                    for page in range(maxi(0, model.first_page - 2), mini(model.page_count, model.first_page + 4)):
+                        _request("page", {"token": model.token, "index": page})
         "reader_filters":
             reader_filters = data
             for model in books: model.apply_reader_filters(data)
+            ui.number.visible = bool(data.get("page_numbers", false))
+            ui.total.visible = bool(data.get("page_numbers", false))
         "error":
             status.visible = true
             status.text = str(data.get("message", _label("Unable to load content")))
@@ -640,6 +650,8 @@ func _response(json: String) -> void:
             # Resumed chapters still need the first image for their cover.
             _request("page", {"token": chapter_token, "index": 0})
         "page":
+            if str(data.get("revision", render_revision)) != render_revision:
+                return
             var target: SpatialBook
             for existing in books:
                 if existing.token == str(data.token):
@@ -652,6 +664,8 @@ func _response(json: String) -> void:
                 push_error("VR page decode failed: " + str(data.path))
                 return
             image.generate_mipmaps()
+            var bounds: Array = data.get("crop", [0, 0, 1, 1])
+            target.crop_bounds[int(data.index)] = Vector4(float(bounds[0]), float(bounds[1]), float(bounds[2]), float(bounds[3]))
             target.supply_page(int(data.index), ImageTexture.create_from_image(image), Vector2i(int(data.get("width", image.get_width())), int(data.get("height", image.get_height()))))
             print("VR page supplied: ", data.token, " index=", data.index, " size=", image.get_size())
             if not data.get("strips", []).is_empty():
@@ -662,7 +676,7 @@ func _response(json: String) -> void:
                     pending_seek = -1
 
 func _preload(index: int) -> void:
-    for page in range(maxi(0, index - 2), mini(book.page_count, index + 4)):
+    for page in range(maxi(0, index - book.preload_pages / 2), mini(book.page_count, index + book.preload_pages)):
         if not book.textures.has(page):
             _request("page", {"token": chapter_token, "index": page})
 

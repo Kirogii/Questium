@@ -1,13 +1,12 @@
-First Quest alpha of VR Tachiyomi, version 1.0.0.
+# VR Tachiyomi v1.0.1
 
-- Frosted VR library, source search with real covers, book previews and chapter selection.
-- Passthrough with a darkened background and a smaller, resizable HUD.
-- Physical books with bending pages, slow and fast hand swipes, fingertip long-page scrolling, fist grabbing and corner resizing.
-- Quest keyboard integration, native hand/controller models, recentering and workspace distance gestures.
-- Source language selection, English enabled by default, and extension installation from VR.
-- Manual-only recentering, fist dragging for the main HUD and popups, and topmost popup controls with Close buttons.
-- All upstream commits through Houri v1.23.9, including extension-management and long-page memory fixes.
+**Alpha testing disclaimer:** Most features are added, but the application is still in alpha testing. Expect bugs and unfinished behavior. This is published as a regular GitHub release so it is easy to find; that does not mean the app is production-ready.
 
-Install the arm64 APK on Quest 3 / 3S. This alpha uses the no-MTL development variant; novel support is not included. Live headset acceptance of the newest hand gestures remains pending.
+- Includes the local Quest interface and interaction fixes: frosted library and settings, native keyboard input handling, fingertip taps, centered draggable popups, chopping page turns, and the palm-facing non-dominant-hand seeker.
+- AI upscaling now runs in the spatial two-page book and long-page reader. Enable it globally in Upscaling settings, download the models, select Native mode, and enable **Upscale Manga** in each book's options. Simple mode performs ordinary resizing rather than AI inference.
+- The Quest build includes ONNX CPU inference with NNAPI acceleration when supported. Unavailable accelerators or failed inference fall back safely; Vulkan/NCNN and translation are not included in this APK.
+- Corrects the external-data filenames used by Real-CUGAN and Real-ESRGAN ONNX models, preserving previously downloaded weights.
+- Reader color controls, border cropping, page scaling, scroll aspect/padding, page transitions, preloading, and keep-screen-on now reach the VR reader. Settings for the Android-only viewers are labeled and disabled in the spatial settings hub. See [reader settings support](https://github.com/Kirogii/VR-Tachiyomi/blob/master/docs/VR_READER_SETTINGS.md) for scope.
+- Merges the original Houri fork through v1.23.12, including cover updates, extension handling, and long-page/graphics memory fixes.
 
-The release APK uses a dedicated signing key. Existing locally debug-signed installations require a backup and uninstall before installing this signed alpha. Subsequent alpha builds keep the same signing key.
+Install **VR-Tachiyomi-alpha.apk** on Quest 3 / 3S. This development-flavor APK retains the existing application ID and signing key, allowing an update over the previous signed alpha without clearing its library. Novel support is deferred. Natural hand feel and every native-keyboard interaction still need continued headset testing.

@@ -757,6 +757,7 @@
     <string name="vr_repository_adding">Adding repository…</string>
     <string name="vr_repository_added">Repository added.</string>
     <string name="vr_repository_failed">Unable to add repository.</string>
+    <string name="vr_android_reader_only">Android reader setting. The spatial reader uses book gestures and Book Options instead.</string>
     <string name="ext_watchdog_enabled">Extension error popups</string>
     <string name="ext_watchdog_enabled_summary">Show a popup when an extension breaks, so you know which source to blame. Broken extensions are always listed on the extensions page either way.</string>
     <string name="ext_error_text_enabled">Extension error details</string>

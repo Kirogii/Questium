@@ -28,6 +28,7 @@ permissions:
 
 jobs:
   check-version:
+    if: github.repository == 'PineappleTwilight/houri'
     name: Check version
     runs-on: 'ubuntu-24.04'
     environment: Primary

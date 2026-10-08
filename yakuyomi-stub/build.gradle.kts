@@ -9,6 +9,7 @@ android {
 }
 
 dependencies {
+    api(projects.upscaleRuntime)
     api(projects.core.common)
     implementation(libs.metro.runtime)
     implementation(projects.core.metro)

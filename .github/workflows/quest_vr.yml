@@ -3,8 +3,8 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: [master, main, 'feature/**']
-    tags: [v1.0.0]
+    branches: [master, main, 'feature/**', 'release/**']
+    tags: ['v1.0.*']
 permissions:
   contents: read
 concurrency:
@@ -39,9 +39,11 @@ jobs:
         run: ./gradlew spotlessCheck
       - name: Verify vector resource limits
         run: python3 .github/scripts/check_vector_paths.py
+      - name: Verify reader image processing
+        run: ./gradlew :app:testNomtlDebugUnitTest --tests 'eu.kanade.tachiyomi.ui.vr.VrBorderBoundsTest' --tests 'tachiyomi.core.common.util.system.TallPageSplitterTest' -Pandroid.injected.build.abi=arm64-v8a
       - name: Build standalone Quest APK
         env:
-          VR_RELEASE_VERSION: v1.0.0
+          VR_RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.1' }}
         run: ./gradlew :app:stageNomtlDebugQuestApk -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
       - name: Stage Quest APK
         run: |
@@ -59,6 +61,7 @@ jobs:
                   print(apk, sorted(abis))
                   if abis == {'arm64-v8a'} and 'assets/vr.pck' in names:
                       assert 'lib/arm64-v8a/libopenxr_loader.so' in names, 'Quest APK is missing the OpenXR loader'
+                      assert 'lib/arm64-v8a/libonnxruntime.so' in names, 'Quest APK is missing the real AI upscaling runtime'
                       candidates.append(apk)
           assert len(candidates) == 1, f'Expected one Quest APK, found {candidates}'
           Path('quest-apk').mkdir(exist_ok=True)
@@ -102,7 +105,7 @@ jobs:
           path: quest-apk/*
           if-no-files-found: error
   release:
-    if: github.ref == 'refs/tags/v1.0.0'
+    if: startsWith(github.ref, 'refs/tags/v1.0.')
     needs: build
     runs-on: ubuntu-24.04
     permissions:
@@ -113,13 +116,14 @@ jobs:
         with:
           name: Quest-VR-APK
           path: quest-apk
-      - name: Publish alpha
+      - name: Publish Quest release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if gh release view v1.0.0 >/dev/null 2>&1; then
-            gh release upload v1.0.0 quest-apk/* --clobber
-            gh release edit v1.0.0 --title alpha --prerelease --draft=false
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" quest-apk/* --clobber
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --prerelease=false --draft=false --latest --notes-file .github/alpha-release.md
           else
-            gh release create v1.0.0 quest-apk/* --verify-tag --title alpha --prerelease --notes-file .github/alpha-release.md
+            gh release create "$RELEASE_TAG" quest-apk/* --verify-tag --title "$RELEASE_TAG" --latest --notes-file .github/alpha-release.md
           fi

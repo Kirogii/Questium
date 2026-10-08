@@ -291,7 +291,7 @@ object SettingsMainScreen : Screen() {
             subtitleRes = KMR.strings.pref_upscale_enabled_summary,
             icon = Icons.Outlined.AutoFixHigh,
             screen = SettingsUpscalerScreen,
-            mtlOnly = true,
+            mtlOnly = false,
         ),
         Item(
             titleRes = KMR.strings.label_achievements,

@@ -232,6 +232,14 @@ func show_book() -> void:
             show_book.call_deferred()
         )
     label(content, "Options")
+    var upscale := CheckButton.new()
+    upscale.text = reader._label("Upscale Manga")
+    upscale.button_pressed = reader.book.upscale_enabled
+    content.add_child(upscale)
+    upscale.toggled.connect(func(enabled: bool):
+        reader.book.upscale_enabled = enabled
+        reader._request("upscale_book", {"token": reader.book.token, "enabled": enabled})
+    )
     line(content)
     var adjustments := HBoxContainer.new()
     content.add_child(adjustments)

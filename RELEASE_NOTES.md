@@ -9,6 +9,9 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Quest v1.0.1: add real ONNX AI upscaling to both the spatial book and long-page strips, including a per-book Upscale Manga toggle and live page refresh when processing settings change.
+- Make spatial reader crop, scale, contrast, scroll aspect/padding, page transitions, page numbers, preloading and keep-screen-on consume shared settings; label Android-only reader options explicitly.
+- Publish v1.0.1 through the signed Quest workflow as a regular release with an alpha-testing disclaimer. Most features are added, but continued headset testing is required.
 - Add a frosted VR settings hub with the app's shared settings categories, native Quest text entry, and live reader tint, hue, grayscale, inversion and brightness controls.
 - Add extension repositories directly from the VR Sources section, using the Quest keyboard and showing configured repositories.
 - Rebrand the app as Questium with a single Touch controller logo.

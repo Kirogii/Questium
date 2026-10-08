@@ -4,14 +4,12 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.tachiyomi.BuildConfig
-import exh.yakuyomi.TranslationPreferences
 import tachiyomi.core.common.preference.PreferenceStore
 
 @SingleIn(AppScope::class)
 @Inject
 class UpscalePreferences(
     private val preferenceStore: PreferenceStore,
-    private val translationPreferences: TranslationPreferences,
     private val upscaleMangaStore: UpscaleMangaStore,
 ) {
     enum class Preset { FAST, BALANCED, HIGH }
@@ -74,12 +72,10 @@ class UpscalePreferences(
     fun simpleAlgo() = preferenceStore.getString(KEY_SIMPLE_ALGO, SimpleAlgo.BICUBIC.name)
     fun mode() = preferenceStore.getString(KEY_MODE, if (BuildConfig.IS_NOMTL) Mode.SIMPLE.name else Mode.NATIVE.name)
 
-    fun isMtlEnabled(): Boolean = !BuildConfig.IS_NOMTL && translationPreferences.enabled().get()
-    fun isSimpleMode(): Boolean = BuildConfig.IS_NOMTL || effectiveMode() == Mode.SIMPLE
+    fun isSimpleMode(): Boolean = effectiveMode() == Mode.SIMPLE
 
     fun isGloballyEnabled(): Boolean {
         if (!enabled().get()) return false
-        if (!isSimpleMode() && !isMtlEnabled()) return false
         return true
     }
 

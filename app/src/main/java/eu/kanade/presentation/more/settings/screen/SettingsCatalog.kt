@@ -31,7 +31,6 @@ object SettingsCatalog {
         SettingsYakuyomiModelsScreen,
         SettingsYakuyomiBehaviorScreen,
         SettingsYakuyomiPromptScreen,
-        SettingsUpscalerScreen,
     )
 
     val searchableScreens: List<SearchableSettings> = listOfNotNull(

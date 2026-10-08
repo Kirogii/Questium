@@ -50,7 +50,11 @@ android {
         buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
         buildConfigField("boolean", "IS_NOMTL", "false")
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = if (providers.gradleProperty("vrUpscaleInstrumentation").isPresent) {
+            "eu.kanade.tachiyomi.ui.vr.VrUpscaleInstrumentation"
+        } else {
+            "androidx.test.runner.AndroidJUnitRunner"
+        }
     }
 
     // KMK --> MTL / no-MTL APK split. "mtl" is the default flavor (keeps existing variant

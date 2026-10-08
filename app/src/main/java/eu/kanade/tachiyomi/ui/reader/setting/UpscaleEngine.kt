@@ -8,7 +8,6 @@ import dev.zacsweers.metro.SingleIn
 import exh.yakuyomi.NativeUpscaleSession
 import exh.yakuyomi.NativeUpscaler
 import exh.yakuyomi.OrtUpscaleSession
-import exh.yakuyomi.TranslationPreferences
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +28,6 @@ import tachiyomi.domain.achievement.service.RotatingAchievementPool
 class UpscaleEngine(
     private val context: android.content.Context,
     private val prefs: UpscalePreferences,
-    private val translationPreferences: TranslationPreferences,
     private val modelManager: UpscaleModelManager,
     private val achievementManager: AchievementManager,
     private val achievementPrefs: AchievementPreferences,
@@ -166,7 +164,6 @@ class UpscaleEngine(
             return@withContext result
         }
 
-        if (!translationPreferences.enabled().get()) return@withContext null
         val preset = prefs.effectivePreset()
         val candidates = resolveCandidates(prefs.effectiveModel().name, factor, prefs.effectiveBackend())
         if (candidates.isEmpty()) return@withContext null

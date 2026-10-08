@@ -134,6 +134,15 @@ class UpscaleModelManager(
 
     init {
         models = loadManifest()
+        // Preserve previously downloaded weights when correcting ONNX's embedded file names.
+        mapOf(
+            "realcugan-2x.onnx.data" to "realcugan-2x-denoise2x.onnx.data",
+            "realesrgan-4x.onnx.data" to "realesrgan-anime-fast.onnx.data",
+        ).forEach { (oldName, newName) ->
+            val old = File(modelsDir, oldName)
+            val replacement = File(modelsDir, newName)
+            if (old.isFile && !replacement.exists()) old.renameTo(replacement)
+        }
         refresh()
         verifyInstalledThrottled()
     }

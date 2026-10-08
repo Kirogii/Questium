@@ -10,7 +10,7 @@ import android.os.Build
 import java.nio.FloatBuffer
 import java.util.EnumSet
 
-/** ONNX Runtime session used by the NNAPI upscaler path. */
+/** Shared ONNX Runtime session for CPU and NNAPI upscaling, independent of translation. */
 class OrtUpscaleSession private constructor(
     private val environment: OrtEnvironment,
     private val modelPath: String,
@@ -79,8 +79,11 @@ class OrtUpscaleSession private constructor(
             val input = IntArray(source.width * source.height)
             source.getPixels(input, 0, source.width, 0, 0, source.width, source.height)
             val output = IntArray(targetWidth * targetHeight)
-            val safeTile = config.tileSize.coerceIn(32, 512)
             val safePadding = config.padding.coerceIn(0, 64)
+            val inputShape = (session.inputInfo[inputName]?.info as? TensorInfo)?.shape
+            val fixedWidth = inputShape?.getOrNull(3)?.takeIf { it in 1..1024 }?.toInt()
+            val fixedHeight = inputShape?.getOrNull(2)?.takeIf { it in 1..1024 }?.toInt()
+            val safeTile = minOf(config.tileSize.coerceIn(32, 512), fixedWidth?.minus(2 * safePadding) ?: 512, fixedHeight?.minus(2 * safePadding) ?: 512).coerceAtLeast(1)
             val scale = config.nativeScale.coerceIn(1, 4)
 
             for (y0 in 0 until source.height step safeTile) {
@@ -94,8 +97,8 @@ class OrtUpscaleSession private constructor(
                     // reflect-pad node, so a border tile fed a padded input still emits only
                     // core * scale; the origin arithmetic below would then crop padding * scale
                     // of real pixels off it and leave the page's right/bottom edge transparent.
-                    val tilePadding = if (lastRow || lastColumn) 0 else safePadding
-                    val tensor = createInputTensor(source, input, x0, y0, coreWidth, coreHeight, tilePadding)
+                    val tilePadding = if (fixedWidth != null || fixedHeight != null || !(lastRow || lastColumn)) safePadding else 0
+                    val tensor = createInputTensor(source, input, x0, y0, coreWidth, coreHeight, tilePadding, fixedWidth, fixedHeight)
                     tensor.use {
                         session.run(mapOf(inputName to it)).use { result ->
                             val value = (result.get(outputName).orElse(null) ?: result.get(0)) as? OnnxTensor ?: return null
@@ -111,11 +114,13 @@ class OrtUpscaleSession private constructor(
                             val paddedOutputWidth = (coreWidth + tilePadding * 2) * scale
                             val paddedOutputHeight = (coreHeight + tilePadding * 2) * scale
                             val sourceX = when {
+                                fixedWidth != null && tileOutputWidth == (fixedWidth - 2 * tilePadding) * scale -> 0
                                 tileOutputWidth >= paddedOutputWidth -> tilePadding * scale
                                 tileOutputWidth >= coreOutputWidth -> (tileOutputWidth - coreOutputWidth) / 2
                                 else -> 0
                             }
                             val sourceY = when {
+                                fixedHeight != null && tileOutputHeight == (fixedHeight - 2 * tilePadding) * scale -> 0
                                 tileOutputHeight >= paddedOutputHeight -> tilePadding * scale
                                 tileOutputHeight >= coreOutputHeight -> (tileOutputHeight - coreOutputHeight) / 2
                                 else -> 0
@@ -158,9 +163,11 @@ class OrtUpscaleSession private constructor(
         coreWidth: Int,
         coreHeight: Int,
         padding: Int,
+        fixedWidth: Int? = null,
+        fixedHeight: Int? = null,
     ): OnnxTensor {
-        val tileWidth = coreWidth + padding * 2
-        val tileHeight = coreHeight + padding * 2
+        val tileWidth = fixedWidth ?: (coreWidth + padding * 2)
+        val tileHeight = fixedHeight ?: (coreHeight + padding * 2)
         val values = FloatArray(3 * tileWidth * tileHeight)
         val area = tileWidth * tileHeight
         for (y in 0 until tileHeight) {
@@ -238,7 +245,7 @@ class OrtUpscaleSession private constructor(
         fun isRuntimeAvailable(): Boolean = runCatching {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 OrtEnvironment.getAvailableProviders().any {
-                    it.name.equals("NnapiExecutionProvider", ignoreCase = true)
+                    it.name.equals("NNAPI", ignoreCase = true) || it.name.equals("NnapiExecutionProvider", ignoreCase = true)
                 }
         }.getOrDefault(false)
 

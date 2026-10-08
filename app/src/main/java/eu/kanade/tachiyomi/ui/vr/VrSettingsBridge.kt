@@ -54,6 +54,7 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
     private var navigator: Navigator? = null
     private var revision by mutableIntStateOf(0)
     private val controls = mutableMapOf<String, Preference.PreferenceItem<*, *>>()
+    private val androidOnlyControls = mutableSetOf<String>()
     private var lastSnapshot = ""
     private var detailSnapshot = ""
     private var inspector: Job? = null
@@ -78,6 +79,7 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                     return@withContext
                 }
                 val item = controls[request.getString("id")] ?: return@withContext
+                if (request.getString("id") in androidOnlyControls) return@withContext
                 if (!item.enabled) return@withContext
                 change(item, request)
                 revision++
@@ -152,10 +154,10 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                                     if (item is Preference.PreferenceGroup) {
                                         rows.put(JSONObject().put("type", "group").put("title", item.title))
                                         item.preferenceItems.forEachIndexed { child, preference ->
-                                            export(preference, "${screen.key}/$index/$child/${preference.title}", rows, bindings)
+                                            export(preference, "${screen.key}/$index/$child/${preference.title}", rows, bindings, screen === eu.kanade.presentation.more.settings.screen.SettingsReaderScreen)
                                         }
                                     } else if (item is Preference.PreferenceItem<*, *>) {
-                                        export(item, "${screen.key}/$index/${item.title}", rows, bindings)
+                                        export(item, "${screen.key}/$index/${item.title}", rows, bindings, screen === eu.kanade.presentation.more.settings.screen.SettingsReaderScreen)
                                     }
                                 }
                                 if (screen === eu.kanade.presentation.more.settings.screen.SettingsReaderScreen) addFilters(rows)
@@ -288,10 +290,34 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
         id: String,
         rows: JSONArray,
         bindings: MutableMap<String, Preference.PreferenceItem<*, *>>,
+        readerScreen: Boolean = false,
     ) {
         val row = JSONObject().put("id", id).put("title", if (item is Preference.PreferenceItem.TrackerPreference) item.tracker.name else item.title)
             .put("subtitle", item.subtitle?.toString().orEmpty()).put("enabled", item.isInteractive())
         bindings[id] = item
+        if (readerScreen) {
+            val key = when (item) {
+                is Preference.PreferenceItem.SwitchPreference -> item.preference.key()
+                is Preference.PreferenceItem.ListPreference<*> -> item.preference.key()
+                else -> null
+            }
+            val spatialKeys = setOf(
+                "pref_keep_screen_on_key", "pref_default_reading_mode_key", "pref_reader_theme_key",
+                "pref_image_scale_type_key", "crop_borders", "crop_borders_webtoon", "crop_borders_continues_vertical",
+                "pref_enable_transitions_pager_key", "skip_read", "skip_filtered", "skip_dupe",
+                "pref_show_page_number_key", "pref_webtoon_scale_type_key", "eh_preload_size",
+            )
+            val spatialSlider = item is Preference.PreferenceItem.SliderPreference && item.title in setOf(
+                tachiyomi.i18n.MR.strings.pref_webtoon_side_padding.getString(host),
+                KMR.strings.pref_webgpu_contrast.getString(host),
+            )
+            if (item !is Preference.PreferenceItem.InfoPreference && key !in spatialKeys && !spatialSlider) {
+                row.put("enabled", false).put("subtitle", KMR.strings.vr_android_reader_only.getString(host))
+                androidOnlyControls.add(id)
+            } else {
+                androidOnlyControls.remove(id)
+            }
+        }
         when (item) {
             is Preference.PreferenceItem.SwitchPreference -> row.put("type", "switch").put("value", item.preference.get())
             is Preference.PreferenceItem.SliderPreference -> row.put("type", "slider").put("value", item.value)
@@ -398,8 +424,25 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                 .put("tint", prefs.colorFilterValue().get()).put("grayscale", prefs.grayscale().get())
                 .put("inverted", prefs.invertedColors().get())
                 .put("hue", host.appGraph.preferenceStore.getInt("vr_reader_hue", 0).get())
-                .put("brightness", if (prefs.customBrightness().get()) prefs.customBrightnessValue().get() else 0),
+                .put("brightness", if (prefs.customBrightness().get()) prefs.customBrightnessValue().get() else 0)
+                .put("contrast", prefs.webgpuContrast().get())
+                .put("preload", prefs.preloadSize().get().coerceIn(2, 10))
+                .put("side_padding", prefs.webtoonSidePadding().get())
+                .put("scroll_ratio", prefs.webtoonScaleType().get().ratio)
+                .put("page_numbers", prefs.showPageNumber().get())
+                .put("page_transitions", prefs.pageTransitionsPager().get())
+                .put("scale_type", prefs.imageScaleType().get())
+                .put("theme", prefs.readerTheme().get())
+                .put("crop_pager", prefs.cropBorders().get())
+                .put("crop_scroll", prefs.cropBordersWebtoon().get() || prefs.cropBordersContinuousVertical().get()),
         )
+        host.runOnUiThread {
+            if (prefs.keepScreenOn().get()) {
+                host.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                host.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
     }
 
     fun close() {

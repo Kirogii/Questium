@@ -51,8 +51,21 @@ var cover_face: MeshInstance3D
 var scroll_window: Node3D
 var scroll_screen: MeshInstance3D
 var scroll_slots: Array[MeshInstance3D] = []
+var preload_pages := 4
+var page_transitions := true
+var crop_pager := false
+var crop_scroll := false
+var crop_bounds: Dictionary = {}
+var scroll_content_width := 0.70
 
 func apply_reader_filters(data: Dictionary) -> void:
+    preload_pages = clampi(int(data.get("preload", 4)), 2, 10)
+    page_transitions = bool(data.get("page_transitions", true))
+    crop_pager = bool(data.get("crop_pager", false))
+    crop_scroll = bool(data.get("crop_scroll", false))
+    var ratio := float(data.get("scroll_ratio", 0))
+    var content_width := minf(0.70, ratio) if ratio > 0 else 0.70
+    scroll_content_width = content_width * (1 - 2 * clampf(float(data.get("side_padding", 0)) / 100, 0, 0.4))
     var tint := Color.hex(int(data.get("tint", 0)) & 0xffffffff)
     # Android packs ARGB; Color.hex expects RGBA.
     var packed := int(data.get("tint", 0))
@@ -67,12 +80,20 @@ func apply_reader_filters(data: Dictionary) -> void:
         material.set_shader_parameter("reader_grayscale", bool(data.get("grayscale", false)))
         material.set_shader_parameter("reader_inverted", bool(data.get("inverted", false)))
         material.set_shader_parameter("reader_brightness", 1.0 + float(data.get("brightness", 0)) / 100)
+        material.set_shader_parameter("reader_contrast", float(data.get("contrast", 100)) / 100)
         material.set_shader_parameter("reader_blend", int(data.get("mode", 0)))
+    for surface in [left_leaf, right_leaf, turning_leaf]:
+        surface.material_override.set_shader_parameter("scale_type", int(data.get("scale_type", 1)))
+        surface.material_override.set_shader_parameter("paper_color", Color.WHITE if int(data.get("theme", 1)) == 0 else Color(0.04, 0.04, 0.04))
+    for slot in scroll_slots:
+        slot.material_override.set_shader_parameter("side_padding", (1 - scroll_content_width / 0.70) / 2)
+    _refresh()
 var source_sizes: Dictionary = {}
 var strips: Dictionary = {}
 var strip_textures: Dictionary = {}
 var token := ""
 var chapter_title := ""
+var upscale_enabled := false
 var pending_page := -1
 
 func _ready() -> void:
@@ -225,6 +246,7 @@ func set_chapter(count: int, start: int = 0, right_to_left: bool = false) -> voi
     textures.clear()
     cover_texture = artwork
     source_sizes.clear()
+    crop_bounds.clear()
     strips.clear()
     strip_textures.clear()
     scroll_offset = 0.0
@@ -253,7 +275,7 @@ func prepare_seek(index: int) -> void:
 func _trim_textures() -> void:
     # Keep the current window and a pending seek until both destination pages load.
     for key in textures.keys():
-        if absi(int(key) - first_page) > 5 and (requested_spread < 0 or absi(int(key) - requested_spread) > 5):
+        if absi(int(key) - first_page) > preload_pages + 1 and (requested_spread < 0 or absi(int(key) - requested_spread) > preload_pages + 1):
             textures.erase(key)
 
 func _texture(index: int) -> Texture2D:
@@ -262,6 +284,13 @@ func _texture(index: int) -> Texture2D:
 func _paint(leaf: MeshInstance3D, index: int) -> void:
     leaf.material_override.set_shader_parameter("front_image", _texture(index))
     leaf.material_override.set_shader_parameter("back_image", _texture(index))
+    leaf.material_override.set_shader_parameter("front_crop", _crop(index, crop_pager))
+    leaf.material_override.set_shader_parameter("back_crop", _crop(index, crop_pager))
+    leaf.material_override.set_shader_parameter("front_source", Vector2(source_sizes.get(index, Vector2i(1024, 1463))))
+    leaf.material_override.set_shader_parameter("back_source", Vector2(source_sizes.get(index, Vector2i(1024, 1463))))
+
+func _crop(index: int, enabled: bool) -> Vector4:
+    return crop_bounds.get(index, Vector4(0, 0, 1, 1)) if enabled else Vector4(0, 0, 1, 1)
 
 func _refresh() -> void:
     close_marker.visible = not preview_only
@@ -302,6 +331,10 @@ func _refresh() -> void:
         var back := first_page + (2 if turn_direction > 0 else -1)
         turning_material.set_shader_parameter("front_image", _texture(front))
         turning_material.set_shader_parameter("back_image", _texture(back))
+        turning_material.set_shader_parameter("front_crop", _crop(front, crop_pager))
+        turning_material.set_shader_parameter("back_crop", _crop(back, crop_pager))
+        turning_material.set_shader_parameter("front_source", Vector2(source_sizes.get(front, Vector2i(1024, 1463))))
+        turning_material.set_shader_parameter("back_source", Vector2(source_sizes.get(back, Vector2i(1024, 1463))))
         _paint(left_leaf if turn_side < 0 else right_leaf, first_page + (3 if turn_direction > 0 else -2))
 
 func can_turn(direction: int) -> bool:
@@ -364,7 +397,7 @@ func _settle(commit: bool) -> void:
     settling = create_tween()
     settling.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
     var target := 1.0 if commit else 0.0
-    settling.tween_method(set_turn_progress, turn_progress, target, 0.08 + 0.20 * absf(target - turn_progress))
+    settling.tween_method(set_turn_progress, turn_progress, target, (0.08 + 0.20 * absf(target - turn_progress)) if page_transitions else 0.001)
     settling.tween_callback(func():
         if commit:
             first_page += 2 * turn_direction
@@ -451,7 +484,8 @@ func scroll_by(distance: float) -> int:
 
 func _page_height(index: int) -> float:
     var size: Vector2i = source_sizes.get(index, Vector2i(7, 10))
-    return maxf(0.01, 0.70 * float(size.y) / maxf(size.x, 1))
+    var crop := _crop(index, crop_scroll)
+    return maxf(0.01, scroll_content_width * float(size.y) * crop.w / maxf(size.x * crop.z, 1))
 
 func _scroll_limit(index: int) -> float:
     return _page_height(index) if index + 1 < page_count and textures.has(index + 1) else maxf(0, _page_height(index) - 1.0)
@@ -508,6 +542,7 @@ func _refresh_scroll_pages() -> void:
         material.set_shader_parameter("page_top", page_top)
         material.set_shader_parameter("page_height", height)
         material.set_shader_parameter("page_image", _texture(index))
+        material.set_shader_parameter("page_crop", _crop(index, crop_scroll))
         _refresh_strips(material, index, maxf(0, -page_top), active_paths)
         page_top += height
         index += 1
@@ -524,7 +559,8 @@ func _refresh_strips(material: ShaderMaterial, index: int, visible_offset: float
         material.set_shader_parameter("next_fraction", 1.0)
         return
     var size: Vector2i = source_sizes.get(index, Vector2i(1, 1))
-    var top_pixel := visible_offset / 0.70 * size.x
+    var crop := _crop(index, crop_scroll)
+    var top_pixel := visible_offset / scroll_content_width * size.x * crop.z + crop.y * size.y
     var segment := 0
     for i in range(entries.size()):
         if top_pixel >= float(entries[i].top):

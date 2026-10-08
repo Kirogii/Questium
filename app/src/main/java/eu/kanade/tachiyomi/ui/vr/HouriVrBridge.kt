@@ -27,6 +27,7 @@ import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+import eu.kanade.tachiyomi.ui.reader.setting.UpscaleReaderHook
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -64,8 +65,24 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     private var keyboardDialog: Dialog? = null
     private var keyboardField: String? = null
     private val settings by lazy { VrSettingsBridge(host, ::send) }
+    private var lastRenderRevision = ""
+
+    private fun renderRevision(): String = graph.preferenceStore.getAll().filterKeys {
+        it.startsWith("pref_upscale_") || it.startsWith("crop_borders")
+    }.toSortedMap().toString().plus(
+        readers.entries.sortedBy { it.key }.joinToString {
+            "${it.key}:${it.value.manga?.id?.let(graph.upscalePreferences::isMangaToggleEnabled)}"
+        },
+    ).plus(graph.upscaleModelManager.status.value.readyModelIds.sorted()).hashCode().toString()
 
     init {
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_upscale_probe", false)) {
+            host.lifecycleScope.launch(Dispatchers.Default) {
+                runCatching { VrUpscaleProbe.run(host) }.onFailure {
+                    android.util.Log.e("VRUpscale", "FAIL: AI inference probe", it)
+                }
+            }
+        }
         // Debug-only, read-only headset smoke check for the shared settings categories.
         if (eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_settings_probe", false)) {
             host.lifecycleScope.launch {
@@ -241,6 +258,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             "Interact" to KMR.strings.vr_controls_interact,
             "Grab" to KMR.strings.vr_controls_grab,
             "Book Options" to KMR.strings.vr_controls_book_options,
+            "Upscale Manga" to KMR.strings.pref_upscale_manga,
             "Switch hands" to KMR.strings.vr_controls_switch_hands,
             "None" to KMR.strings.vr_controls_none,
             "Options" to KMR.strings.vr_controls_options,
@@ -306,6 +324,11 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
 
     private suspend fun handleRequest(request: JSONObject) {
         when (request.getString("action")) {
+            "upscale_book" -> {
+                val mangaId = readers[request.getString("token")]?.manga?.id ?: return
+                graph.upscalePreferences.setMangaToggleEnabled(mangaId, request.getBoolean("enabled"))
+                settings.publishFilters()
+            }
             "reader_filters" -> settings.publishFilters()
             "settings", "setting", "settings_back", "settings_dismiss", "settings_detail", "settings_semantic" -> settings.request(request)
             "sources" -> sources()
@@ -362,6 +385,17 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     }
 
     private fun send(data: JSONObject) {
+        if (data.optString("kind") == "reader_filters") {
+            val revision = renderRevision()
+            if (revision != lastRenderRevision) {
+                lastRenderRevision = revision
+                val books = JSONObject()
+                readers.forEach { (key, model) ->
+                    books.put(key, model.manga?.id?.let(graph.upscalePreferences::isMangaToggleEnabled) ?: false)
+                }
+                emitSignal("response", JSONObject().put("kind", "reader_render").put("revision", revision).put("books", books).toString())
+            }
+        }
         if (eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_settings_probe", false) && data.optString("kind") == "settings") {
             android.util.Log.i("VRSettings", "Category ${data.optInt("category")}: ${data.optJSONArray("items")?.length()} controls")
         }
@@ -522,14 +556,19 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 .put("replaces", replaces)
                 .put("title", "${model.manga?.title} · ${chapter.chapter.name}"),
         )
+        settings.publishFilters()
     }
 
     private suspend fun page(requestToken: String, index: Int) {
-        val chapter = readers[requestToken]?.state?.value?.currentChapter ?: return
+        val model = readers[requestToken] ?: return
+        val chapter = model.state.value.currentChapter ?: return
         val pages = chapter.pages ?: return
         val page = pages.getOrNull(index) ?: return
         val loader = chapter.pageLoader ?: return
-        val key = "$requestToken-$index"
+        val revision = renderRevision()
+        val mangaId = model.manga?.id
+        val upscale = UpscaleReaderHook.isUpscaleActive(mangaId)
+        val key = "$requestToken-$index-$revision"
         if (pageJobs.containsKey(key)) return
         coroutineScope {
             val job = launch(start = CoroutineStart.LAZY) {
@@ -537,6 +576,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 val dimensions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 val metadata = File(session, "$key.json")
                 var strips = JSONArray()
+                var cropBounds = JSONArray(listOf(0f, 0f, 1f, 1f))
                 if (!file.isFile) {
                     val load = launch { loader.loadPage(page) }
                     try {
@@ -547,6 +587,21 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                         stream().use { BitmapFactory.decodeStream(it, null, bounds) }
                         dimensions.outWidth = bounds.outWidth
                         dimensions.outHeight = bounds.outHeight
+                        val prefs = graph.readerPreferences
+                        if (prefs.cropBorders().get() || prefs.cropBordersWebtoon().get() || prefs.cropBordersContinuousVertical().get()) {
+                            var thumbSample = 1
+                            while (maxOf(bounds.outWidth, bounds.outHeight) / thumbSample > 512) thumbSample *= 2
+                            val thumb = stream().use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = thumbSample }) }
+                            if (thumb != null) {
+                                try {
+                                    val pixels = IntArray(thumb.width * thumb.height)
+                                    thumb.getPixels(pixels, 0, thumb.width, 0, 0, thumb.width, thumb.height)
+                                    cropBounds = JSONArray(VrBorderBounds.find(thumb.width, thumb.height, pixels).toList())
+                                } finally {
+                                    thumb.recycle()
+                                }
+                            }
+                        }
                         if (bounds.outHeight.toFloat() / bounds.outWidth.coerceAtLeast(1) > 2.2f) {
                             // Decode width-preserving strips instead of shrinking a tall
                             // chapter to fit one GPU texture and destroying legibility.
@@ -555,15 +610,18 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                                     ?: error("Unable to decode tall page")
                                 try {
                                     var stripSample = 1
-                                    while (bounds.outWidth / stripSample > 1440) stripSample *= 2
-                                    val stripHeight = 3072 * stripSample
+                                    while (bounds.outWidth / stripSample > if (upscale) 1024 else 1440) stripSample *= 2
+                                    val stripHeight = (if (upscale) 960 else 3072) * stripSample
                                     for (top in 0 until bounds.outHeight step stripHeight) {
                                         val bottom = (top + stripHeight).coerceAtMost(bounds.outHeight)
+                                        // Overlap inference at strip boundaries, then discard the padding.
+                                        val regionTop = (top - 32 * stripSample).coerceAtLeast(0)
+                                        val regionBottom = (bottom + 32 * stripSample).coerceAtMost(bounds.outHeight)
                                         val stripFile = File(session, "$key-strip-$top.png")
-                                        val strip = decoder.decodeRegion(Rect(0, top, bounds.outWidth, bottom), BitmapFactory.Options().apply { inSampleSize = stripSample })
+                                        val strip = decoder.decodeRegion(Rect(0, regionTop, bounds.outWidth, regionBottom), BitmapFactory.Options().apply { inSampleSize = stripSample })
                                             ?: error("Unable to decode page strip")
                                         try {
-                                            stripFile.outputStream().use { check(strip.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+                                            VrPageUpscaler.write(strip, mangaId, stripFile, (top - regionTop) / stripSample, (regionBottom - bottom) / stripSample)
                                         } finally {
                                             strip.recycle()
                                         }
@@ -575,31 +633,34 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                             }
                         }
                         var sample = 1
-                        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 4096) sample *= 2
+                        val factor = graph.upscalePreferences.upscaleFactor().get().takeIf { it.isFinite() }?.coerceIn(1f, 4f) ?: 2f
+                        val textureLimit = if (upscale) (4096 / factor).toInt() else 4096
+                        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > textureLimit) sample *= 2
                         val options = BitmapFactory.Options().apply { inSampleSize = sample }
                         val bitmap = stream().use { BitmapFactory.decodeStream(it, null, options) } ?: error("Unsupported page image")
                         try {
-                            file.outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+                            VrPageUpscaler.write(bitmap, mangaId, file)
                         } finally {
                             bitmap.recycle()
                         }
                     } finally {
                         load.cancelAndJoin()
                     }
-                    metadata.writeText(JSONObject().put("width", dimensions.outWidth).put("height", dimensions.outHeight).put("strips", strips).toString())
+                    metadata.writeText(JSONObject().put("width", dimensions.outWidth).put("height", dimensions.outHeight).put("strips", strips).put("crop", cropBounds).toString())
                 } else if (metadata.isFile) {
                     val saved = JSONObject(metadata.readText())
                     dimensions.outWidth = saved.getInt("width")
                     dimensions.outHeight = saved.getInt("height")
                     strips = saved.getJSONArray("strips")
+                    cropBounds = saved.optJSONArray("crop") ?: cropBounds
                 }
                 if (dimensions.outWidth <= 0) {
                     BitmapFactory.decodeFile(file.absolutePath, dimensions)
                 }
-                if (readers.containsKey(requestToken)) {
+                if (readers.containsKey(requestToken) && revision == renderRevision()) {
                     send(
                         JSONObject().put("kind", "page").put("token", requestToken).put("index", index).put("path", file.absolutePath)
-                            .put("width", dimensions.outWidth).put("height", dimensions.outHeight).put("strips", strips),
+                            .put("width", dimensions.outWidth).put("height", dimensions.outHeight).put("strips", strips).put("revision", revision).put("crop", cropBounds),
                     )
                 }
             }

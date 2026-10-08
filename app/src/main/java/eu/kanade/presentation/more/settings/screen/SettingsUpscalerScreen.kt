@@ -41,15 +41,7 @@ object SettingsUpscalerScreen : SearchableSettings {
         val simpleAlgo by prefs.simpleAlgo().collectAsState()
         val factor by prefs.upscaleFactor().collectAsState()
         val cacheEnabled by prefs.cacheEnabled().collectAsState()
-        val isNomtl = eu.kanade.tachiyomi.BuildConfig.IS_NOMTL
-        val isSimple = isNomtl || mode == "SIMPLE"
-        val isMtlEnabled = remember(enabled, isSimple) {
-            try {
-                prefs.isMtlEnabled()
-            } catch (_: Exception) {
-                false
-            }
-        }
+        val isSimple = mode == "SIMPLE"
         val effBackend = remember(backend, isSimple) {
             try {
                 engine.effectiveBackend().name
@@ -106,14 +98,7 @@ object SettingsUpscalerScreen : SearchableSettings {
                     subtitle = if (enabled) stringResource(KMR.strings.pref_upscale_enabled_summary) else stringResource(KMR.strings.pref_upscale_disabled_summary),
                 ),
             )
-            if (!isSimple && enabled && !isMtlEnabled) {
-                add(
-                    Preference.PreferenceItem.InfoPreference(
-                        title = "Native upscaling requires AI Translation to be enabled (MTL gate). Switch to Simple mode or enable Translation in Settings → Translation.",
-                    ),
-                )
-            }
-            if (!isNomtl) {
+            run {
                 add(
                     Preference.PreferenceItem.ListPreference(
                         preference = prefs.mode(),
@@ -221,13 +206,8 @@ object SettingsUpscalerScreen : SearchableSettings {
             add(
                 Preference.PreferenceItem.CustomPreference(
                     title = "Upscale models",
-                    // KMK --> native upscaler weights are only usable with the MTL engine
-                    // (nomtl builds force Simple mode, which needs no models), and loading them
-                    // alongside the ORT/ncnn runtime is exactly the allocation the RAM gate
-                    // exists for. This row was mtlOnly only, so it happily offered several hundred
-                    // MB of weights on a device that would SIGSEGV using them - and it disagreed
-                    // with the MTL models group, which has always been ramGated.
-                    mtlOnly = true,
+                    // ONNX inference is shared with the Quest/no-translation flavor.
+                    mtlOnly = false,
                     ramGated = true,
                     // KMK <--
                     content = {
@@ -273,14 +253,19 @@ object SettingsUpscalerScreen : SearchableSettings {
                     onClick = {
                         when (modelStatus.state) {
                             eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelManager.State.DOWNLOADING -> modelManager.cancelDownload()
-                            eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelManager.State.READY -> modelManager.startDownload(force = true)
-                            else -> modelManager.startDownload()
+                            eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelManager.State.READY -> modelManager.startDownload(
+                                force = true,
+                                format = if (eu.kanade.tachiyomi.BuildConfig.IS_NOMTL) eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelFormat.ONNX else null,
+                            )
+                            else -> modelManager.startDownload(
+                                format = if (eu.kanade.tachiyomi.BuildConfig.IS_NOMTL) eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelFormat.ONNX else null,
+                            )
                         }
                     },
                     enabled = enabled && !isSimple,
                     // KMK --> Gated together with the status row so the download/clear pair
                     // agrees on whether the weights are offered at all.
-                    mtlOnly = true,
+                    mtlOnly = false,
                     ramGated = true,
                     // KMK <--
                 ),
@@ -288,11 +273,11 @@ object SettingsUpscalerScreen : SearchableSettings {
             add(
                 Preference.PreferenceItem.TextPreference(
                     title = "Clear upscaler models",
-                    subtitle = "Remove downloaded ncnn upscaler weights",
+                    subtitle = "Remove downloaded upscaler weights",
                     onClick = { modelManager.clearModels() },
                     enabled = enabled && !isSimple && modelStatus.state != eu.kanade.tachiyomi.ui.reader.setting.UpscaleModelManager.State.DOWNLOADING,
                     // KMK -->
-                    mtlOnly = true,
+                    mtlOnly = false,
                     ramGated = true,
                     // KMK <--
                 ),
