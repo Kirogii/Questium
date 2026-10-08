@@ -1,4 +1,5 @@
 shader_type spatial;
+#include "res://reader_filter.gdshaderinc"
 render_mode unshaded, cull_disabled;
 
 uniform sampler2D front_image : source_color, filter_linear_mipmap;
@@ -47,4 +48,5 @@ void fragment() {
     edge *= step(0.0, image_uv.x) * step(image_uv.x, 1.0) * step(0.0, image_uv.y) * step(image_uv.y, 1.0);
     ALBEDO = mix(vec3(0.97), ink.rgb, edge * ink.a);
     ALBEDO *= 1.0 - 0.12 * exp(-UV.x * 18.0);
+    ALBEDO = reader_color(ALBEDO);
 }

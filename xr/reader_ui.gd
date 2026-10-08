@@ -80,6 +80,29 @@ func icon_button(parent: Container, icon: String, callback: Callable, size: Vect
     button.custom_minimum_size = size
     return button
 
+func labeled_icon(parent: Container, icon: String, caption: String, callback: Callable, size: Vector2 = Vector2(80, 60)) -> Button:
+    var column := VBoxContainer.new()
+    column.add_theme_constant_override("separation", 3)
+    parent.add_child(column)
+    var button := icon_button(column, icon, callback, size)
+    var text := label(column, caption, 17)
+    text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    text.modulate.a = 0
+    text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    button.mouse_entered.connect(func(): text.modulate.a = 1)
+    button.mouse_exited.connect(func(): text.modulate.a = 0)
+    button.focus_entered.connect(func(): text.modulate.a = 1)
+    button.focus_exited.connect(func(): text.modulate.a = 0)
+    button.tooltip_text = reader._label(caption)
+    button.set_meta("hover_label", text)
+    return button
+
+func set_icon_label(button: Button, caption: String) -> void:
+    button.text = ""
+    button.tooltip_text = reader._label(caption)
+    var text: Label = button.get_meta("hover_label", null)
+    if is_instance_valid(text): text.text = reader._label(caption)
+
 func build() -> void:
     var panel: Dictionary = reader._panel(reader.book, Vector2(0.34, 0.082), Vector2i(1000, 242), Vector3.ZERO)
     reader.toolbar_view = panel.viewport
@@ -89,25 +112,27 @@ func build() -> void:
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", 16)
     column.add_child(row)
-    icon_button(row, "menu", reader.toggle_library)
-    icon_button(row, "previous", func(): reader._turn(-1))
+    labeled_icon(row, "menu", "Library", reader.toggle_library)
+    labeled_icon(row, "previous", "Previous", func(): reader._turn(-1))
     var seeking := VBoxContainer.new()
     seeking.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     row.add_child(seeking)
     number = label(seeking, "1")
+    number.visible = false
     number.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     reader.seeker = page_slider(seeking)
     total = label(seeking, "0")
+    total.visible = false
     total.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-    icon_button(row, "next", func(): reader._turn(1))
-    icon_button(row, "book", toggle)
-    icon_button(row, "close", reader.close_book, Vector2(70, 70))
+    labeled_icon(row, "next", "Next", func(): reader._turn(1))
+    labeled_icon(row, "book", "Book Options", toggle)
+    labeled_icon(row, "close", "Close", reader.close_book, Vector2(70, 60))
     reader.status = label(column, "Loading library…", 16)
     reader.status.visible = false
     build_options()
 
 func build_options() -> void:
-    var panel: Dictionary = reader._panel(reader.book, Vector2(0.40, 0.72), Vector2i(800, 1440), Vector3(0, 0.49, 0.01))
+    var panel: Dictionary = reader._panel(reader.book, Vector2(0.32, 0.48), Vector2i(800, 1200), Vector3.ZERO)
     options = panel.node
     options.visible = false
     panel.background.add_theme_stylebox_override("panel", style(Color(0.40, 0.39, 0.37, 0.08), 62, true))
@@ -175,7 +200,6 @@ func show_book() -> void:
     var column := VBoxContainer.new()
     column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     pages.add_child(column)
-    label(column, "%s / %s" % [reader.book.first_page + 1, reader.book.page_count]).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     options_seeker = page_slider(column)
     options_seeker.max_value = maxi(0, reader.book.page_count - 1)
     options_seeker.value = reader.book.first_page
@@ -232,7 +256,10 @@ func show_book() -> void:
     var close_book: Button = reader._button(bottom, "Close Book", reader.close_book)
     close_book.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     close_book.custom_minimum_size.y = 65
-    var edit: Button = reader._button(bottom, "Edit Settings", show_settings)
+    var edit: Button = reader._button(bottom, "Edit Settings", func():
+        reader.workspace.settings.category = 2
+        reader.workspace.show_settings()
+    )
     edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     edit.custom_minimum_size.y = 65
 

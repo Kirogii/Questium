@@ -56,6 +56,22 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     private var reader: ReaderViewModel? = null
     private val readers = ConcurrentHashMap<String, ReaderViewModel>()
     private var keyboardInput: EditText? = null
+    private val settings by lazy { VrSettingsBridge(host, ::send) }
+
+    init {
+        // Debug-only, read-only headset smoke check for the shared settings categories.
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_settings_probe", false)) {
+            host.lifecycleScope.launch {
+                kotlinx.coroutines.delay(3000)
+                settings.request(JSONObject().put("action", "settings"))
+                eu.kanade.presentation.more.settings.screen.SettingsCatalog.searchableScreens.indices.forEach { category ->
+                    kotlinx.coroutines.delay(1000)
+                    settings.request(JSONObject().put("action", "settings").put("category", category))
+                }
+                android.util.Log.i("VRSettings", "Read-only category probe completed")
+            }
+        }
+    }
 
     @Volatile private var token = ""
 
@@ -76,7 +92,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 alpha = 0f
             }
             keyboardInput = input
-            val root = host.window.decorView as ViewGroup
+            val root = settings.keyboardRoot() ?: host.window.decorView as ViewGroup
             root.addView(input, FrameLayout.LayoutParams(1, 1))
             input.addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
@@ -104,6 +120,9 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     @UsedByGodot
     fun labels(): String = JSONObject(
         mapOf(
+            "Settings" to KMR.strings.vr_settings,
+            "Enabled" to KMR.strings.vr_setting_enabled,
+            "Open" to KMR.strings.vr_setting_open,
             "Force two pages" to KMR.strings.vr_force_spread,
             "Force long scroll" to KMR.strings.vr_force_scroll,
             "Choose Source" to KMR.strings.vr_source_choose,
@@ -235,6 +254,8 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
 
     private suspend fun handleRequest(request: JSONObject) {
         when (request.getString("action")) {
+            "reader_filters" -> settings.publishFilters()
+            "settings", "setting", "settings_back", "settings_dismiss", "settings_detail", "settings_semantic" -> settings.request(request)
             "sources" -> sources()
             "extensions" -> extensions()
             "repositories" -> repositories()
@@ -288,7 +309,12 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         }
     }
 
-    private fun send(data: JSONObject) = emitSignal("response", data.toString())
+    private fun send(data: JSONObject) {
+        if (eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_settings_probe", false) && data.optString("kind") == "settings") {
+            android.util.Log.i("VRSettings", "Category ${data.optInt("category")}: ${data.optJSONArray("items")?.length()} controls")
+        }
+        emitSignal("response", data.toString())
+    }
 
     private suspend fun repositories() {
         val items = JSONArray()
@@ -554,6 +580,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     }
 
     fun close() {
+        host.runOnUiThread { settings.close() }
         pageJobs.values.forEach { it.cancel() }
         pageJobs.clear()
         session.deleteRecursively()

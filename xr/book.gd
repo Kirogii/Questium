@@ -51,6 +51,23 @@ var cover_face: MeshInstance3D
 var scroll_window: Node3D
 var scroll_screen: MeshInstance3D
 var scroll_slots: Array[MeshInstance3D] = []
+
+func apply_reader_filters(data: Dictionary) -> void:
+    var tint := Color.hex(int(data.get("tint", 0)) & 0xffffffff)
+    # Android packs ARGB; Color.hex expects RGBA.
+    var packed := int(data.get("tint", 0))
+    tint = Color(float((packed >> 16) & 255) / 255, float((packed >> 8) & 255) / 255, float(packed & 255) / 255, float((packed >> 24) & 255) / 255)
+    if not data.get("enabled", false): tint.a = 0
+    var surfaces: Array = [left_leaf, right_leaf, turning_leaf]
+    surfaces.append_array(scroll_slots)
+    for surface in surfaces:
+        var material: ShaderMaterial = surface.material_override
+        material.set_shader_parameter("reader_tint", tint)
+        material.set_shader_parameter("reader_hue", float(data.get("hue", 0)))
+        material.set_shader_parameter("reader_grayscale", bool(data.get("grayscale", false)))
+        material.set_shader_parameter("reader_inverted", bool(data.get("inverted", false)))
+        material.set_shader_parameter("reader_brightness", 1.0 + float(data.get("brightness", 0)) / 100)
+        material.set_shader_parameter("reader_blend", int(data.get("mode", 0)))
 var source_sizes: Dictionary = {}
 var strips: Dictionary = {}
 var strip_textures: Dictionary = {}

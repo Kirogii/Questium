@@ -24,6 +24,7 @@ var hand_touch: RefCounted
 var hand_controls: RefCounted
 var room: Node3D
 var books: Array[SpatialBook] = []
+var reader_filters: Dictionary = {}
 var toolbar: Node3D
 var toolbar_forced := false
 var palm_dwell := 0.0
@@ -139,6 +140,7 @@ func _ready() -> void:
         book.visible = false
         if not android_app:
             _request("library")
+            _request("reader_filters")
     else:
         _load_desktop_pages()
         book.visible = not local_pages.is_empty()
@@ -558,6 +560,9 @@ func _response(json: String) -> void:
     if workspace and workspace.consume(data):
         return
     match data.get("kind", ""):
+        "reader_filters":
+            reader_filters = data
+            for model in books: model.apply_reader_filters(data)
         "error":
             status.visible = true
             status.text = str(data.get("message", _label("Unable to load content")))
@@ -597,6 +602,7 @@ func _response(json: String) -> void:
                 else:
                     target = BookScript.new()
                     add_child(target)
+                    target.apply_reader_filters(reader_filters)
                     books.append(target)
                     target.spread_changed.connect(func(index: int):
                         if target == book:
@@ -718,6 +724,7 @@ func _process(_delta: float) -> void:
         recenter()
         print("VR head pose ready; library centered")
     _locomotion(_delta)
+    if workspace: workspace.sync_badge()
     var palm_visible := false
     var palm_position := Vector3.ZERO
     for hand in ["left", "right"]:
@@ -728,6 +735,7 @@ func _process(_delta: float) -> void:
         var pressed := false
         var valid := false
         var natural_hand := false
+        var finger_tracked := false
         var chopping := false
         var tip := controller.global_position
         var pointer_basis := controller.global_basis
@@ -747,7 +755,8 @@ func _process(_delta: float) -> void:
             chopping = hand_controls.edge_hand(tracker, tracked[hand].get("chopping", false))
             var palm_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & required) != 0
             var pinch_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
-            valid = pinch_tracked or (chopping and palm_tracked)
+            finger_tracked = (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0
+            valid = finger_tracked or (chopping and palm_tracked)
             chopping = chopping and palm_tracked
             if valid:
                 natural_hand = true
@@ -763,10 +772,15 @@ func _process(_delta: float) -> void:
                 var aim: XRController3D = tracked[hand].aim
                 direction = -aim.global_basis.z.normalized() if aim.get_has_tracking_data() else hand_controls.forward(tracker)
                 pointer_origin = aim.global_position if aim.get_has_tracking_data() else palm.origin
-                if pressed and tracked[hand].get("pinch_direction") != null:
-                    direction = tracked[hand].pinch_direction
-                elif not pressed:
-                    tracked[hand].pinch_direction = direction
+                # Filter small aim jitter, but follow deliberate movement immediately.
+                # A pinch must not freeze an old ray while its origin keeps moving.
+                var old_direction: Vector3 = tracked[hand].get("aim_direction", direction)
+                var weight := clampf(_delta * (18.0 if old_direction.angle_to(direction) < 0.08 else 65.0), 0, 1)
+                direction = old_direction.slerp(direction, weight).normalized()
+                tracked[hand].aim_direction = direction
+                var old_origin: Vector3 = tracked[hand].get("aim_origin", pointer_origin)
+                pointer_origin = old_origin.lerp(pointer_origin, clampf(_delta * (24.0 if old_origin.distance_to(pointer_origin) < 0.018 else 70.0), 0, 1))
+                tracked[hand].aim_origin = pointer_origin
         else:
             tracked[hand].fist = false
             valid = controller.get_has_tracking_data()
@@ -780,19 +794,20 @@ func _process(_delta: float) -> void:
             tracked[hand].ray.global_position = pointer_origin
             tracked[hand].ray.look_at(pointer_origin + direction, Vector3.UP)
         ui_hand = hand
+        var touching_popup: bool = natural_hand and finger_tracked and hand_touch.near_popup(tip)
         var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand, _delta)
         var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
         var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
-        var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not resizing and not joystick and not chopping, pressed, _delta)
+        var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not touching_popup and not resizing and not joystick and not chopping, pressed, _delta)
         var fist: bool = natural_hand and tracked[hand].get("fist", false)
         var sweep_tip := tip
         if valid and natural_hand and not fist and chopping:
             sweep_tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
         if fist and not resizing:
             tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
-        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
-        var chopping_book: bool = chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
-        var touching: bool = hand_touch.update(hand, tip, valid and natural_hand and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
+        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not touching_popup and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
+        var chopping_book: bool = not touching_popup and chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
+        var touching: bool = hand_touch.update(hand, tip, valid and finger_tracked and natural_hand and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
         if not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick:
             _pointer(hand, tip if not natural_hand or fist or _reader_at(tip) != null else pointer_origin, direction, pressed or fist, valid, pointer_basis)
         tracked[hand].tip = tip
@@ -1056,12 +1071,14 @@ func _book_ray_hit(start: Vector3, direction: Vector3) -> Dictionary:
             hit = {"book": candidate, "distance": distance}
     return hit
 
-func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: bool) -> bool:
+func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: bool, touched: Dictionary = {}) -> bool:
     # Route to the nearest visible panel, preserving capture when a drag
     # leaves its bounds. A book in front blocks clicks on windows behind it.
     var candidates: Array[Dictionary] = []
     var book_hit := _book_ray_hit(start, direction)
     for candidate in panels:
+        if not touched.is_empty() and candidate != touched:
+            continue
         var node: Node3D = candidate.node
         if not node.is_visible_in_tree():
             continue
@@ -1097,6 +1114,8 @@ func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: b
         var pixel := Vector2(point.x / size.x + 0.5, 0.5 - point.y / size.y) * Vector2(panel.pixels)
         pixel = pixel.clamp(Vector2.ZERO, Vector2(panel.pixels) - Vector2.ONE)
         if pressed and not previous:
+            if workspace and node == workspace.hud.node:
+                workspace.minimize_popups()
             ui_capture = {"panel": panel, "pixel": pixel}
         if not ui_capture.is_empty():
             ui_capture.pixel = pixel

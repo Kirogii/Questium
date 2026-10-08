@@ -9,6 +9,7 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Add a frosted VR settings hub with the app's shared settings categories, native Quest text entry, and live reader tint, hue, grayscale, inversion and brightness controls.
 - Add extension repositories directly from the VR Sources section, using the Quest keyboard and showing configured repositories.
 - Rebrand the app as Questium with a single Touch controller logo.
 - Use the app's actual library, source search, manga details and chapter history in the frosted VR interface; chapter selection opens the spatial book.
@@ -17,6 +18,9 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Make fingertip taps work on library and popup buttons even when the thumb is obscured, capture fast taps on resized panels, and smooth hand-pointer jitter without freezing aim during pinches.
+- Center popups closer in front of the HUD, minimize them when tapping or grabbing the HUD, use a full-height tinted sidebar with a bottom Settings button, and show preview action labels on hover.
+- Make the floating title pill smaller and closer to the HUD, keep it aligned when moving the HUD, and match the Settings button width to Recenter.
 - Make chopping-hand page turns easier to start, continuously curl toward the hand during slow swipes, and complete fast flicks before reaching the middle. Keep long-page finger scrolling separate from chopping gestures.
 - Publish the signed Quest alpha as v1.0.0 and show version 1.0.0 in the APK.
 - Include all upstream commits through Houri v1.23.9, including extension management fixes and long-page memory improvements.

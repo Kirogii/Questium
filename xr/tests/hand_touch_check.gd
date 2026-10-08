@@ -44,6 +44,23 @@ func check() -> void:
     reader.book.global_position += Vector3(0, 0, 0.025)
     touch.update("right", front, true, false)
     assert(not touch.update("right", contact, true, false), "Book blocks touches on a window behind it")
+    panel["popup"] = true
+    touch.cancel()
+    touch.update("right", front, true, false)
+    assert(touch.update("right", contact, true, false), "Visible popup can be tapped over a book")
+    touch.update("right", front, true, false)
+    await process_frame
+    assert(clicks[0] == 2, "Popup touch routes to the exact touched viewport")
+    touch.cancel()
+    reader.book.visible = false
+    panel.node.scale = Vector3.ONE * 0.5
+    var fast_front: Vector3 = panel.node.to_global(Vector3(0, 0, 0.20))
+    var fast_contact: Vector3 = panel.node.to_global(Vector3(0, 0, -0.04))
+    touch.update("right", fast_front, true, false)
+    assert(touch.update("right", fast_contact, true, false), "A fast poke across the plane is captured on scaled panels")
+    touch.update("right", fast_front, true, false)
+    await process_frame
+    assert(clicks[0] == 3)
     reader.queue_free()
     await process_frame
     print("PASS: direct fingertip tap, ownership, tracking-loss cancellation, pinch exclusion and book occlusion")

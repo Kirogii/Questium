@@ -49,7 +49,7 @@ func _check() -> void:
     reader._page_region(reader.camera.global_position, (point - reader.camera.global_position).normalized(), "right")
     assert(reader.book.turn_direction == 1, "Point-and-A page region turns forward")
     reader.book.cancel_turn()
-    reader.ui.config_path = ProjectSettings.globalize_path("res://tests/controls-test.cfg")
+    reader.ui.config_path = ProjectSettings.globalize_path("user://controls-test.cfg")
     reader.ui.perform("Switch hands")
     assert(reader.preferred_hand == "left")
     tracker.set_input("ax_button", true)

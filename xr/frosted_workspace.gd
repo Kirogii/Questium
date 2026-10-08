@@ -68,8 +68,12 @@ var repository_pending := false
 var hud_scale := 0.5
 var gui_distance := 0.62
 var popup_order := 10
+var settings: RefCounted
+var sidebar_spacer: Control
 
-func raise_popup(node: Node3D) -> void:
+func raise_popup(node: Node3D, center: bool = true) -> void:
+    if center and node != preview.node:
+        place_popup(node)
     popup_order = mini(popup_order + 2, 120)
     node.set_meta("popup_priority", popup_order)
     for target in reader.panels:
@@ -86,6 +90,20 @@ func raise_popup(node: Node3D) -> void:
                 shader.code = preload("res://glass.gdshader").code.replace("depth_draw_never;", "depth_draw_never, depth_test_disabled;")
                 material.shader = shader
     node.visible = true
+
+func place_popup(node: Node3D) -> void:
+    var facing := facing_basis()
+    var head := head_position()
+    var target: Vector3 = hud.node.global_position if hud.node.visible else head - facing.z * gui_distance
+    var distance := clampf(head.distance_to(target) - 0.16, 0.38, 0.56)
+    node.global_transform = Transform3D(facing, head + (target - head).normalized() * distance)
+
+func minimize_popups() -> void:
+    # Keep each menu's contents and scroll state for the next open.
+    var nodes := [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
+    if settings: nodes.append(settings.details.node)
+    for node in nodes:
+        node.visible = false
 
 func toggle_info() -> void:
     if info.node.visible: info.node.visible = false
@@ -104,6 +122,7 @@ func popup_ray(start: Vector3, direction: Vector3) -> bool:
 
 func roots() -> Array:
     var nodes: Array = [hud.node, badge.node, preview.node, info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
+    if settings: nodes.append(settings.details.node)
     for model in reader.books:
         if model.visible: nodes.append(model)
     return nodes
@@ -119,6 +138,12 @@ func set_hud_scale(value: float) -> void:
     hud.node.scale = Vector3.ONE * hud_scale
     preferences.set_value("workspace", "hud_scale", hud_scale)
     preferences.save("user://library.cfg")
+
+func sync_badge() -> void:
+    if not hud.node.visible or previewing: return
+    var factor: float = hud.node.global_basis.x.length()
+    var facing: Basis = hud.node.global_basis.orthonormalized()
+    badge.node.global_transform = Transform3D(facing, hud.node.global_position + facing.y * (0.54 * factor + 0.035))
 
 func _init(host: Node3D) -> void:
     reader = host
@@ -144,7 +169,16 @@ func build() -> void:
     hud.content.add_child(layout)
     var inset := PanelContainer.new()
     inset.custom_minimum_size.x = 320
-    inset.add_theme_stylebox_override("panel", reader.ui.style(Color(0.12, 0.12, 0.12, 0.12), 32))
+    inset.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+    var sidebar_background := Panel.new()
+    sidebar_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    sidebar_background.size = Vector2(360, 900)
+    var sidebar_style: StyleBoxFlat = reader.ui.style(Color(0.12, 0.115, 0.105, 0.34), 40)
+    sidebar_style.corner_radius_top_right = 0
+    sidebar_style.corner_radius_bottom_right = 0
+    sidebar_background.add_theme_stylebox_override("panel", sidebar_style)
+    hud.viewport.add_child(sidebar_background)
+    hud.viewport.move_child(sidebar_background, 0)
     layout.add_child(inset)
     var sidebar := VBoxContainer.new()
     sidebar.add_theme_constant_override("separation", 12)
@@ -156,6 +190,8 @@ func build() -> void:
     var gap := Control.new()
     gap.custom_minimum_size.y = 18
     sidebar.add_child(gap)
+    settings = preload("res://vr_settings.gd").new(self)
+    settings.build(sidebar)
     for name in ["All Books", "Recents", "Favorites", "Recently Deleted"]:
         var choice: String = name
         var nav := navigation(sidebar, name, func():
@@ -168,10 +204,15 @@ func build() -> void:
         var destination: String = name
         nav_buttons[name] = navigation(sidebar, name, func(): show_section(destination))
     var spacer := Control.new()
+    sidebar_spacer = spacer
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
     sidebar.add_child(spacer)
     button(sidebar, "Recenter", reader.recenter)
-    button(sidebar, "Book Settings", reader.ui.toggle)
+    var settings_button := button(sidebar, "Settings", func(): show_settings())
+    settings_button.icon = preload("res://icons/settings.svg")
+    settings_button.custom_minimum_size = Vector2(170, 50)
+    settings_button.size_flags_horizontal = Control.SIZE_FILL
+    settings_button.add_theme_stylebox_override("normal", reader.ui.style(Color(0.64, 0.63, 0.61, 0.22), 25))
     var body := VBoxContainer.new()
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     body.add_theme_constant_override("separation", 24)
@@ -223,11 +264,11 @@ func build() -> void:
     grid = make_grid()
     gallery.add_child(grid)
     message = label(body, "Loading library…", 18)
-    badge = panel(Vector2(0.50, 0.055), Vector2i(800, 88))
+    badge = panel(Vector2(0.23, 0.032), Vector2i(600, 84))
     badge_title = label(badge.content, "VR Komikku", 36)
     badge_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     badge_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    preview = panel(Vector2(0.55, 0.105), Vector2i(660, 126))
+    preview = panel(Vector2(0.55, 0.12), Vector2i(660, 160))
     detail_title = label(preview.content, "", 22)
     detail_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     detail_title.visible = false
@@ -235,13 +276,13 @@ func build() -> void:
     var actions := HBoxContainer.new()
     actions.alignment = BoxContainer.ALIGNMENT_CENTER
     preview.content.add_child(actions)
-    button(actions, "Back", func(): show_section(section))
-    save_button = button(actions, "Save to Library", save_to_library)
-    read_button = button(actions, "Read", read_selected)
+    reader.ui.labeled_icon(actions, "previous", "Back", func(): show_section(section))
+    save_button = reader.ui.labeled_icon(actions, "library", "Save to Library", save_to_library)
+    read_button = reader.ui.labeled_icon(actions, "book", "Read", read_selected)
     read_button.disabled = true
-    button(actions, "Info", toggle_info)
-    button(actions, "Close", reader.close_book)
-    info = panel(Vector2(0.36, 0.70), Vector2i(504, 980))
+    reader.ui.labeled_icon(actions, "info", "Info", toggle_info)
+    reader.ui.labeled_icon(actions, "close", "Close", reader.close_book)
+    info = panel(Vector2(0.32, 0.48), Vector2i(504, 980))
     var info_header := HBoxContainer.new()
     info.content.add_child(info_header)
     label(info_header, "Book Info", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -550,6 +591,7 @@ func type_key(key: String) -> void:
     else: keyboard_target.insert_text_at_caret(key)
 
 func show_section(name: String) -> void:
+    if settings: settings.leave()
     if opening and opening.is_running(): opening.kill()
     section = name
     previewing = false
@@ -678,6 +720,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     if not reader.book.token.is_empty():
         var model: SpatialBook = reader.BookScript.new()
         reader.add_child(model)
+        model.apply_reader_filters(reader.reader_filters)
         reader.books.append(model)
         model.spread_changed.connect(reader._spread_changed)
         reader._activate_book(model)
@@ -689,7 +732,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     chapters = []
     chapter_search.text = ""
     description.text = reader._label("Loading book details…")
-    read_button.text = reader._label("Read")
+    reader.ui.set_icon_label(read_button, "Read")
     read_button.disabled = true
     favorite = section == "Home" and filter != "Recently Deleted"
     update_save()
@@ -723,7 +766,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     reader._request("cover", {"manga": selected_manga})
 
 func update_save() -> void:
-    save_button.text = reader._label("Saved to Library" if favorite else "Save to Library")
+    reader.ui.set_icon_label(save_button, "Saved to Library" if favorite else "Save to Library")
     save_button.disabled = favorite
 
 func save_to_library() -> void:
@@ -754,7 +797,7 @@ func open_chapter(id: String) -> void:
     active_manga = selected_manga
     reader._request("open", {"manga": selected_manga, "chapter": id})
     read_button.disabled = true
-    read_button.text = reader._label("Loading…")
+    reader.ui.set_icon_label(read_button, "Loading…")
 
 func chapter_opened() -> void:
     active_book = reader.book
@@ -772,7 +815,7 @@ func chapter_opened() -> void:
     var size := Vector3.ONE * 0.85
     reader.book.global_transform = Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0, -0.10, -0.85)).scaled_local(size)
     read_button.disabled = false
-    read_button.text = reader._label("Read")
+    reader.ui.set_icon_label(read_button, "Read")
 
 func render_chapters() -> void:
     clear(chapter_list)
@@ -790,6 +833,7 @@ func run_search(new_page: int) -> void:
     reader._request("source_search", {"source": selected_source, "query": search.text, "page": page})
 
 func consume(data: Dictionary) -> bool:
+    if settings and settings.consume(data): return true
     match str(data.get("kind", "")):
         "library":
             library_items = data.get("items", [])
@@ -842,7 +886,7 @@ func consume(data: Dictionary) -> bool:
             if str(data.manga) != selected_manga: return true
             chapters = data.get("items", [])
             resume_chapter = str(data.get("resume", ""))
-            read_button.text = reader._label("Resume" if not resume_chapter.is_empty() else "Read")
+            reader.ui.set_icon_label(read_button, "Resume" if not resume_chapter.is_empty() else "Read")
             read_button.disabled = chapters.is_empty()
             render_chapters()
         "cover":
@@ -862,7 +906,7 @@ func consume(data: Dictionary) -> bool:
                 repository_status.text = str(data.get("message", "Unable to add repository."))
             message.text = str(data.get("message", "Unable to load content"))
             description.text = message.text
-            read_button.text = reader._label("Resume" if not resume_chapter.is_empty() else "Read")
+            reader.ui.set_icon_label(read_button, "Resume" if not resume_chapter.is_empty() else "Read")
             read_button.disabled = chapters.is_empty()
             save_button.disabled = favorite
             return false
@@ -925,9 +969,10 @@ func drag_scroll(target: Dictionary, pixel: Vector2, pressed: bool, previous: bo
     return false
 
 func place_settings() -> void:
-    var facing := facing_basis()
-    reader.ui.options.global_transform = Transform3D(facing, head_position() + facing * Vector3(-0.66, 0, -1.04))
     raise_popup(reader.ui.options)
+
+func show_settings() -> void:
+    settings.open()
 
 func preview_book_pose() -> Transform3D:
     var facing := facing_basis()
@@ -937,12 +982,11 @@ func recenter(head_pose: Variant = null) -> void:
     var head: Vector3 = head_position() if head_pose == null else head_pose.origin
     var facing := facing_basis(null if head_pose == null else head_pose.basis)
     hud.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0, -gui_distance)).scaled_local(Vector3.ONE * hud_scale)
-    badge.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0.34 * hud_scale / 0.5, -gui_distance))
+    badge.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0.54 * hud_scale + 0.035, -gui_distance))
     preview.node.global_transform = Transform3D(facing, head + facing * Vector3(0, -0.30, -0.94))
-    info.node.global_transform = Transform3D(facing, head + facing * Vector3(0.48, 0, -0.96))
     keyboard.node.global_transform = Transform3D(facing, head + facing * Vector3(0, -0.65, -1.15))
-    reader.ui.options.global_transform = Transform3D(facing, head + facing * Vector3(-0.66, 0, -1.04))
-    repository_panel.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0, -gui_distance))
+    for node in [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]:
+        if node.visible: place_popup(node)
     if previewing:
         badge.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0.26, -1.04))
         if opening and opening.is_running(): opening.kill()
@@ -961,7 +1005,7 @@ func dock_pose(index: int) -> Transform3D:
 func handle_at(point: Vector3) -> Node3D:
     var hits: Array = []
     for target in reader.panels:
-        if target.node not in [hud.node, preview.node, info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options] or not target.node.is_visible_in_tree(): continue
+        if target.node not in roots() or not target.node.is_visible_in_tree(): continue
         var local: Vector3 = target.node.to_local(point)
         if absf(local.x) <= target.size.x * 0.5 and absf(local.y) <= target.size.y * 0.5 and absf(local.z) <= 0.12:
             hits.append({"node": target.node, "priority": int(target.node.get_meta("popup_priority", 0)), "depth": absf(local.z)})
@@ -975,7 +1019,8 @@ func preview_snap(_node: Node3D) -> int:
     return -1
 
 func begin_drag(node: Node3D) -> void:
-    if node != hud.node: raise_popup(node)
+    if node == hud.node: minimize_popups()
+    else: raise_popup(node, false)
 
 func finish_drag(_node: Node3D) -> void:
     pass
