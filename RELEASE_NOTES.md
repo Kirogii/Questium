@@ -40,6 +40,10 @@ files moved. See .github/scripts/release_notes.py.
 - **Fixed the whole screen being left blank when zoomed out in the continuous reader.** The reader only
   ever drew a fixed number of pages either side of the current one, so zooming out far enough that
   more pages fit than that cut the bottom of the screen off. It now draws as far as the zoom requires.
+- **Fixed stuttering that got worse the longer you read.** Placeholder pages — the loading spinner and
+  the chapter title card — allocated graphics memory on every frame and never released it, so a long
+  session slowly exhausted it and the framerate sagged. That memory is now released once the GPU has
+  finished drawing the frame that used it, rather than being held forever or freed while still in use.
 - **Fixed a long pause the first time a chapter name in a non-Latin script was drawn**, such as a
   Japanese or Korean title. Each character had to be rendered and uploaded individually, rebuilding the
   whole font atlas repeatedly while the screen was live. Characters are now prepared in one batch.
