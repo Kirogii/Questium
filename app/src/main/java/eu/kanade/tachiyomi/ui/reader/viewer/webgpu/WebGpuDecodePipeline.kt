@@ -312,6 +312,20 @@ internal suspend fun WebGpuViewer.decodeReaderPage(page: ViewerReaderPage) {
             frameWidth = rotated.width
             frameHeight = rotated.height
         }
+        // "Rotate to fit" from the paged reader settings. The pager rotates the encoded bytes
+        // before decoding; this path has no encode step, so the quarter turn is applied to the
+        // decoded pixels. Without it a landscape page paired into a spread is fitted to half the
+        // screen width, leaving a black band above and below that only zooming clears.
+//
+// After EXIF, so "wide" means wide as displayed. Single-frame only, as above. A quarter turn is
+// EXIF orientation 6 clockwise and 8 anticlockwise.
+        if (pageCount == 1 && config.dualPageRotateToFit && frameWidth > frameHeight) {
+            val quarterTurn = if (config.dualPageRotateToFitInvert) 8 else 6
+            val turned = rotateRgbaForExif(framePixels, frameWidth, frameHeight, quarterTurn)
+            framePixels = turned.buffer
+            frameWidth = turned.width
+            frameHeight = turned.height
+        }
         // KMK <--
 
         val imagePage = if (pageCount == 1) {
