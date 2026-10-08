@@ -29,6 +29,15 @@ files moved. See .github/scripts/release_notes.py.
 
 ### Fix
 
+- **Fixed a removed cover lingering on screen after removing several titles at once.** Bulk removal
+  stamped the cached files so their retention window started at the removal, but never recorded the
+  new timestamp on the title, so the cover that was still visible was never told to redraw. Removing
+  a single title at a time already did this.
+- **Fixed wide pages getting a black band above and below them in WebGPU double-page mode.** The
+  "rotate to fit" option that turns a landscape page a quarter turn so it fills its half of the
+  spread worked in the classic reader but did nothing at all in the WebGPU one, which left the page
+  fitted to half the screen width - a short strip with empty space above and below it that only
+  zooming cleared.
 - **Fixed tapping a tap zone in vertical reading mode dragging the page sideways instead of turning
   it.** When "navigate by panning" was on (the default) and you were zoomed into a page - so there
   was room to pan sideways - the next/previous zone slid the page across its own width rather than
