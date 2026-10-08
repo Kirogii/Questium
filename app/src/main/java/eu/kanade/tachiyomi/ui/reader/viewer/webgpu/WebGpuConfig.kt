@@ -200,7 +200,7 @@ class WebGpuConfig(
     // KMK -->
     /**
      * Single consumption point for the double-tap-zoom preference. Paged honors it
-     * via applyDoubleTapZoomPolicy (WebGpuDecode.kt); both modes read the library
+     * via applyDoubleTapZoomPolicy (WebGpuZoom.kt); both modes read the library
      * ImageViewerState.doubleTapZoomEnabled flag, which WebGpuViewer /
      * WebGpuViewerContinuous assign from this resolver.
      */
