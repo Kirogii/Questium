@@ -37,6 +37,19 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.11] - 2026-10-08
+### Fix
+- **Fixed a crash that closed the app while reading in the WebGPU reader.** 1.23.10 released the
+  small graphics buffers used to draw the loading spinner and chapter title card as soon as they
+  were drawn, which is earlier than the GPU had actually read them. The submitted work then referred
+  to freed memory and the app went down — most visibly on opening any chapter that still had pages
+  loading. Those buffers are now released only once the GPU reports that frame finished.
+- **Fixed the continuous reader slowly losing framerate over a long session.** Placeholder pages
+  drew with graphics memory that was never handed back, so a long chapter accumulated more and more
+  of it and the frame rate sagged the longer you read. The memory is now reclaimed, and a frame that
+  draws none of it costs nothing.
+
+
 ## [v1.23.10] - 2026-10-07
 ### Improve
 - **Improved scrolling smoothness in the continuous (webtoon) reader.** Finding a page's position
