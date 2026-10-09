@@ -57,6 +57,7 @@ var browsing_extensions := false
 var keyboard_requested_at := -1000
 var keyboard_session := 0
 var keyboard_field := ""
+var keyboard_poll_elapsed := 0.0
 var active_book: SpatialBook
 var enabled_languages: Array = ["en"]
 var language_panel: Dictionary
@@ -505,6 +506,20 @@ func show_keyboard(target: LineEdit) -> void:
         reader.bridge.call("showKeyboard", target.text, keyboard_field)
     elif DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
         DisplayServer.virtual_keyboard_show(target.text)
+
+func _process(delta: float) -> void:
+    if not is_instance_valid(keyboard_target) or keyboard_field.is_empty(): return
+    keyboard_poll_elapsed += delta
+    if keyboard_poll_elapsed < 0.05: return
+    keyboard_poll_elapsed = 0.0
+    if not reader.bridge or not reader.bridge.has_method("keyboardSnapshot"): return
+    var snapshot = JSON.parse_string(str(reader.bridge.call("keyboardSnapshot")))
+    if snapshot is Dictionary and str(snapshot.get("field", "")) == keyboard_field:
+        var value := str(snapshot.get("text", ""))
+        if value != keyboard_target.text:
+            keyboard_target.text = value
+            keyboard_target.caret_column = value.length()
+            keyboard_target.text_changed.emit(value)
 
 func show_sources(available: bool) -> void:
     browsing_extensions = available

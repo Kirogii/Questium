@@ -189,6 +189,12 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         }
     }
 
+    /** Polled by the VR scene as a fallback for IME callbacks that arrive
+     * while the Godot render thread is busy with a passthrough frame. */
+    @UsedByGodot
+    fun keyboardSnapshot(): String = JSONObject().put("field", keyboardField ?: "")
+        .put("text", keyboardInput?.text?.toString() ?: "").toString()
+
     @UsedByGodot
     fun labels(): String = JSONObject(
         mapOf(
