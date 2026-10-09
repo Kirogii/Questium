@@ -556,20 +556,9 @@ class WebGpuConfig(
     }
 
     private fun zoomTypeFromPreference(value: Int) {
-        imageZoomType = when (value) {
-            // Auto
-            1 -> if (viewer.isReversed) {
-                ReaderPageImageView.ZoomStartPosition.RIGHT
-            } else {
-                ReaderPageImageView.ZoomStartPosition.LEFT
-            }
-            // Left
-            2 -> ReaderPageImageView.ZoomStartPosition.LEFT
-            // Right
-            3 -> ReaderPageImageView.ZoomStartPosition.RIGHT
-            // Center
-            else -> ReaderPageImageView.ZoomStartPosition.CENTER
-        }
+        // The mapping itself is pure and lives with the zoom code it feeds, so it is testable
+        // without a viewer; this only reads the reading direction and stores the answer.
+        imageZoomType = resolveZoomStartPosition(value, viewer.isReversed)
     }
 
     override var navigator: ViewerNavigation = defaultNavigation()

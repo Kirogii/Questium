@@ -53,6 +53,29 @@ import kotlin.time.Duration.Companion.milliseconds
 private const val CHAPTER_EDGE_PRELOAD = 4
 
 /**
+ * Smallest width a page or placeholder may claim.
+ *
+ * The GPU rejects a texture narrower than this (gralloc 0x3b), and a placeholder that reserved less
+ * would divide by zero in the image page's layout maths before it ever got that far.
+ */
+internal const val MIN_PAGE_WIDTH = 8
+
+/**
+ * Width a page or placeholder claims for itself; see [WebGpuViewer.viewportPageWidth].
+ *
+ * Pure, so the floor and the halving are checkable without a surface attached - which is the only
+ * state these pages are ever built in.
+ */
+internal fun resolveViewportPageWidth(viewportWidth: Int, half: Boolean): Int {
+    if (viewportWidth < MIN_PAGE_WIDTH) return MIN_PAGE_WIDTH
+    return if (half) {
+        (viewportWidth / 2).coerceAtLeast(MIN_PAGE_WIDTH)
+    } else {
+        viewportWidth.coerceAtLeast(MIN_PAGE_WIDTH)
+    }
+}
+
+/**
  * The WebGPU paged reader.
  *
  * This class is the viewer's *wiring* and nothing else: the fields it owns, how the pager's
@@ -204,14 +227,20 @@ open class WebGpuViewer(
     private val pairAspectTolerance = 0.1f
 
     /** Read live: these pages are built before the surface has a size, and outlive a rotation. */
-    internal fun viewportPageWidth(half: Boolean): Int {
-        val w = try {
-            pager.state.width
-        } catch (_: Exception) {
-            0
-        }
-        if (w < 8) return 8
-        return if (half) (w / 2).coerceAtLeast(8) else w.coerceAtLeast(8)
+    internal fun viewportPageWidth(half: Boolean): Int = resolveViewportPageWidth(readViewportWidth(), half)
+
+    /**
+     * The width a placeholder reserves for itself.
+     *
+     * A placeholder has no decoded size, so it claims the width a real page of this slot would take:
+     * the whole viewport, or half of it for a spread side. The floor matters because these pages are
+     * built before the surface has a size - a zero width would divide by zero in the image page's
+     * own layout maths - and it outlives a rotation, when the width it captured is long stale.
+     */
+    private fun readViewportWidth(): Int = try {
+        pager.state.width
+    } catch (_: Exception) {
+        0
     }
 
     private val anchorPosition get() = if (isReversed xor config.invertDoublePages) SpreadPosition.RIGHT else SpreadPosition.LEFT
