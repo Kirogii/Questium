@@ -1,5 +1,9 @@
 extends RefCounted
 
+const COVER_BOX := Vector2(180.0, 255.0)
+const TITLE_BOX := Vector2(COVER_BOX.x, 72.0)
+const SOURCE_FILTER_SHEET_SIZE := Vector2(0.88, 0.42)
+
 var reader: Node3D
 var windows: Array[Dictionary] = []
 var dock_poses: Array[Transform3D] = []
@@ -41,7 +45,10 @@ var selected_source := ""
 var source_category := "latest"
 var source_tag_query := ""
 var source_filters: Dictionary = {}
+var source_filter_defs: Array = []
 var source_filter_panel: Dictionary
+var source_filter_body: VBoxContainer
+var source_filter_tween: Tween
 var selected_manga := ""
 var active_manga := ""
 var resume_chapter := ""
@@ -101,6 +108,9 @@ func raise_popup(node: Node3D, center: bool = true) -> void:
     node.visible = true
 
 func place_popup(node: Node3D) -> void:
+    if source_filter_panel and node == source_filter_panel.node:
+        place_source_filter_panel()
+        return
     var facing := facing_basis()
     var head := head_position()
     var target: Vector3 = hud.node.global_position if hud.node.visible else head - facing.z * gui_distance
@@ -109,6 +119,7 @@ func place_popup(node: Node3D) -> void:
 
 func minimize_popups() -> void:
     reader.ui.close_options()
+    if source_filter_tween and source_filter_tween.is_running(): source_filter_tween.kill()
     # Keep each menu's contents and scroll state for the next open.
     var nodes := [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
     if source_filter_panel: nodes.append(source_filter_panel.node)
@@ -260,7 +271,11 @@ func build() -> void:
     cog.icon = preload("res://icons/settings.svg")
     cog.tooltip_text = reader._label("Source languages")
     sources.item_selected.connect(func(index: int):
-        selected_source = str(sources.get_item_metadata(index))
+        var next_source := str(sources.get_item_metadata(index))
+        if next_source != selected_source:
+            source_filters.clear()
+            source_filter_defs.clear()
+        selected_source = next_source
         run_search(1)
     )
     button(source_row, "Previous", func(): run_search(maxi(1, page - 1)))
@@ -603,7 +618,11 @@ func render_sources() -> void:
             if browsing_extensions:
                 reader._request("install_extension", {"package": str(entry.id)})
             else:
-                selected_source = str(entry.id)
+                var next_source := str(entry.id)
+                if next_source != selected_source:
+                    source_filters.clear()
+                    source_filter_defs.clear()
+                selected_source = next_source
                 picker.node.visible = false
                 run_search(1)
         )
@@ -639,6 +658,8 @@ func ensure_source_language() -> void:
     var allowed := installed_sources.filter(func(item): return str(item.get("lang", "en")) in enabled_languages)
     if not allowed.any(func(item): return str(item.id) == selected_source):
         selected_source = str(allowed[0].id) if not allowed.is_empty() else ""
+        source_filters.clear()
+        source_filter_defs.clear()
         source_items.clear()
         if not selected_source.is_empty(): run_search(1)
         elif section == "Source Search": render_grid()
@@ -659,6 +680,7 @@ func show_section(name: String) -> void:
     info.node.visible = false
     picker.node.visible = false
     repository_panel.node.visible = false
+    hide_source_filters(false)
     keyboard.node.visible = false
     preview.node.visible = false
     badge.node.visible = name != "Reader"
@@ -730,21 +752,28 @@ func date_group(item: Dictionary) -> String:
 
 func add_card(item: Dictionary) -> void:
     var card := PanelContainer.new()
-    card.custom_minimum_size = Vector2(200, 340)
+    # The panel style contributes 16 px of horizontal inset on each side;
+    # reserve that space so the child controls remain exactly COVER_BOX wide.
+    card.custom_minimum_size = Vector2(COVER_BOX.x + 32.0, 390)
     card.add_theme_stylebox_override("panel", reader.ui.style(Color(0, 0, 0, 0), 24))
     grid.add_child(card)
     var column := VBoxContainer.new()
+    column.custom_minimum_size.x = COVER_BOX.x
     column.add_theme_constant_override("separation", 12)
     card.add_child(column)
     var cover := TextureButton.new()
-    cover.custom_minimum_size = Vector2(180, 255)
+    cover.custom_minimum_size = COVER_BOX
     cover.ignore_texture_size = true
-    cover.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+    # Keep every library/source cover in one fixed box. COVERED preserves the
+    # aspect ratio and crops overflow instead of changing the grid geometry.
+    cover.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_COVERED
+    cover.tooltip_text = str(item.title)
     var round_cover := ShaderMaterial.new()
     round_cover.shader = preload("res://cover_round.gdshader")
     cover.material = round_cover
     var image_box := Control.new()
-    image_box.custom_minimum_size = Vector2(180, 255)
+    image_box.custom_minimum_size = COVER_BOX
+    image_box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
     column.add_child(image_box)
     cover.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     image_box.add_child(cover)
@@ -766,7 +795,13 @@ func add_card(item: Dictionary) -> void:
     caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
     caption.alignment = HORIZONTAL_ALIGNMENT_LEFT
     caption.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    caption.custom_minimum_size.x = 180
+    caption.clip_text = true
+    # Reserve two line heights so every card has the same title region. The
+    # tooltip keeps the complete title available without changing the action.
+    caption.custom_minimum_size = TITLE_BOX
+    caption.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+    caption.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+    caption.tooltip_text = str(item.title)
     caption.add_theme_font_size_override("font_size", 20)
     if item.has("history_chapter"):
         label(column, str(item.history_chapter) + " · " + reader._label("Page") + " " + str(int(item.get("last_page", 0)) + 1), 16)
@@ -905,28 +940,176 @@ func run_search(new_page: int) -> void:
 
 func show_source_filters() -> void:
     if not source_filter_panel:
-        source_filter_panel = panel(Vector2(0.42, 0.46), Vector2i(640, 700))
+        # This is deliberately attached as a sheet-sized world panel rather
+        # than a centered popup. Its pose is tied to the frosted search HUD so
+        # it rises from that window's lower edge in VR.
+        source_filter_panel = panel(SOURCE_FILTER_SHEET_SIZE, Vector2i(1320, 630))
         var content: VBoxContainer = source_filter_panel.content
         var header := HBoxContainer.new()
         content.add_child(header)
         label(header, "Source Filters", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-        reader.ui.icon_button(header, "close", func(): source_filter_panel.node.visible = false, Vector2(48, 48))
-        var tag := edit(content, "Tags (comma separated)")
-        tag.text = str(source_filters.get("tags", ""))
-        tag.text_changed.connect(func(value: String): source_filters["tags"] = value)
-        var hint := label(content, "Filters are applied to Browse and tag searches.", 16)
+        reader.ui.icon_button(header, "close", func(): hide_source_filters(), Vector2(48, 48))
+        var hint := label(content, "Choose the options provided by this source.", 16)
         hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-        button(content, "Apply Filters", func():
-            source_filter_panel.node.visible = false
+        var filter_scroll := ScrollContainer.new()
+        filter_scroll.name = "FilterScroll"
+        filter_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+        filter_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+        content.add_child(filter_scroll)
+        source_filter_body = VBoxContainer.new()
+        source_filter_body.add_theme_constant_override("separation", 10)
+        source_filter_body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+        source_filter_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        filter_scroll.add_child(source_filter_body)
+        var actions := HBoxContainer.new()
+        actions.add_theme_constant_override("separation", 12)
+        content.add_child(actions)
+        button(actions, "Apply Filters", func():
+            hide_source_filters()
             source_category = "browse"
             run_search(1)
         )
-        button(content, "Clear Filters", func():
+        button(actions, "Clear Filters", func():
             source_filters.clear()
-            tag.text = ""
+            render_source_filters()
         )
-        reader.add_child(source_filter_panel.node)
-    raise_popup(source_filter_panel.node)
+    render_source_filters()
+    var rest := source_filter_pose()
+    var hidden := source_filter_pose(-source_filter_panel.size.y - 0.05)
+    if source_filter_tween and source_filter_tween.is_running(): source_filter_tween.kill()
+    source_filter_panel.node.global_transform = hidden
+    raise_popup(source_filter_panel.node, false)
+    source_filter_tween = reader.create_tween()
+    source_filter_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    source_filter_tween.tween_property(source_filter_panel.node, "global_position", rest.origin, 0.22)
+
+func source_filter_pose(offset: float = 0.0) -> Transform3D:
+    var facing: Basis = hud.node.global_basis.orthonormalized()
+    var hud_height: float = float(hud.size.y) * hud.node.global_basis.y.length()
+    var sheet_height: float = float(source_filter_panel.size.y)
+    var center_y: float = -hud_height * 0.5 + sheet_height * 0.5 + 0.012 + offset
+    return Transform3D(facing, hud.node.global_position + facing.y * center_y)
+
+func place_source_filter_panel() -> void:
+    if not source_filter_panel: return
+    source_filter_panel.node.global_transform = source_filter_pose()
+
+func hide_source_filters(animated: bool = true) -> void:
+    if not source_filter_panel: return
+    if source_filter_tween and source_filter_tween.is_running(): source_filter_tween.kill()
+    if not source_filter_panel.node.visible: return
+    if not animated:
+        source_filter_panel.node.visible = false
+        return
+    source_filter_tween = reader.create_tween()
+    source_filter_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+    source_filter_tween.tween_property(source_filter_panel.node, "global_position", source_filter_pose(-source_filter_panel.size.y - 0.05).origin, 0.16)
+    source_filter_tween.tween_callback(func(): source_filter_panel.node.visible = false)
+
+func render_source_filters() -> void:
+    if not source_filter_body: return
+    clear(source_filter_body)
+    if source_filter_defs.is_empty():
+        label(source_filter_body, "This source has no filters.", 18)
+        return
+    for definition in source_filter_defs:
+        var filter_index := int(definition.get("index", -1))
+        var key := str(filter_index)
+        var kind := str(definition.get("type", ""))
+        var title := str(definition.get("name", ""))
+        if kind == "separator":
+            source_filter_body.add_child(HSeparator.new())
+            continue
+        if kind == "header":
+            label(source_filter_body, title, 22)
+            continue
+        if kind == "checkbox":
+            var check := CheckButton.new()
+            check.text = title
+            check.button_pressed = bool(source_filters.get(key, definition.get("state", false)))
+            source_filter_body.add_child(check)
+            check.toggled.connect(func(enabled: bool): source_filters[key] = enabled)
+        elif kind == "select":
+            var row := HBoxContainer.new()
+            source_filter_body.add_child(row)
+            label(row, title, 18).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+            var select := OptionButton.new()
+            for value in definition.get("values", []): select.add_item(str(value))
+            select.selected = clampi(int(source_filters.get(key, definition.get("state", 0))), 0, maxi(0, select.item_count - 1))
+            row.add_child(select)
+            select.item_selected.connect(func(selected: int): source_filters[key] = selected)
+        elif kind == "tristate":
+            var cycle_holder := {}
+            var cycle := button(source_filter_body, "", func():
+                var next := (int(source_filters.get(key, definition.get("state", 0))) + 1) % 3
+                source_filters[key] = next
+                cycle_holder.node.text = title + ": " + ["Any", "Include", "Exclude"][next]
+            )
+            cycle_holder.node = cycle
+            var state := clampi(int(source_filters.get(key, definition.get("state", 0))), 0, 2)
+            cycle.text = title + ": " + ["Any", "Include", "Exclude"][state]
+        elif kind == "sort":
+            var sort_row := HBoxContainer.new()
+            source_filter_body.add_child(sort_row)
+            label(sort_row, title, 18).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+            var sort := OptionButton.new()
+            for value in definition.get("values", []): sort.add_item(str(value))
+            var raw_sort_state = source_filters.get(key, definition.get("state", {}))
+            var sort_state: Dictionary = raw_sort_state if raw_sort_state is Dictionary else {}
+            sort.selected = clampi(int(sort_state.get("index", 0)), 0, maxi(0, sort.item_count - 1))
+            sort_row.add_child(sort)
+            var ascending := CheckButton.new()
+            ascending.text = "Ascending"
+            ascending.button_pressed = bool(sort_state.get("ascending", false))
+            sort_row.add_child(ascending)
+            var update_sort := func(): source_filters[key] = {"index": sort.selected, "ascending": ascending.button_pressed}
+            sort.item_selected.connect(func(_selected: int): update_sort.call())
+            ascending.toggled.connect(func(_enabled: bool): update_sort.call())
+        elif kind == "autocomplete":
+            label(source_filter_body, title, 18)
+            var raw_selected = source_filters.get(key, definition.get("state", []))
+            var selected: Array = raw_selected if raw_selected is Array else []
+            for value in definition.get("values", []):
+                var text := str(value)
+                var tag := CheckButton.new()
+                tag.text = text
+                tag.button_pressed = text in selected
+                source_filter_body.add_child(tag)
+                tag.toggled.connect(func(enabled: bool):
+                    var values: Array = source_filters.get(key, []).duplicate()
+                    if enabled and text not in values: values.append(text)
+                    elif not enabled: values.erase(text)
+                    source_filters[key] = values
+                )
+        elif kind == "text":
+            var text := edit(source_filter_body, title)
+            text.text = str(source_filters.get(key, definition.get("state", "")))
+            text.text_changed.connect(func(value: String): source_filters[key] = value)
+        elif kind == "group":
+            label(source_filter_body, title, 18)
+            # Some source implementations expose group choices in addition to
+            # the group heading. Render those choices when present while
+            # retaining the protocol's array state.
+            var raw_group_selected = source_filters.get(key, definition.get("state", []))
+            var group_selected: Array = raw_group_selected if raw_group_selected is Array else []
+            for value in definition.get("values", []):
+                var group_value := str(value)
+                var group_check := CheckButton.new()
+                group_check.text = group_value
+                group_check.button_pressed = group_value in group_selected
+                source_filter_body.add_child(group_check)
+                group_check.toggled.connect(func(enabled: bool):
+                    var values: Array = source_filters.get(key, []).duplicate()
+                    if enabled and group_value not in values: values.append(group_value)
+                    elif not enabled: values.erase(group_value)
+                    source_filters[key] = values
+                )
+        else:
+            # Keep an extension-specific/forward-compatible filter visible and
+            # editable instead of silently dropping it from the sheet.
+            var fallback := edit(source_filter_body, title)
+            fallback.text = str(source_filters.get(key, definition.get("state", "")))
+            fallback.text_changed.connect(func(value: String): source_filters[key] = value)
 
 func consume(data: Dictionary) -> bool:
     if settings and settings.consume(data): return true
@@ -959,6 +1142,10 @@ func consume(data: Dictionary) -> bool:
             repository_add.disabled = false
             repository_status.text = reader._label(str(data.message))
             if data.get("success", false): repository_url.text = ""
+        "source_filters":
+            if str(data.get("source", "")) != selected_source: return true
+            source_filter_defs = data.get("items", [])
+            render_source_filters()
         "keyboard_text":
             if is_instance_valid(keyboard_target) and str(data.get("field", "")) == keyboard_field:
                 keyboard_target.text = str(data.text)
@@ -1091,6 +1278,8 @@ func recenter(head_pose: Variant = null) -> void:
     keyboard.node.global_transform = Transform3D(facing, head + facing * Vector3(0, -0.65, -1.15))
     for node in [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]:
         if node.visible: place_popup(node)
+    if source_filter_panel and source_filter_panel.node.visible:
+        place_source_filter_panel()
     if previewing:
         badge.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0.26, -1.04))
         if opening and opening.is_running(): opening.kill()

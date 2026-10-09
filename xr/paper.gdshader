@@ -11,6 +11,7 @@ uniform float curvature = 0.002;
 uniform float rest_angle = 0.035;
 uniform float grab_y = 0.5;
 uniform int scale_type = 1;
+uniform bool stretch_to_fit = true;
 uniform vec4 paper_color : source_color = vec4(0.97, 0.97, 0.97, 1.0);
 uniform vec4 front_crop = vec4(0.0, 0.0, 1.0, 1.0);
 uniform vec4 back_crop = vec4(0.0, 0.0, 1.0, 1.0);
@@ -48,7 +49,7 @@ void fragment() {
     float image_aspect = (image_size.x * crop.z) / max(image_size.y * crop.w, 1.0);
     float page_aspect = width / 0.40;
     vec2 image_uv = front ? page_uv : vec2(1.0 - page_uv.x, page_uv.y);
-    vec2 fit = vec2(max(page_aspect / image_aspect, 1.0), max(image_aspect / page_aspect, 1.0));
+    vec2 fit = stretch_to_fit ? vec2(1.0) : vec2(max(page_aspect / image_aspect, 1.0), max(image_aspect / page_aspect, 1.0));
     if (scale_type == 2) fit = vec2(1.0);
     else if (scale_type == 3) fit = vec2(1.0, image_aspect / page_aspect);
     else if (scale_type == 4) fit = vec2(page_aspect / image_aspect, 1.0);

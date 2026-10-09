@@ -24,6 +24,8 @@ import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import eu.kanade.tachiyomi.source.CatalogueSource
+import eu.kanade.tachiyomi.source.model.Filter
+import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -63,7 +65,10 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     private val readers = ConcurrentHashMap<String, ReaderViewModel>()
     private var keyboardInput: EditText? = null
     private var keyboardDialog: Dialog? = null
-    private var keyboardField: String? = null
+
+    @Volatile private var keyboardField: String? = null
+
+    @Volatile private var keyboardText = ""
     private val settings by lazy { VrSettingsBridge(host, ::send) }
     private var lastRenderRevision = ""
 
@@ -125,11 +130,20 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 imeOptions = EditorInfo.IME_ACTION_SEARCH or EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
                 setText(text)
                 setSelection(text.length)
-                alpha = 0f
+                // Quest's IME ignores an alpha-zero editor: it shows the
+                // keyboard, but does not establish a usable InputConnection.
+                // Keep the editor visible to Android while making it visually
+                // transparent inside the tiny dialog window.
+                setTextColor(Color.TRANSPARENT)
+                setHintTextColor(Color.TRANSPARENT)
+                background = ColorDrawable(Color.TRANSPARENT)
+                isCursorVisible = false
+                alpha = 1f
             }
             keyboardInput = input
             keyboardDialog = dialog
             keyboardField = field
+            keyboardText = text
             val root = FrameLayout(host).apply {
                 addView(input, FrameLayout.LayoutParams(240, 64))
             }
@@ -140,7 +154,12 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                     if (visible) {
                         keyboardWasVisible = true
                     } else if (keyboardWasVisible && dialog.isShowing) {
-                        dialog.dismiss()
+                        // Meta's keyboard can report its window hidden before
+                        // the final composing/text callback. Give the IME a
+                        // short drain period so that closing never loses the
+                        // last character (the field/session guard still
+                        // rejects stale callbacks in the Godot scene).
+                        root.postDelayed({ if (dialog.isShowing) dialog.dismiss() }, 200)
                     }
                     insets
                 }
@@ -155,6 +174,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                     if (keyboardInput === input) {
+                        keyboardText = s.toString()
                         send(JSONObject().put("kind", "keyboard_text").put("text", s.toString()).put("field", field))
                     }
                 }
@@ -164,7 +184,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 val submit = action in setOf(EditorInfo.IME_ACTION_SEARCH, EditorInfo.IME_ACTION_DONE, EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND) ||
                     (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
                 if (!submit) return@setOnEditorActionListener false
-                send(JSONObject().put("kind", "keyboard_text").put("text", input.text.toString()).put("submitted", true).put("field", field))
+                send(JSONObject().put("kind", "keyboard_text").put("text", keyboardText).put("submitted", true).put("field", field))
                 (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
                     .hideSoftInputFromWindow(input.windowToken, 0)
                 dialog.dismiss()
@@ -172,7 +192,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             }
             dialog.setOnDismissListener {
                 if (keyboardInput === input) {
-                    send(JSONObject().put("kind", "keyboard_text").put("text", input.text.toString()).put("closed", true).put("field", field))
+                    send(JSONObject().put("kind", "keyboard_text").put("text", keyboardText).put("closed", true).put("field", field))
                     keyboardInput = null
                     keyboardDialog = null
                     keyboardField = null
@@ -181,11 +201,12 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             dialog.show()
             dialog.window?.setLayout(240, 64)
             input.requestFocus()
-            input.post {
-                if (keyboardInput !== input || !dialog.isShowing) return@post
-                (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
-            }
+            input.postDelayed({
+                if (keyboardInput !== input || !dialog.isShowing) return@postDelayed
+                val imm = host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.restartInput(input)
+                imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+            }, 100)
         }
     }
 
@@ -193,7 +214,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
      * while the Godot render thread is busy with a passthrough frame. */
     @UsedByGodot
     fun keyboardSnapshot(): String = JSONObject().put("field", keyboardField ?: "")
-        .put("text", keyboardInput?.text?.toString() ?: "").toString()
+        .put("text", keyboardText).toString()
 
     @UsedByGodot
     fun labels(): String = JSONObject(
@@ -477,11 +498,11 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         val category = request.optString("category", "latest")
         val filters = source.getFilterList()
         val filterJson = request.optJSONObject("filters")
-        if (filterJson != null) {
-            filterJson.optString("tags").takeIf { it.isNotBlank() }?.let { tags ->
-                filters.filterIsInstance<eu.kanade.tachiyomi.source.model.Filter.Text>().firstOrNull { it.name.contains("tag", true) || it.name.contains("genre", true) }?.state = tags
-            }
-        }
+        applyFilterState(filters, filterJson)
+        // Send the source's real filter model instead of making the VR UI guess
+        // at a generic comma-separated tags field. This keeps extension-specific
+        // Select/CheckBox/TriState/AutoComplete semantics intact.
+        send(JSONObject().put("kind", "source_filters").put("source", source.id.toString()).put("items", filterDefinitions(filters)))
         val result = when (category) {
             "latest" -> source.getLatestUpdates(page)
             "browse" -> source.getSearchManga(page, "", filters)
@@ -495,6 +516,62 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             JSONObject().put("kind", "source_results").put("source", source.id.toString()).put("page", page)
                 .put("more", result.hasNextPage).put("items", items),
         )
+    }
+
+    private fun applyFilterState(filters: FilterList, values: JSONObject?) {
+        if (values == null) return
+        filters.forEachIndexed { index, filter ->
+            val value = values.opt(index.toString())
+            if (value == null || value == JSONObject.NULL) return@forEachIndexed
+            when (filter) {
+                is Filter.Select<*> -> filter.state = values.optInt(index.toString(), filter.state)
+                is Filter.CheckBox -> filter.state = values.optBoolean(index.toString(), filter.state)
+                is Filter.TriState -> filter.state = values.optInt(index.toString(), filter.state)
+                is Filter.Text -> filter.state = values.optString(index.toString(), filter.state)
+                is Filter.Sort -> {
+                    val sort = values.optJSONObject(index.toString()) ?: return@forEachIndexed
+                    filter.state = Filter.Sort.Selection(
+                        sort.optInt("index", filter.state?.index ?: 0),
+                        sort.optBoolean("ascending", filter.state?.ascending ?: false),
+                    )
+                }
+                is Filter.AutoComplete -> {
+                    val selected = values.optJSONArray(index.toString()) ?: return@forEachIndexed
+                    filter.state = List(selected.length()) { selected.optString(it) }
+                }
+                is Filter.Group<*> -> {
+                    val selected = values.optJSONArray(index.toString()) ?: return@forEachIndexed
+                    @Suppress("UNCHECKED_CAST")
+                    (filter as Filter.Group<Any?>).state = List(selected.length()) { selected.optString(it) }
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun filterDefinitions(filters: FilterList): JSONArray {
+        val result = JSONArray()
+        filters.forEachIndexed { index, filter ->
+            val item = JSONObject().put("index", index).put("name", filter.name)
+            when (filter) {
+                is Filter.Header -> item.put("type", "header")
+                is Filter.Separator -> item.put("type", "separator")
+                is Filter.Select<*> -> item.put("type", "select").put("values", JSONArray(filter.values.map { it.toString() }))
+                    .put("state", filter.state)
+                is Filter.CheckBox -> item.put("type", "checkbox").put("state", filter.state)
+                is Filter.TriState -> item.put("type", "tristate").put("state", filter.state)
+                is Filter.Text -> item.put("type", "text").put("state", filter.state)
+                is Filter.Sort -> item.put("type", "sort").put("values", JSONArray(filter.values.toList())).put(
+                    "state",
+                    filter.state?.let { JSONObject().put("index", it.index).put("ascending", it.ascending) } ?: JSONObject.NULL,
+                )
+                is Filter.AutoComplete -> item.put("type", "autocomplete").put("values", JSONArray(filter.values)).put("state", JSONArray(filter.state))
+                is Filter.Group<*> -> item.put("type", "group").put("state", JSONArray(filter.state.map { it.toString() }))
+                else -> item.put("type", "text").put("state", filter.state.toString())
+            }
+            result.put(item)
+        }
+        return result
     }
 
     private suspend fun details(mangaId: Long) {

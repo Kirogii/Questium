@@ -82,6 +82,9 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                 if (request.getString("id") in androidOnlyControls) return@withContext
                 if (!item.enabled) return@withContext
                 change(item, request)
+                // Keep the Godot scene toggle (and other shared reader
+                // preferences) live without requiring a settings reopen.
+                publishFilters()
                 revision++
             }
             "settings_back" -> {
@@ -434,7 +437,9 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                 .put("scale_type", prefs.imageScaleType().get())
                 .put("theme", prefs.readerTheme().get())
                 .put("crop_pager", prefs.cropBorders().get())
-                .put("crop_scroll", prefs.cropBordersWebtoon().get() || prefs.cropBordersContinuousVertical().get()),
+                .put("crop_scroll", prefs.cropBordersWebtoon().get() || prefs.cropBordersContinuousVertical().get())
+                .put("stretch_to_fit", host.appGraph.preferenceStore.getBoolean(VrSettingKeys.STRETCH_TO_FIT.key, VrSettingKeys.STRETCH_TO_FIT.default).get())
+                .put("scenes", host.appGraph.preferenceStore.getBoolean(VrSettingKeys.SCENES.key, VrSettingKeys.SCENES.default).get()),
         )
         host.runOnUiThread {
             if (prefs.keepScreenOn().get()) {

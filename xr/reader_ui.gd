@@ -20,6 +20,7 @@ var palm_options_requested := false
 var swipe_start := Vector2.ZERO
 var swiping := false
 var swipe_eligible := false
+var book_settings_section := ""
 
 func _init(host: Node3D) -> void:
     reader = host
@@ -41,6 +42,7 @@ func load_config() -> void:
     config.load(config_path)
     reader.preferred_hand = str(config.get_value("reader", "hand", "right"))
     reader.haptics = bool(config.get_value("reader", "haptics", true))
+    reader.scenes_enabled = bool(config.get_value("reader", "scenes", true))
     layout_mode = str(config.get_value("reader", "layout", "auto"))
     hard_cover = bool(config.get_value("reader", "hard_cover", false))
     for key in reader.bindings:
@@ -53,7 +55,38 @@ func save() -> void:
         config.set_value("buttons", key, reader.bindings[key])
     config.set_value("reader", "hand", reader.preferred_hand)
     config.set_value("reader", "haptics", reader.haptics)
+    config.set_value("reader", "scenes", reader.scenes_enabled)
     config.save(config_path)
+
+func apply_book_settings() -> void:
+    # Chapter tokens are session-scoped, so use the stable displayed chapter
+    # title for the local override key. A missing key intentionally follows the
+    # Android/global VR preference until the user changes this book's switch.
+    var title := str(reader.book.chapter_title).strip_edges()
+    if title.is_empty():
+        reader.book.set_stretch_override(false)
+        book_settings_section = ""
+        return
+    book_settings_section = "book_scaling/" + str(absi(title.hash()))
+    var has_override := config.has_section_key(book_settings_section, "stretch_to_fit")
+    var value := bool(config.get_value(book_settings_section, "stretch_to_fit", reader.reader_filters.get("stretch_to_fit", true)))
+    reader.book.set_stretch_override(has_override, value)
+
+func set_book_stretch_to_fit(enabled: bool) -> void:
+    if book_settings_section.is_empty():
+        apply_book_settings()
+    if book_settings_section.is_empty():
+        return
+    config.set_value(book_settings_section, "stretch_to_fit", enabled)
+    config.save(config_path)
+    reader.book.set_stretch_override(true, enabled)
+
+func clear_book_stretch_override() -> void:
+    if book_settings_section.is_empty():
+        return
+    config.erase_section_key(book_settings_section, "stretch_to_fit")
+    config.save(config_path)
+    reader.book.set_stretch_override(false)
 
 func label(parent: Container, text: String, font_size: int = 24) -> Label:
     var node := Label.new()
@@ -197,6 +230,7 @@ func heading(text: String) -> void:
 
 func show_book() -> void:
     clear()
+    apply_book_settings()
     for index in range(dots.get_child_count()):
         dots.get_child(index).add_theme_stylebox_override("normal", style(Color(1, 1, 1, 0.90 if index == options_page else 0.22), 12))
     heading(["Book Options", "Layout", "System Settings"][options_page])
@@ -205,6 +239,11 @@ func show_book() -> void:
     options_title.clip_text = true
     line(content)
     if options_page == 0:
+        switch_row(content, "Stretch pages to fit", reader.book.stretch_to_fit, func(enabled: bool):
+            set_book_stretch_to_fit(enabled)
+        )
+        if not book_settings_section.is_empty() and config.has_section_key(book_settings_section, "stretch_to_fit"):
+            reader._button(content, "Use global setting", clear_book_stretch_override)
         switch_row(content, "Hard Cover", hard_cover, func(enabled: bool):
             hard_cover = enabled
             reader.book.set_hard_cover(enabled)

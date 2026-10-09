@@ -14,6 +14,19 @@ var joy_owner := ""
 var joy_samples: Dictionary = {}
 var scroll_owner := ""
 
+const PALM_FACE_MIN_DISTANCE := 0.10
+const PALM_FACE_MAX_DISTANCE := 1.00
+const PALM_FACE_DOT := 0.55
+
+
+func _position_available(tracker: XRHandTracker, joint: int) -> bool:
+    # Some Quest runtimes report POSITION_VALID without POSITION_TRACKED for
+    # a frame while the hand remains usable.  Treat either position bit as
+    # usable; requiring TRACKED here made an otherwise stable open palm blink
+    # out of the seeker gesture.
+    var flags := tracker.get_hand_joint_flags(joint)
+    return (flags & (XRHandTracker.HAND_JOINT_FLAG_POSITION_VALID | XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED)) != 0
+
 func finger_extended(tracker: XRHandTracker) -> bool:
     var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
     for joint in [XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP]:
@@ -46,7 +59,7 @@ func thumb_up(tracker: XRHandTracker) -> bool:
 func open_hand(tracker: XRHandTracker) -> bool:
     var open := 0
     for pair in [[XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP], [XRHandTracker.HAND_JOINT_MIDDLE_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_MIDDLE_FINGER_TIP], [XRHandTracker.HAND_JOINT_RING_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_RING_FINGER_TIP], [XRHandTracker.HAND_JOINT_PINKY_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_PINKY_FINGER_TIP]]:
-        if (tracker.get_hand_joint_flags(pair[0]) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0 or (tracker.get_hand_joint_flags(pair[1]) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0: continue
+        if not _position_available(tracker, pair[0]) or not _position_available(tracker, pair[1]): continue
         if tracker.get_hand_joint_transform(pair[0]).origin.distance_to(tracker.get_hand_joint_transform(pair[1]).origin) > 0.045: open += 1
     return open >= 2
 
@@ -56,12 +69,18 @@ func edge_hand(tracker: XRHandTracker, holding: bool = false) -> bool:
     return absf(normal.normalized().dot(reader.book.global_basis.x.normalized())) > (0.15 if holding else 0.30)
 
 func seeker_facing(tracker: XRHandTracker) -> bool:
-    if (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED) == 0 or not open_hand(tracker): return false
+    if not _position_available(tracker, XRHandTracker.HAND_JOINT_PALM) or not open_hand(tracker): return false
     var palm: Transform3D = reader.origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
     var toward_head: Vector3 = reader.camera.global_position - palm.origin
-    # OpenXR -Y points out of the palm; +Y faces the back of the hand.
-    # Keep the sign: an absolute dot also reveals the menu with the palm away.
-    return toward_head.length() > 0.12 and toward_head.length() < 0.85 and (-palm.basis.y).normalized().dot(toward_head.normalized()) > 0.75
+    var distance := toward_head.length()
+    if distance <= PALM_FACE_MIN_DISTANCE or distance >= PALM_FACE_MAX_DISTANCE:
+        return false
+    # OpenXR -Y points out of the palm; +Y faces the back of the hand.  Use an
+    # orthonormal basis because hand-tracking poses can contain small scale or
+    # skew noise.  Keep the signed dot: an absolute dot would accept the back
+    # of the hand and make the seeker appear for the wrong gesture.
+    var palm_normal := -palm.basis.orthonormalized().y
+    return palm_normal.dot(toward_head / distance) > PALM_FACE_DOT
 
 func joystick(hand: String, tracker: XRHandTracker, valid: bool, delta: float) -> bool:
     if not valid or not thumb_up(tracker) or not reader.holder.is_empty() or not reader.ui_owner.is_empty() or not reader.window_holder.is_empty():
