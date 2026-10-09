@@ -5,6 +5,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import eu.kanade.domain.manga.interactor.UpdateManga
+import eu.kanade.tachiyomi.util.retainCovers
 import exh.metadata.metadata.EHentaiSearchMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -102,6 +103,10 @@ class EHentaiUpdateHelper(context: Context) {
             val (chapterUpdates, newChapters, new) = getChapterList(accepted, toDiscard, chainsAsChapters)
 
             toDiscard.forEach {
+                // Starts the "keep removed covers" window. A discarded duplicate is still removed
+                // from the library, and unstamped its cover was over the retention cutoff the
+                // moment it became an orphan.
+                it.manga.retainCovers()
                 mangaUpdates += MangaUpdate(
                     id = it.manga.id,
                     favorite = false,
