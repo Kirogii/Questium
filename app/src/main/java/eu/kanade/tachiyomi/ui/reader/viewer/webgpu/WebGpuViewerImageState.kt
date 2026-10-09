@@ -47,6 +47,41 @@ internal fun WebGpuViewer.refreshSpreads() {
 }
 
 // KMK -->
+/**
+ * Contrast floor the e-ink preset applies.
+ *
+ * E-ink panels have no backlight to wash grey out, so a mid contrast reads as flat and the page
+ * looks blank in bright surroundings. The floor is applied on top of whatever the reader chose
+ * rather than replacing it, so raising contrast past it still works.
+ */
+internal const val EINK_MIN_CONTRAST = 1.15f
+
+/** The contrast actually handed to the filter chain; see [EINK_MIN_CONTRAST]. Pure. */
+internal fun effectiveContrast(contrast: Float, einkPreset: Boolean): Float =
+    if (einkPreset) maxOf(contrast, EINK_MIN_CONTRAST) else contrast
+
+/**
+ * Whether the brightness/contrast pass has anything to do.
+ *
+ * Both knobs are neutral at 0 and 1 respectively, so the untouched pair is exactly the identity
+ * transform - attaching it anyway would cost a full-screen GPU pass per frame to reproduce the input
+ * exactly. The comparison is against 1f rather than a tolerance because both values come from an
+ * integer percent preference, so there is nothing in between to be fuzzy about.
+ */
+internal fun isBrightnessContrastActive(brightness: Float, contrast: Float): Boolean =
+    brightness != 0f || contrast != 1f
+
+/**
+ * Whether the LUT pass has anything to do.
+ *
+ * Three things have to agree, and only the first is obvious from the settings screen: a LUT must
+ * have actually loaded - which a missing or malformed custom file does not produce - the intensity
+ * must be above zero, and the preset must not be the "none" sentinel. The chain runs them in a
+ * fixed order, so a pass attached that does nothing still costs bandwidth ahead of the ones that do.
+ */
+internal fun isLutActive(hasLut: Boolean, intensity: Float, preset: String): Boolean =
+    hasLut && intensity > 0f && preset != WEBGPU_LUT_PRESET_NONE
+
 internal fun WebGpuViewer.applyPageOffset() {
     try {
         val offset = config.pageOffset
@@ -82,15 +117,10 @@ internal fun WebGpuViewer.applyImageState() {
         darkModeFilter.tolerance = config.darkModeTolerance
         darkModeFilter.chunkRange = config.darkModeChunkRange
         darkModeFilter.enabled = config.webgpuDarkMode
-        val effectiveContrast = if (config.einkPreset) {
-            maxOf(config.contrast, 1.15f)
-        } else {
-            config.contrast
-        }
+        val effective = effectiveContrast(config.contrast, config.einkPreset)
         brightnessContrastFilter.brightness = config.brightness
-        brightnessContrastFilter.contrast = effectiveContrast
-        brightnessContrastFilter.enabled =
-            config.brightness != 0f || effectiveContrast != 1f
+        brightnessContrastFilter.contrast = effective
+        brightnessContrastFilter.enabled = isBrightnessContrastActive(config.brightness, effective)
         hlgFilter.exposure = config.hlgExposure
         hlgFilter.enabled = config.hlgEnabled
         einkGrayscaleFilter.saturation = if (config.einkPreset) 0f else 1f
@@ -98,8 +128,11 @@ internal fun WebGpuViewer.applyImageState() {
         lutFilter.intensity = config.lutIntensity
         lutFilter.enabled = true
         resolveLutFilter()
-        val lutActive = lutFilter.lut != null && config.lutIntensity > 0f &&
-            config.lutPreset != WEBGPU_LUT_PRESET_NONE
+        val lutActive = isLutActive(
+            hasLut = lutFilter.lut != null,
+            intensity = config.lutIntensity,
+            preset = config.lutPreset,
+        )
         val desired = buildList {
             if (brightnessContrastFilter.enabled) add(brightnessContrastFilter)
             if (hlgFilter.enabled) add(hlgFilter)
