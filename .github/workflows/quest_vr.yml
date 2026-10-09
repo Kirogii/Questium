@@ -123,9 +123,13 @@ jobs:
         run: |
           RELEASE_TITLE="$RELEASE_TAG"
           if [ "$RELEASE_TAG" = "v1.0.0" ]; then RELEASE_TITLE="$RELEASE_TAG - First Release"; fi
+          RELEASE_ARGS=(--title "$RELEASE_TITLE" --draft=false --latest --notes-file .github/alpha-release.md)
+          if [ "$RELEASE_TAG" = "v1.0.1" ]; then RELEASE_ARGS+=(--prerelease); else RELEASE_ARGS+=(--prerelease=false); fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" quest-apk/* --clobber
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --prerelease=false --draft=false --latest --notes-file .github/alpha-release.md
+            gh release edit "$RELEASE_TAG" "${RELEASE_ARGS[@]}"
           else
-            gh release create "$RELEASE_TAG" quest-apk/* --verify-tag --title "$RELEASE_TITLE" --latest --notes-file .github/alpha-release.md
+            CREATE_ARGS=(--verify-tag --title "$RELEASE_TITLE" --latest --notes-file .github/alpha-release.md)
+            if [ "$RELEASE_TAG" = "v1.0.1" ]; then CREATE_ARGS+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" quest-apk/* "${CREATE_ARGS[@]}"
           fi
