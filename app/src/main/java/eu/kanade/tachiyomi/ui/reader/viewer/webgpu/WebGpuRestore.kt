@@ -63,7 +63,7 @@ internal fun WebGpuViewer.restoreContinuousAfterDecode(
             // wrong direction - wrong position, and an O(absolute) chain walk.
             st.restorePosition(
                 ContinuousPosition(
-                    documentY = stored.offsetRatio,
+                    documentY = stored.documentY,
                     scale = stored.zoom,
                     offsetX = stored.offsetX,
                     pageIndexHint = 0,
