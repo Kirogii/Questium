@@ -3,11 +3,12 @@ package eu.kanade.presentation.browse.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalResources
@@ -52,16 +53,23 @@ fun BrowseSourceComfortableGrid(
         return
     }
 
+    // Read through a derivedStateOf so the count changing is the only thing that recomposes this
+    // grid; reading layoutInfo directly would recompose on every scroll.
+    val gridState = rememberLazyGridState()
+    val loadingCellCount by remember(gridState) { derivedStateOf { gridState.layoutInfo.maxSpan } }
+
     LazyVerticalGrid(
+        state = gridState,
         columns = columns,
         contentPadding = contentPadding + PaddingValues(8.dp),
         verticalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridVerticalSpacer),
         horizontalArrangement = Arrangement.spacedBy(CommonMangaItemDefaults.GridHorizontalSpacer),
     ) {
         if (mangaList.loadState.prepend is LoadState.Loading) {
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                BrowseSourceLoadingItem()
-            }
+            browseSourceComfortableGridLoadingCells(
+                count = loadingCellCount,
+                usePanoramaCover = usePanoramaCover,
+            )
         }
 
         items(count = mangaList.itemCount) { index ->
@@ -85,12 +93,14 @@ fun BrowseSourceComfortableGrid(
             )
         }
 
-        // A refresh over items already on screen is a footer, not a placeholder for the grid.
+        // A refresh or a further page is a footer, not a placeholder for the whole grid - but it
+        // still has to be grid-shaped, or the covers above it sit above three list rows.
         if (mangaList.loadState.refresh is LoadState.Loading || mangaList.loadState.append is LoadState.Loading) {
             if (mangaList.itemCount > 0) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    BrowseSourceLoadingItem()
-                }
+                browseSourceComfortableGridLoadingCells(
+                    count = loadingCellCount,
+                    usePanoramaCover = usePanoramaCover,
+                )
             }
         }
     }
