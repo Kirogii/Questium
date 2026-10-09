@@ -42,7 +42,7 @@ object SettingsVrScreen : SearchableSettings {
 }
 
 object VrSettingsHost : SettingHost {
-    override val settingKeys = listOf(VrSettingKeys.ENABLED)
+    override val settingKeys = listOf(VrSettingKeys.ENABLED, VrSettingKeys.STRETCH_TO_FIT, VrSettingKeys.SCENES)
 
     init {
         SettingsRegistry.register(this)
@@ -66,6 +66,32 @@ object VrSettingsHost : SettingHost {
                         if (value) context.startActivity(Intent(context, VrActivity::class.java))
                         true
                     },
+                )
+            },
+        ),
+        SettingDefinition(
+            key = VrSettingKeys.STRETCH_TO_FIT,
+            titleRes = KMR.strings.pref_vr_stretch_to_fit,
+            bind = { key -> getBoolean(key.key, key.default) },
+            makeItem = { enabled, gate ->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = enabled,
+                    title = stringResource(KMR.strings.pref_vr_stretch_to_fit),
+                    subtitle = stringResource(KMR.strings.pref_vr_stretch_to_fit_summary),
+                    enabled = gate,
+                )
+            },
+        ),
+        SettingDefinition(
+            key = VrSettingKeys.SCENES,
+            titleRes = KMR.strings.pref_vr_scenes,
+            bind = { key -> getBoolean(key.key, key.default) },
+            makeItem = { enabled, gate ->
+                Preference.PreferenceItem.SwitchPreference(
+                    preference = enabled,
+                    title = stringResource(KMR.strings.pref_vr_scenes),
+                    subtitle = stringResource(KMR.strings.pref_vr_scenes_summary),
+                    enabled = gate,
                 )
             },
         ),

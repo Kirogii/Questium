@@ -59,12 +59,18 @@ var crop_pager := false
 var crop_scroll := false
 var crop_bounds: Dictionary = {}
 var scroll_content_width := 0.70
+var global_stretch_to_fit := true
+var stretch_override := false
+var stretch_to_fit := true
 
 func apply_reader_filters(data: Dictionary) -> void:
     preload_pages = clampi(int(data.get("preload", 4)), 2, 10)
     page_transitions = bool(data.get("page_transitions", true))
     crop_pager = bool(data.get("crop_pager", false))
     crop_scroll = bool(data.get("crop_scroll", false))
+    global_stretch_to_fit = bool(data.get("stretch_to_fit", true))
+    if not stretch_override:
+        stretch_to_fit = global_stretch_to_fit
     var ratio := float(data.get("scroll_ratio", 0))
     var content_width := minf(0.70, ratio) if ratio > 0 else 0.70
     scroll_content_width = content_width * (1 - 2 * clampf(float(data.get("side_padding", 0)) / 100, 0, 0.4))
@@ -89,6 +95,11 @@ func apply_reader_filters(data: Dictionary) -> void:
         surface.material_override.set_shader_parameter("paper_color", Color.WHITE if int(data.get("theme", 1)) == 0 else Color(0.04, 0.04, 0.04))
     for slot in scroll_slots:
         slot.material_override.set_shader_parameter("side_padding", (1 - scroll_content_width / 0.70) / 2)
+    _refresh()
+
+func set_stretch_override(enabled: bool, value: bool = true) -> void:
+    stretch_override = enabled
+    stretch_to_fit = value if enabled else global_stretch_to_fit
     _refresh()
 var source_sizes: Dictionary = {}
 var strips: Dictionary = {}
@@ -278,6 +289,8 @@ func set_chapter(count: int, start: int = 0, right_to_left: bool = false) -> voi
     crop_bounds.clear()
     strips.clear()
     strip_textures.clear()
+    stretch_override = false
+    stretch_to_fit = global_stretch_to_fit
     scroll_offset = 0.0
     scroll_overshoot = 0.0
     scroll_mode = mode == "scroll" or (vertical_chapter and mode != "book")
@@ -325,6 +338,7 @@ func _refresh() -> void:
     close_marker.visible = not preview_only
     if not is_instance_valid(scroll_window):
         return
+    _apply_page_scaling()
     cover_pivot.rotation.y = lerpf(PI, REST_ANGLE, openness)
     for index in range(edge_bars.size()):
         edge_bars[index].visible = not preview_only and (index == 0 or scroll_mode or openness > 0.05)
@@ -365,6 +379,14 @@ func _refresh() -> void:
         turning_material.set_shader_parameter("front_source", Vector2(source_sizes.get(front, Vector2i(1024, 1463))))
         turning_material.set_shader_parameter("back_source", Vector2(source_sizes.get(back, Vector2i(1024, 1463))))
         _paint(left_leaf if turn_side < 0 else right_leaf, first_page + (3 if turn_direction > 0 else -2))
+
+func _apply_page_scaling() -> void:
+    # Stretching is deliberately limited to the physical two-page reader. The
+    # scroll window (and future single-page layouts) retain their source aspect.
+    var enabled := stretch_to_fit and not scroll_mode
+    for surface in [left_leaf, right_leaf, turning_leaf]:
+        if is_instance_valid(surface) and surface.material_override:
+            surface.material_override.set_shader_parameter("stretch_to_fit", enabled)
 
 func can_turn(direction: int) -> bool:
     if scroll_mode:

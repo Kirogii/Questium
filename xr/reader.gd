@@ -2,6 +2,7 @@ extends Node3D
 
 const BookScript = preload("res://book.gd")
 const HandVisual = preload("res://hand_visual.gd")
+const RoomScript = preload("res://room.gd")
 const PINCH_START_DISTANCE := 0.022
 const PINCH_RELEASE_DISTANCE := 0.032
 const CONTACT_HYSTERESIS := 0.035
@@ -30,6 +31,8 @@ var toolbar: Node3D
 var toolbar_forced := false
 var palm_dwell := 0.0
 var palm_hidden := 0.0
+const PALM_DWELL_REQUIRED := 0.10
+const PALM_HIDE_DELAY := 0.12
 var window_holder := ""
 var held_window: Node3D
 var held_window_offset := Vector3.ZERO
@@ -74,6 +77,7 @@ var preferred_hand := "right"
 var haptics := true
 var ui_hand := ""
 var passthrough_enabled := false
+var scenes_enabled := true
 var awaiting_head_pose := false
 var bindings := {"left:trigger_click": "Previous page", "right:trigger_click": "Next page", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
 
@@ -118,6 +122,9 @@ func _ready() -> void:
             labels = translated
     ui = preload("res://reader_ui.gd").new(self)
     ui.load_config()
+    room = RoomScript.new()
+    room.visible = scenes_enabled
+    add_child(room)
     _build_toolbar()
     toolbar = toolbar_view.get_parent()
     toolbar.reparent(self)
@@ -138,6 +145,7 @@ func _ready() -> void:
     camera.add_child(dimmer)
     workspace = preload("res://frosted_workspace.gd").new(self)
     workspace.build()
+    _protect_workspace_depth()
     hand_page_turn = preload("res://hand_page_turn.gd").new(self)
     hand_touch = preload("res://hand_touch.gd").new(self)
     hand_controls = preload("res://hand_controls.gd").new(self)
@@ -256,6 +264,7 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
     material.albedo_texture = viewport.get_texture()
     material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+    material.render_priority = 100
     surface.material_override = material
     node.add_child(surface)
     var frost := MeshInstance3D.new()
@@ -278,9 +287,30 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     content.position = Vector2(16.0, 12.0)
     content.size = Vector2(pixels) - Vector2(32.0, 24.0)
     viewport.add_child(content)
+    node.set_meta("raycast_priority", 0)
     var data := {"node": node, "viewport": viewport, "size": size, "pixels": pixels, "content": content, "background": background}
     panels.append(data)
     return data
+
+func _protect_workspace_depth() -> void:
+    # Map meshes are ordinary depth-tested geometry. HUD and popup surfaces
+    # must retain their existing visual/raycast precedence when a map asset
+    # happens to overlap their physical placement.
+    if not workspace:
+        return
+    workspace.hud.node.set_meta("raycast_priority", 1)
+    for target in panels:
+        var node: Node3D = target.node
+        if node == workspace.hud.node or node == toolbar or node == ui.options:
+            node.set_meta("raycast_priority", 1)
+            for child in node.get_children():
+                if child is MeshInstance3D:
+                    var material: Material = child.material_override
+                    if material is StandardMaterial3D:
+                        material.render_priority = 120
+                        material.no_depth_test = true
+                    elif material is ShaderMaterial:
+                        material.render_priority = 120
 
 func _button(row: Container, text: String, callback: Callable) -> Button:
     var button := Button.new()
@@ -476,11 +506,14 @@ func close_book(return_home: bool = true) -> void:
         workspace.show_section("Home")
 
 func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
-    palm_dwell = palm_dwell + delta if facing else 0.0
+    # Hand tracking can lose one frame when fingers cross or the hand leaves
+    # the camera's best depth range.  Preserve most of the reveal dwell during
+    # that brief gap, while still hiding promptly after an intentional turn.
+    palm_dwell = minf(0.5, palm_dwell + delta) if facing else maxf(0.0, palm_dwell - delta * 0.35)
     palm_hidden = 0.0 if facing else palm_hidden + delta
-    var was_visible := toolbar.visible
     var natural_hands := tracked.values().any(func(value): return value.get("natural_hand", false))
-    var active := (toolbar_forced and not natural_hands) or (facing and palm_dwell > 0.10)
+    var palm_active := palm_dwell > PALM_DWELL_REQUIRED and (facing or palm_hidden <= PALM_HIDE_DELAY)
+    var active := (toolbar_forced and not natural_hands) or palm_active
     toolbar.visible = active and not chapter_token.is_empty()
     if is_instance_valid(native_controls):
         native_controls.visible = active and (not chapter_token.is_empty() or library_panel.visible)
@@ -585,6 +618,8 @@ func _response(json: String) -> void:
                         _request("page", {"token": model.token, "index": page})
         "reader_filters":
             reader_filters = data
+            if data.has("scenes"):
+                _set_scenes_enabled(bool(data.get("scenes", true)))
             for model in books: model.apply_reader_filters(data)
             ui.number.visible = bool(data.get("page_numbers", false))
             ui.total.visible = bool(data.get("page_numbers", false))
@@ -645,6 +680,7 @@ func _response(json: String) -> void:
             book.chapter_title = str(data.title)
             book.vertical_chapter = bool(data.get("vertical", false))
             book.set_chapter(int(data.count), int(data.start), bool(data.get("rtl", false)))
+            ui.apply_book_settings()
             book.set_hard_cover(ui.hard_cover)
             book.set_open(previous_open)
             seeker.max_value = maxi(0, book.page_count - 1)
@@ -733,7 +769,7 @@ func _set_passthrough(enabled: bool) -> void:
     var active: bool = enabled and supported
     passthrough_enabled = active
     if is_instance_valid(room):
-        room.visible = not active
+        room.visible = scenes_enabled
     get_viewport().transparent_bg = active
     environment.environment.background_color = Color(0.0, 0.0, 0.0, 0.0 if active else 1.0)
     if xr:
@@ -741,7 +777,16 @@ func _set_passthrough(enabled: bool) -> void:
     if enabled and not supported:
         status.text = _label("Passthrough unavailable; using black")
 
+func _set_scenes_enabled(enabled: bool) -> void:
+    scenes_enabled = enabled
+    if ui:
+        ui.save()
+    if is_instance_valid(room):
+        room.visible = scenes_enabled
+
 func _process(_delta: float) -> void:
+    if is_instance_valid(room) and is_instance_valid(book) and not moving and holder.is_empty():
+        room.resolve_book_transform(book)
     frosted_glass.update(self, _delta)
     if android_app and not android_started:
         var surface = android_layer.get_android_surface()
@@ -869,6 +914,8 @@ func _cancel_interactions() -> void:
     holder = ""
     moving = false
     scale_hands.clear()
+    if is_instance_valid(room):
+        room.resolve_book_transform(book)
     scale_start_distance = 0.0
     if is_instance_valid(held_window) and workspace:
         workspace.finish_drag(held_window)
@@ -1057,6 +1104,8 @@ func _release_body(hand: String) -> void:
     holder = ""
     moving = false
     scale_hands.clear()
+    if is_instance_valid(room):
+        room.resolve_book_transform(book)
 
 func _page_region(start: Vector3, direction: Vector3, hand: String) -> void:
     var hit := _book_ray_hit(start, direction)
@@ -1123,7 +1172,9 @@ func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: b
         var captured: bool = not ui_capture.is_empty() and ui_capture.panel == candidate
         if captured or (distance >= 0 and distance <= 5 and absf(point.x) <= candidate.size.x / 2 and absf(point.y) <= candidate.size.y / 2):
             if captured or candidate.get("popup", false) or book_hit.is_empty() or distance < float(book_hit.distance):
-                candidates.append({"panel": candidate, "distance": distance, "priority": int(node.get_meta("popup_priority", 0))})
+                var popup_priority := int(node.get_meta("popup_priority", 0))
+                var raycast_priority := int(node.get_meta("raycast_priority", 0))
+                candidates.append({"panel": candidate, "distance": distance, "priority": maxi(popup_priority, raycast_priority)})
     candidates.sort_custom(func(a: Dictionary, b: Dictionary): return a.priority > b.priority if a.priority != b.priority else a.distance < b.distance)
     for entry in candidates:
         var panel: Dictionary = entry.panel

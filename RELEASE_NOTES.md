@@ -20,6 +20,7 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Add an enabled-by-default VR Scenes setting with persisted map selection, a bar-scene loader, a procedural fallback bar, interactable two-person seat points, room collision surfaces, and animated toon/fire scene materials.
 - Quest v1.0.1: add real ONNX AI upscaling to both the spatial book and long-page strips, including a per-book Upscale Manga toggle and live page refresh when processing settings change.
 - Make spatial reader crop, scale, contrast, scroll aspect/padding, page transitions, page numbers, preloading and keep-screen-on consume shared settings; label Android-only reader options explicitly.
 - Publish v1.0.1 through the signed Quest workflow as a regular release with an alpha-testing disclaimer. Most features are added, but continued headset testing is required.
@@ -32,6 +33,7 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Standardize VR library and source covers into a fixed cropped box, cap card titles at two lines with full-title hover tooltips, and present source filters in a bottom sheet with every extension-provided option.
 - Keep the Quest keyboard connected to the selected textbox, support fingertip taps on the book's close button, and show the hand seeker only when the palm faces you.
 - Make fingertip taps work on library and popup buttons even when the thumb is obscured, capture fast taps on resized panels, and smooth hand-pointer jitter without freezing aim during pinches.
 - Center popups closer in front of the HUD, minimize them when tapping or grabbing the HUD, use a full-height tinted sidebar with a bottom Settings button, and show preview action labels on hover.
@@ -58,6 +60,9 @@ files moved. See .github/scripts/release_notes.py.
 - Replace the three-window workspace with a single frosted Home, Source Search and Reader interface in the VR room; selecting a cover brings out the physical book preview.
 
 ### Fix
+- Make the non-dominant palm seeker tolerate brief Quest tracking-bit dropouts while still rejecting the back of the hand.
+- Stretch two-page chapter images to the physical page by default, with global and per-book controls to disable or restore the global setting.
+- Show each source's real filter choices in VR instead of a generic typed tags field, and keep the Meta Quest keyboard's textbox session alive through IME composition.
 - Attach the page seeker to the non-dominant open hand while it faces you; hide it when the hand turns away instead of leaving it below your view.
 - Keep tracked hands visible when the native Quest mesh is delayed or unavailable by using a bundled skinned fallback; support unspecified tracking-source data and retain hand visuals during brief fingertip occlusion.
 - Prevent distant second-hand pinches from resizing a held book; preserve its pose when either hand lets go, and keep cover handles reachable throughout their hinge movement.

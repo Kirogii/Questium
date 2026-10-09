@@ -623,6 +623,10 @@
     <string name="pref_vr_enable">VR mode</string>
     <string name="pref_vr_summary">Spatial library and physical book reader</string>
     <string name="pref_vr_requires_quest">Requires a Meta Quest headset with head tracking</string>
+    <string name="pref_vr_stretch_to_fit">Stretch pages to fit</string>
+    <string name="pref_vr_stretch_to_fit_summary">Fill both pages in the physical two-page VR book</string>
+    <string name="pref_vr_scenes">Scenes</string>
+    <string name="pref_vr_scenes_summary">Show the bar scene when a project map is available; otherwise use the built-in fallback</string>
     <string name="vr_library">Library</string>
     <string name="vr_center">Center</string>
     <string name="vr_black">Black</string>

@@ -18,6 +18,16 @@ func check() -> void:
     ui.consume({"kind": "extensions", "items": [{"id": "pkg.example", "title": "Example extension"}]})
     ui.show_sources(true)
     assert(ui.picker_list.get_child_count() == 1, "Extension browser is separate from installed sources")
+    ui.selected_source = "1"
+    ui.consume({"kind": "source_filters", "source": "1", "items": [
+        {"index": 0, "name": "Mode", "type": "select", "values": ["Popular", "Latest"], "state": 0},
+        {"index": 1, "name": "Safe", "type": "checkbox", "state": false},
+        {"index": 2, "name": "Genre", "type": "tristate", "state": 0},
+        {"index": 3, "name": "Tags", "type": "autocomplete", "values": ["Action", "Drama"], "state": []},
+    ]})
+    ui.show_source_filters()
+    assert(ui.source_filter_body.get_child_count() == 6, "Source filters expose the backend's available choices")
+    assert(ui.source_filters.is_empty(), "Filter choices do not invent a free-form tags query")
     ui.keyboard_target = ui.search
     ui.keyboard_field = str(ui.search.get_instance_id()) + ":1"
     ui.consume({"kind": "keyboard_text", "field": "stale", "text": "wrong"})
