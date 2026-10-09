@@ -617,10 +617,10 @@ func _response(json: String) -> void:
                     for page in range(maxi(0, model.first_page - 2), mini(model.page_count, model.first_page + 4)):
                         _request("page", {"token": model.token, "index": page})
         "reader_filters":
-            reader_filters = data
+            reader_filters.merge(data)
             if data.has("scenes"):
                 _set_scenes_enabled(bool(data.get("scenes", true)))
-            for model in books: model.apply_reader_filters(data)
+            for model in books: model.apply_reader_filters(reader_filters)
             ui.number.visible = bool(data.get("page_numbers", false))
             ui.total.visible = bool(data.get("page_numbers", false))
         "error":
