@@ -37,6 +37,17 @@ The format is a modified version of [Keep a Changelog](https://keepachangelog.co
 - Fix app not reading `tachiyomix.extensionLib` extension metadata ([@AntsyLich](https://github.com/AntsyLich)) ([#3545](https://github.com/mihonapp/mihon/pull/3545), [#3559](https://github.com/mihonapp/mihon/pull/3559))
 - Fix reader navigator slider steps not updating after changing chapter ([@AntsyLich](https://github.com/AntsyLich)) ([#3549](https://github.com/mihonapp/mihon/pull/3549))
 
+## [v1.23.14] - 2026-10-09
+### New
+- **Are you? Are you? Coming to the tree?** They strung up a man, and say he murdered three.
+### Fix
+- Source grids no longer switch to a list-shaped skeleton while the next page is loading — the loading placeholders now stay grid-shaped, matching the covers already on screen.
+- **Fixed the continuous reader running away from you at a chapter boundary.** Scrolling into the next chapter kept snapping back, so the pages moved down faster than you could read them.
+- **Fixed pages in a chapter you had scrolled into sometimes never loading.** They sat on their placeholder until you left and came back.
+- Removed covers are now actually kept for as long as the retention setting says. The setting could be ignored entirely: the timestamp that starts the window was not always written, several ways of leaving the library skipped it, and a details refresh could delete a cover belonging to a title already removed.
+- **Fixed your zoom being forgotten when you reopen a chapter.** In continuous and webtoon the zoom-out slider goes down to 1%, but anything under half size was being rounded up to 50% before it was saved — so a chapter you had zoomed out to read reopened zoomed in. Very zoomed-in paged pages were clipped for the same reason.
+
+
 ## [v1.23.13] - 2026-10-09
 ### New
 - **I'm in the thick of it and everybody knows.** Hey guys, Houri dev here. I'm in the thick of it
