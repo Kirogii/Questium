@@ -43,6 +43,18 @@ internal class ContinuousPageWindow(val radius: Int) {
         known[index + radius] = true
     }
 
+    /**
+     * Marks [index] unknown again so the next ask for it re-walks, leaving the anchor and every
+     * other slot alone.
+     *
+     * For an entry that has gone stale rather than for the whole window: the render walk hits this
+     * once per page per frame, so dropping everything would throw away the fill-in the window
+     * exists to provide. Out of range throws like the other accessors do.
+     */
+    fun invalidate(index: Int) {
+        known[index + radius] = false
+    }
+
     fun reset(anchor: ViewerPage?) {
         this.anchor = anchor
         known.fill(false)
@@ -220,7 +232,22 @@ internal fun WebGpuViewer.continuousPage(index: Int): ViewerPage? {
     if (index !in -window.radius..window.radius) {
         return walkContinuousPage(index)
     }
-    if (window.isKnown(index)) return window.get(index)
+    if (window.isKnown(index)) {
+        val hit = window.get(index)
+        if (hit == null) return null
+        // Identity, not key: a shell the cache dropped and rebuilt is a different object in the
+        // same slot. Eviction here is routine rather than exceptional - the continuous cache
+        // budget is 7 + 2*reach against a window radius of 64 - and the window outlives every
+        // eviction, because only an anchor change, a split, a rebuild or a device loss resets it.
+        // Serving the evicted shell is what makes a page in a scrolled-into chapter never load:
+        // the render draws its cleaned-up image, and the decode worker drops any page the cache
+        // no longer holds, so nothing ever decodes it. Re-walking rebuilds it.
+        //
+        // Read under the lock rather than bare: the walk below takes it on every step anyway, and
+        // pageCache is a LinkedHashMap that eviction mutates from the viewer's own threads.
+        if (synchronized(lock) { pageInCache(hit) }) return hit
+        window.invalidate(index)
+    }
 
     val anchor = window.anchor ?: currentPage ?: return null
     if (window.anchor !== anchor) {
@@ -236,10 +263,18 @@ internal fun WebGpuViewer.continuousPage(index: Int): ViewerPage? {
     while (at != index) {
         page = if (step > 0) page?.next else page?.prev
         at += step
-        if (page == null) {
-            window.put(at, null)
-            return null
-        }
+        // Not remembered. A null here means the chain could not be followed *yet* - at a chapter
+        // boundary that is the next chapter still loading, and its pages are null until the
+        // loader publishes them. Caching it made the gap permanent: the render walk reported the
+        // document ending there, so the state clamped the scroll back on every frame (the pages
+        // ran away downwards as the reader pushed forward), and because the clamp stops the walk
+        // before it can emit a page change, the anchor never moved and nothing reset the window.
+        // Re-resolving each ask costs a few memoised chain steps - NeighborLink, which hardened
+        // against exactly this, keys on the chapter's load state - and is the whole difference
+        // between a boundary that fills in and one that stays blank.
+        //
+        // The hole a split leaves is still cached, by syncPageList's own reset rather than here.
+        if (page == null) return null
         window.put(at, page)
     }
     return page

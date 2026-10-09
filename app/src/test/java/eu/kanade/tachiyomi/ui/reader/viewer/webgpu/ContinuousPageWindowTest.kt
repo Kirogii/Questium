@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer.webgpu
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
+import io.mockk.mockk
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
@@ -17,12 +18,18 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * are deliberately separate, because a split leaves a hole where a page used to be, and a window
  * that reported "not known" for a hole would walk straight past it.
  *
+ * `invalidate` covers the third: the page cache drops and rebuilds shells while the window goes on
+ * naming the old ones, so a slot has to be droppable on its own without disturbing the fill-in.
+ *
  * [PageListWatch] decides whether the loader has replaced the page list under the viewer. It has
  * to compare three chapters, not just the current one, and it has to compare by content: a fresh
  * array holding the same three versions is not a change.
  */
 @Execution(ExecutionMode.CONCURRENT)
 class ContinuousPageWindowTest {
+
+    /** Stand-in for a cached shell: the window only stores and compares identities. */
+    private val shell = mockk<ViewerPage>()
 
     // ---------- window bounds ----------
 
@@ -105,6 +112,53 @@ class ContinuousPageWindowTest {
         window.reset(null)
         window.isKnown(0) shouldBe false
         window.anchor.shouldBeNull()
+    }
+
+    // ---------- single-slot invalidation ----------
+
+    @Test
+    fun `invalidate forgets one slot and keeps the anchor and its neighbours`() {
+        val window = ContinuousPageWindow(radius = 3)
+        window.put(0, shell)
+        window.put(1, shell)
+        window.put(-1, shell)
+        window.anchor = shell
+
+        window.invalidate(1)
+
+        // Only the slot it was pointed at: the render walk asks per page per frame, so this has
+        // to cost one slot rather than the fill-in the window exists to provide.
+        window.isKnown(1) shouldBe false
+        window.isKnown(0) shouldBe true
+        window.isKnown(-1) shouldBe true
+        window.anchor shouldBe shell
+    }
+
+    @Test
+    fun `invalidate leaves a populated slot readable`() {
+        // Re-walking refills it, so nothing is lost by marking it unknown - but the stored page
+        // must not be handed back by a caller that only checks get().
+        val window = ContinuousPageWindow(radius = 2)
+        window.put(1, shell)
+        window.invalidate(1)
+        window.get(1) shouldBe shell
+        window.isKnown(1) shouldBe false
+    }
+
+    @Test
+    fun `invalidate is idempotent`() {
+        val window = ContinuousPageWindow(radius = 1)
+        window.put(0, shell)
+        window.invalidate(0)
+        window.invalidate(0)
+        window.isKnown(0) shouldBe false
+    }
+
+    @Test
+    fun `invalidate out of range throws like the other accessors`() {
+        val window = ContinuousPageWindow(radius = 2)
+        shouldThrow<IndexOutOfBoundsException> { window.invalidate(3) }
+        shouldThrow<IndexOutOfBoundsException> { window.invalidate(-3) }
     }
 
     // ---------- the page-list watch ----------
