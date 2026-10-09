@@ -1151,10 +1151,16 @@ class LibraryScreenModel(
                 val toDelete = mangas
                     .distinctBy { it.id }
                     .map {
-                        it.retainCovers(coverCache)
+                        // retainCovers stamps the files for the retention window and returns a copy
+                        // carrying the new coverLastModified. The single-manga path forwards that
+                        // stamp to the DB; discarding it here left the bulk path bumping nothing,
+                        // so a cover still on screen outlived the removal that should have redrawn it.
+                        val retained = it.retainCovers(coverCache)
                         MangaUpdate(
                             favorite = false,
                             id = it.id,
+                            coverLastModified = retained.coverLastModified
+                                .takeIf { stamp -> stamp != it.coverLastModified },
                         )
                     }
                 updateManga.awaitAll(toDelete)

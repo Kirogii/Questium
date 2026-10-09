@@ -100,7 +100,18 @@ class WebGpuReadingPositionStore(
             if (!takeSaveSlot(chapterId, now, force)) return
             val storageKey = key(chapterId)
             val isNewEntry = !prefs.contains(storageKey)
-            val a = anchor.sanitized()
+            // Sanitized field by field rather than through PageAnchor.sanitized(): that one clamps
+            // scale to 0.5..8, which is the library's paged assumption, and it runs *before* the
+            // record is serialized - so routing the write through it destroyed a zoomed-out
+            // continuous position no matter what sanitizeZoom allowed. The store owns its own
+            // format, so it owns its own bounds; the live state re-clamps on apply.
+            val a = PageAnchor(
+                pageIndex = anchor.pageIndex.coerceIn(0, PageAnchor.MAX_PAGE_INDEX),
+                documentY = sanitizeDocumentY(anchor.documentY),
+                offsetX = sanitizeOffsetX(anchor.offsetX),
+                scale = sanitizeZoom(anchor.scale),
+                fraction = sanitizeFraction(anchor.fraction),
+            )
             val fields = listOf(
                 CURRENT_VERSION,
                 a.pageIndex.toString(),
@@ -170,6 +181,13 @@ class WebGpuReadingPositionStore(
         internal const val CURRENT_VERSION = "v3"
         internal const val MAX_ENTRIES = 500
         internal const val TTL_MS = 30L * 24 * 60 * 60 * 1000
+
+        // The viewer's own floor: ImagePage.homeScale returns 0.01 with no parent size, and the
+        // continuous homeScale setter clamps to the same.
+        internal const val MIN_STORED_ZOOM = 0.01f
+
+        // Well past anything reachable - see sanitizeZoom. The live state clamps on apply.
+        internal const val MAX_STORED_ZOOM = 32f
         // KMK <--
 
         // KMK --> NaN/Inf-safe clamps. coerceIn alone propagates NaN (NaN
@@ -180,9 +198,22 @@ class WebGpuReadingPositionStore(
             return v.coerceIn(0f, 1e7f)
         }
 
+        /**
+         * Bounds taken from what the viewers can actually reach, not from a round number.
+         *
+         * The old 0.5..8 range silently discarded a zoomed-out reading position: the continuous and
+         * webtoon zoom-out slider runs 1..100 percent and `ImagePage.homeScale` falls back to 0.01
+         * with no parent size, so 0.2 is an ordinary zoom rather than an edge case - and every value
+         * under 0.5 was stored as 0.5, reopening the chapter zoomed in. The ceiling was clipping
+         * too: `maxScale` defaults to `max(minScale, homeScale) * 2`, which for a small cover fitted
+         * to a tall screen lands above eight.
+         *
+         * The state re-clamps on apply (`fastCoerceIn(minScale, maxScale)`), so this only has to
+         * reject absurd values, not second-guess the live range.
+         */
         internal fun sanitizeZoom(v: Float): Float {
             if (!v.isFinite()) return 1f
-            return v.coerceIn(0.5f, 8f)
+            return v.coerceIn(MIN_STORED_ZOOM, MAX_STORED_ZOOM)
         }
 
         internal fun sanitizeOffsetX(v: Float): Float {
@@ -214,7 +245,7 @@ class WebGpuReadingPositionStore(
                             val ts = p[5].toLongOrNull() ?: 0L
                             if (nowMs - ts > TTL_MS) return null
                             val fraction = if (docY <= 1f) docY else 0f
-                            PositionData(idx, docY, zom, offX, fraction, isV2 = true)
+                            PositionData(idx, docY, zom, offX, fraction)
                         }
                         7 -> {
                             // v3|pageIndex|documentY|offsetX|zoom|fraction|timestamp
@@ -226,7 +257,7 @@ class WebGpuReadingPositionStore(
                             val frac = sanitizeFraction(p[5].toFloatOrNull() ?: 0f)
                             val ts = p[6].toLongOrNull() ?: 0L
                             if (nowMs - ts > TTL_MS) return null
-                            PositionData(idx, docY, zom, offX, frac, isV2 = true)
+                            PositionData(idx, docY, zom, offX, frac)
                         }
                         else -> null
                     }
@@ -241,7 +272,7 @@ class WebGpuReadingPositionStore(
                         val ts = p[3].toLongOrNull() ?: 0L
                         if (ts != 0L && nowMs - ts > TTL_MS) return null
                     }
-                    PositionData(idx, off, zom, 0f, off, isV2 = false)
+                    PositionData(idx, 0f, zom, 0f, off)
                 }
             } catch (_: Exception) {
                 null
@@ -252,14 +283,20 @@ class WebGpuReadingPositionStore(
 
     data class PositionData(
         val pageIndex: Int,
-        val offsetRatio: Float,
+        /**
+         * Document-space offset in pixels, or 0 when the record predates document coordinates.
+         *
+         * Named for what it holds rather than reusing the legacy `offsetRatio` slot, which meant a
+         * pixel offset in a versioned record and a 0..1 share in a tagless one. The two were told
+         * apart by an `isV2` flag that nothing read - and that read `true` for v3 too, so it never
+         * meant what it said. A legacy record carries its position in [fraction] alone, and 0 here
+         * is the honest value: restoring it as a pixel offset would land mid-document at random.
+         */
+        val documentY: Float,
         val zoom: Float,
         val offsetX: Float = 0f,
-        val fraction: Float = offsetRatio.coerceIn(0f, 1f),
-        val isV2: Boolean = false,
+        val fraction: Float = documentY.coerceIn(0f, 1f),
     ) {
-        val documentY: Float get() = offsetRatio
-
         // KMK --> Bridge into the library anchor type used by saveAnchor/loadAnchor.
         fun toAnchor(): PageAnchor = PageAnchor(
             pageIndex = pageIndex,

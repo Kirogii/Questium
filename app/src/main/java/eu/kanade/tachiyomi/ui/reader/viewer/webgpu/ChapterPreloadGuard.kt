@@ -16,6 +16,11 @@ package eu.kanade.tachiyomi.ui.reader.viewer.webgpu
  * This guard elects exactly one retry loop per chapter key; [end] releases the key so a
  * later attempt (e.g. after a transient failure or the 5s give-up) can retry. All
  * operations are thread-safe: callers span the main thread and background dispatchers.
+ *
+ * [tryBegin] and [tryBeginOrRequeueIfStale] are both ways in and both funnel through the same
+ * hardening, so neither can be reached for in a way that lets the key set grow without bound - the
+ * expiry sweep and the cap live in one private step rather than in whichever entry point was
+ * written last.
  */
 class ChapterPreloadGuard {
 
@@ -28,26 +33,54 @@ class ChapterPreloadGuard {
      */
     @Synchronized
     fun tryBegin(key: String): Boolean {
-        if (key.isBlank()) return false
-        if (key.length > 512) return false
-        // Harden: prevent unbounded growth from leaked keys (e.g. isDestroyed never cleared).
-        // Auto-expire keys older than 10s and cap at 32.
-        val now = System.currentTimeMillis()
-        if (inFlight.size >= 32) {
-            val expired = timestamps.filter { now - it.value > 10_000 }.keys
-            expired.forEach { k ->
-                inFlight.remove(k)
-                timestamps.remove(k)
+        if (!isUsable(key)) return false
+        return beginLocked(key)
+    }
+
+    /**
+     * [tryBegin], except that a key already in flight is released first when [isStale] says its
+     * work is no longer queued - the case where the holder gave up but left the key marked, and the
+     * chapter would otherwise never preload again.
+     *
+     * The staleness test runs while the lock is held, so it must not call back into the guard.
+     */
+    @Synchronized
+    fun tryBeginOrRequeueIfStale(key: String, isStale: () -> Boolean): Boolean {
+        if (!isUsable(key)) return false
+        if (key in inFlight && isStale()) {
+            inFlight.remove(key)
+            timestamps.remove(key)
+        }
+        return beginLocked(key)
+    }
+
+    /**
+     * Adds [key], applying the expiry sweep and the cap first.
+     *
+     * Private and lock-held, so both entry points get the same bound on the key set. When the cap
+     * is hit the expired keys are dropped first; if that frees nothing, everything is dropped rather
+     * than refusing the newcomer - a chapter the reader is actually approaching has to be able to
+     * preload, and the keys being discarded are ones whose holder stopped renewing them anyway.
+     */
+    private fun beginLocked(key: String): Boolean {
+        if (inFlight.size >= MAX_TRACKED_KEYS) {
+            val now = System.currentTimeMillis()
+            val expired = timestamps.filter { now - it.value > STALE_KEY_MS }.keys
+            expired.forEach {
+                inFlight.remove(it)
+                timestamps.remove(it)
             }
-            if (inFlight.size >= 32) {
+            if (inFlight.size >= MAX_TRACKED_KEYS) {
                 inFlight.clear()
                 timestamps.clear()
             }
         }
         val added = inFlight.add(key)
-        if (added) timestamps[key] = now
+        if (added) timestamps[key] = System.currentTimeMillis()
         return added
     }
+
+    private fun isUsable(key: String): Boolean = key.isNotBlank() && key.length <= MAX_KEY_LENGTH
 
     @Synchronized
     fun isInFlight(key: String): Boolean = key in inFlight
@@ -60,22 +93,20 @@ class ChapterPreloadGuard {
     }
 
     @Synchronized
-    fun tryBeginOrRequeueIfStale(key: String, isStale: () -> Boolean): Boolean {
-        if (key.isBlank() || key.length > 512) return false
-        if (key in inFlight && isStale()) {
-            inFlight.remove(key)
-            timestamps.remove(key)
-        }
-        val now = System.currentTimeMillis()
-        val added = inFlight.add(key)
-        if (added) timestamps[key] = now
-        return added
-    }
-
-    @Synchronized
     fun clear() {
         inFlight.clear()
         timestamps.clear()
+    }
+
+    companion object {
+        /** The key is a chapter URL, so it is untrusted input as far as this map is concerned. */
+        private const val MAX_KEY_LENGTH = 512
+
+        /** Bound on tracked keys, for a viewer torn down without releasing them. */
+        private const val MAX_TRACKED_KEYS = 32
+
+        /** How long a key may sit before it is assumed its holder stopped renewing it. */
+        private const val STALE_KEY_MS = 10_000L
     }
 }
 // KMK <--

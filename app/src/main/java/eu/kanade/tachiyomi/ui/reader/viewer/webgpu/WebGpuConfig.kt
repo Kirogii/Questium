@@ -200,7 +200,7 @@ class WebGpuConfig(
     // KMK -->
     /**
      * Single consumption point for the double-tap-zoom preference. Paged honors it
-     * via applyDoubleTapZoomPolicy (WebGpuDecode.kt); both modes read the library
+     * via applyDoubleTapZoomPolicy (WebGpuZoom.kt); both modes read the library
      * ImageViewerState.doubleTapZoomEnabled flag, which WebGpuViewer /
      * WebGpuViewerContinuous assign from this resolver.
      */
@@ -337,6 +337,26 @@ class WebGpuConfig(
                 },
                 { emitSettingsChange() },
             )
+
+// KMK -->
+        // dualPageRotateToFit/Invert are declared on ViewerConfig with a protected setter, so
+        // assigning them here is the whole of the wiring - but nothing in this viewer assigned
+        // them, so they stayed false and the option did nothing here. The paged reader settings
+        // group covers this viewer as well as the classic pager, which made the gap invisible:
+        // the toggle was right there in the settings and dead. The pager rotates the encoded
+        // bytes; WebGPU has no encode step, so it rotates the decoded pixels instead.
+        readerPreferences.dualPageRotateToFit()
+            .register(
+                { dualPageRotateToFit = it },
+                { emitSettingsChange() },
+            )
+
+        readerPreferences.dualPageRotateToFitInvert()
+            .register(
+                { dualPageRotateToFitInvert = it },
+                { emitSettingsChange() },
+            )
+        // KMK <--
 
         readerPreferences.transitionAnimation()
             .register(
@@ -536,20 +556,9 @@ class WebGpuConfig(
     }
 
     private fun zoomTypeFromPreference(value: Int) {
-        imageZoomType = when (value) {
-            // Auto
-            1 -> if (viewer.isReversed) {
-                ReaderPageImageView.ZoomStartPosition.RIGHT
-            } else {
-                ReaderPageImageView.ZoomStartPosition.LEFT
-            }
-            // Left
-            2 -> ReaderPageImageView.ZoomStartPosition.LEFT
-            // Right
-            3 -> ReaderPageImageView.ZoomStartPosition.RIGHT
-            // Center
-            else -> ReaderPageImageView.ZoomStartPosition.CENTER
-        }
+        // The mapping itself is pure and lives with the zoom code it feeds, so it is testable
+        // without a viewer; this only reads the reading direction and stores the answer.
+        imageZoomType = resolveZoomStartPosition(value, viewer.isReversed)
     }
 
     override var navigator: ViewerNavigation = defaultNavigation()

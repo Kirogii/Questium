@@ -326,36 +326,48 @@ internal class HttpPageLoader(
         val key = segmentKey(imageUrl, index)
         if (chapterCache.isImageInCache(key)) return key
 
-        // The cut produces every segment, and all of them are written rather than just the one
-        // asked for: the cache is an LRU, so segments are evicted one at a time, and restoring only
-        // the requested one would cost a full re-split for each of them in turn.
-        var produced = 0
-        val split = TallPageSplitter.split(
-            imageFile = chapterCache.getImageFile(imageUrl),
-            maxSegmentHeight = maxSegmentHeight,
-        ) { i, bytes ->
-            produced = i + 1
-            chapterCache.putImageToCache(segmentKey(imageUrl, i), bytes)
-        }
-        // The image fits as it stands, which means a shorter one replaced the strip this segment
-        // was cut from. The whole file is then the right thing for the page to read.
-        if (!split) return null
+        // KMK --> Same lock as the initial cut. Two segments of one strip that were evicted together
+        // come back as two independent loader tasks, and both re-cut the whole image: interleaved,
+        // one pass's `produced` count can stop short of the other's while the "drop the stale
+        // remainder" loop below deletes keys the other pass has already written - which sends a
+        // segment page to a file that is no longer there. One cut per image at a time removes the
+        // interleaving entirely, and it is the same lock the initial split already holds across its
+        // own cut, so the two paths cannot disagree.
+        synchronized(splitLock) {
+            if (chapterCache.isImageInCache(key)) return key
 
-        // Anything past what this cut produced belongs to an earlier, longer split of the same
-        // image. Left in the cache it still answers isImageInCache, so a segment page from that
-        // older split would decode an image that no longer matches its position.
-        var stale = produced
-        while (chapterCache.removeImageFromCache(segmentKey(imageUrl, stale))) {
-            stale++
-        }
+            // The cut produces every segment, and all of them are written rather than just the one
+            // asked for: the cache is an LRU, so segments are evicted one at a time, and restoring only
+            // the requested one would cost a full re-split for each of them in turn.
+            var produced = 0
+            val split = TallPageSplitter.split(
+                imageFile = chapterCache.getImageFile(imageUrl),
+                maxSegmentHeight = maxSegmentHeight,
+            ) { i, bytes ->
+                produced = i + 1
+                chapterCache.putImageToCache(segmentKey(imageUrl, i), bytes)
+            }
+            // The image fits as it stands, which means a shorter one replaced the strip this segment
+            // was cut from. The whole file is then the right thing for the page to read.
+            if (!split) return null
 
-        // A region the decoder could not read is skipped rather than reported, so `produced` counts
-        // the last index attempted, not the segments on disk. Verified here instead: returning the
-        // key anyway would send the reader to a file that was never written.
-        check(chapterCache.isImageInCache(key)) {
-            "Segment $index missing after re-cutting ${imageUrl.takeLast(48)}"
+            // Anything past what this cut produced belongs to an earlier, longer split of the same
+            // image. Left in the cache it still answers isImageInCache, so a segment page from that
+            // older split would decode an image that no longer matches its position.
+            var stale = produced
+            while (chapterCache.removeImageFromCache(segmentKey(imageUrl, stale))) {
+                stale++
+            }
+
+            // A region the decoder could not read is skipped rather than reported, so `produced` counts
+            // the last index attempted, not the segments on disk. Verified here instead: returning the
+            // key anyway would send the reader to a file that was never written.
+            check(chapterCache.isImageInCache(key)) {
+                "Segment $index missing after re-cutting ${imageUrl.takeLast(48)}"
+            }
+            return key
         }
-        return key
+        // KMK <--
     }
 
     /**

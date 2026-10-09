@@ -1,5 +1,7 @@
 # Questium v1.0.0 - First Release
 
+- Merge Houri v1.23.13–v1.23.14: source-grid placeholders, retained cover fixes, reader preload/cache bounds, and WebGPU reader maintenance.
+
 - Rename the visible VR reader branding to Questium and center the corrected sidebar settings cog.
 - Add camera-backed frosted glass on Quest 3/3S while retaining sharp UI text and covers; camera frames remain in memory.
 - Add hardcover boards and spine, swipeable book-settings sections, and palm-attached settings that hide and restore with the seeker.

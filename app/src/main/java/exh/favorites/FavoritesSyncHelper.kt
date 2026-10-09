@@ -7,6 +7,7 @@ import eu.kanade.domain.manga.interactor.UpdateManga
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.source.online.all.EHentai
+import eu.kanade.tachiyomi.util.retainCovers
 import eu.kanade.tachiyomi.util.system.toast
 import exh.GalleryAddEvent
 import exh.GalleryAdder
@@ -373,6 +374,10 @@ class FavoritesSyncHelper(val context: Context) {
         }
 
         removedManga.forEach { manga ->
+            // Starts the "keep removed covers" window. Skipping it left these covers unstamped, and
+            // an unstamped orphan is over the cutoff the moment it becomes one, so they went on the
+            // next library open whatever the retention setting said.
+            manga.retainCovers()
             updateManga.awaitUpdateFavorite(manga.id, false)
         }
 

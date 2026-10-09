@@ -9,16 +9,46 @@ import java.util.IdentityHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Identity index over one page list, plus the list it was built from.
+ * Identity indexes over one page list, plus the list they were built from.
  *
- * The list reference is what makes it safe: [positionOf] only trusts the indices when they came
- * from the exact list instance it just read, so a reader racing [replacePages] either sees the
- * previous pair (and rebuilds) or the new one - never new indices against an old list.
+ * The list reference is what makes it safe: [ReaderChapter.positionOf] only trusts the indices when
+ * they came from the exact list instance it just read, so a reader racing [ReaderChapter.replacePages]
+ * either sees the previous pair (and rebuilds) or the new one - never new indices against an old list.
+ *
+ * Both maps are built in one pass and published together, so the two answers can never describe
+ * different lists.
  */
 private class PositionIndex(
     val pages: List<ReaderPage>,
-    val indices: IdentityHashMap<ReaderPage, Int>,
+    val positions: IdentityHashMap<ReaderPage, Int>,
+    /** Superseded page -> the first segment that took its place. See [ReaderChapter.splitReplacementOf]. */
+    val replacements: IdentityHashMap<ReaderPage, ReaderPage>,
 )
+
+/**
+ * Single pass that fills both identity maps, first-seen wins for a replacement.
+ *
+ * A run of segments shares one [ReaderPage.splitSourcePage], so the first segment of each run is
+ * the one the replacement has to land on - which is why `putIfAbsent` (first wins) and not
+ * `put` (last wins). Pure and side-effect free apart from its arguments, so the rule is testable
+ * without a chapter.
+ */
+internal fun buildPageIndexes(
+    pages: List<ReaderPage>,
+    positions: IdentityHashMap<ReaderPage, Int>,
+    replacements: IdentityHashMap<ReaderPage, ReaderPage>,
+) {
+    pages.forEachIndexed { index, page ->
+        positions[page] = index
+        val source = page.splitSourcePage
+        if (source != null && !replacements.containsKey(source)) {
+            replacements[source] = page
+        }
+    }
+}
+
+/** Initial capacities for the two identity maps of a list of [size] pages. */
+internal fun pageIndexCapacity(size: Int): Int = size.coerceAtLeast(1) * 2
 
 data class ReaderChapter(val chapter: Chapter) {
 
@@ -62,17 +92,34 @@ data class ReaderChapter(val chapter: Chapter) {
      * or length must go through here, or the viewers will keep rendering the previous one.
      */
     fun replacePages(newPages: List<ReaderPage>) {
+        // KMK --> Index first, state second. Publishing the list before its index left a window
+        // in which every reader that arrived had to rebuild the whole IdentityHashMap itself on
+        // the render thread - the exact cost building it here exists to avoid - and the reader that
+        // lost the race stored its index for the *old* list, so the next one rebuilt again.
+        val positions = IdentityHashMap<ReaderPage, Int>(pageIndexCapacity(newPages.size))
+        val replacements = IdentityHashMap<ReaderPage, ReaderPage>(pageIndexCapacity(newPages.size))
+        buildPageIndexes(newPages, positions, replacements)
+        positionIndex = PositionIndex(newPages, positions, replacements)
         state = State.Loaded(newPages)
         pageListVersionCounter.incrementAndGet()
-        // Build the identity index here rather than lazily, so the loader thread pays this once
-        // instead of the reader's render thread paying it on its first lookup after every load.
-        val indices = IdentityHashMap<ReaderPage, Int>(newPages.size.coerceAtLeast(1) * 2)
-        newPages.forEachIndexed { index, p -> indices[p] = index }
-        positionIndex = PositionIndex(newPages, indices)
     }
 
     @Volatile
     private var positionIndex: PositionIndex? = null
+
+    /**
+     * Indexes for [list], rebuilt whenever the cached pair was built from a different list - so
+     * [positionOf] and [splitReplacementOf] can never answer from two different lists.
+     */
+    private fun indexesFor(list: List<ReaderPage>?): PositionIndex? {
+        if (list == null) return null
+        val cached = positionIndex
+        if (cached != null && cached.pages === list) return cached
+        val positions = IdentityHashMap<ReaderPage, Int>(pageIndexCapacity(list.size))
+        val replacements = IdentityHashMap<ReaderPage, ReaderPage>(pageIndexCapacity(list.size))
+        buildPageIndexes(list, positions, replacements)
+        return PositionIndex(list, positions, replacements).also { positionIndex = it }
+    }
 
     /**
      * Position of [page] in the current page list, or -1 when it is not in it.
@@ -85,14 +132,7 @@ data class ReaderChapter(val chapter: Chapter) {
      * for every page either side of the anchor on every rendered frame, so a 500-page webtoon
      * chapter was paying 500 identity comparisons per lookup, times dozens of lookups per frame.
      */
-    fun positionOf(page: ReaderPage): Int {
-        val list = pages ?: return -1
-        positionIndex?.takeIf { it.pages === list }?.let { return it.indices[page] ?: -1 }
-        val rebuilt = IdentityHashMap<ReaderPage, Int>(list.size.coerceAtLeast(1) * 2)
-        list.forEachIndexed { index, p -> rebuilt[p] = index }
-        positionIndex = PositionIndex(list, rebuilt)
-        return rebuilt[page] ?: -1
-    }
+    fun positionOf(page: ReaderPage): Int = indexesFor(pages)?.positions?.get(page) ?: -1
 
     /**
      * The page that now stands where [page] used to, or null when [page] is still in the list.
@@ -104,8 +144,14 @@ data class ReaderChapter(val chapter: Chapter) {
      *
      * Identity, like [positionOf]: the segments record the page they came from, so two pages sharing
      * one image cannot hand each other's replacement over.
+     *
+     * KMK --> Served from the same identity index [positionOf] uses, built alongside it by
+     * [replacePages]. This is on the viewer's `prev`/`next` path - every page either side of the
+     * anchor, every rendered frame - and a linear scan here meant a 500-page webtoon chapter paid
+     * 500 identity comparisons per chain step, with the shell of a removed parent re-asking for it
+     * on every pass.
      */
-    fun splitReplacementOf(page: ReaderPage): ReaderPage? = pages?.firstOrNull { it.splitSourcePage === page }
+    fun splitReplacementOf(page: ReaderPage): ReaderPage? = indexesFor(pages)?.replacements?.get(page)
 
     /**
      * Position to store for [page], in the coordinates the page list has before any split.
