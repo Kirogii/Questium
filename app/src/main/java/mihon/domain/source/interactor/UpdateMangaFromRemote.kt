@@ -164,6 +164,12 @@ class UpdateMangaFromRemote(
             remoteManga.thumbnail_url.isNullOrEmpty() -> null
             !manualFetch && localManga.thumbnailUrl == remoteManga.thumbnail_url -> null
             localManga.isLocal() -> Instant.now().toEpochMilli()
+            // Not in the library, so there is no fetch that will put the cover back: deleting it
+            // here simply drops a cover the retention window is holding, and the reader is told a
+            // new one exists while browsing a title that is only being kept around on disk. This
+            // interactor is reachable for a removed manga - the library refresh it started before
+            // the removal lands, or an update of a details screen still open.
+            !localManga.favorite -> null
             localManga.hasCustomCover(coverCache) -> {
                 coverCache.deleteFromCache(localManga, false)
                 null
