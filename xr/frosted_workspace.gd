@@ -33,6 +33,7 @@ var read_button: Button
 var cover_targets: Dictionary = {}
 var cover_cache: Dictionary = {}
 var library_items: Array = []
+var history_items: Array = []
 var source_items: Array = []
 var chapters: Array = []
 var selected_source := ""
@@ -101,6 +102,7 @@ func place_popup(node: Node3D) -> void:
     node.global_transform = Transform3D(facing, head + (target - head).normalized() * distance)
 
 func minimize_popups() -> void:
+    reader.ui.close_options()
     # Keep each menu's contents and scroll state for the next open.
     var nodes := [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
     if settings: nodes.append(settings.details.node)
@@ -187,14 +189,14 @@ func build() -> void:
     inset.add_child(sidebar)
     var hud_header := HBoxContainer.new()
     sidebar.add_child(hud_header)
-    label(hud_header, "VR Komikku", 32).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    label(hud_header, "Questium", 32).size_flags_horizontal = Control.SIZE_EXPAND_FILL
     reader.ui.icon_button(hud_header, "close", func(): hud.node.visible = false, Vector2(48, 48))
     var gap := Control.new()
     gap.custom_minimum_size.y = 18
     sidebar.add_child(gap)
     settings = preload("res://vr_settings.gd").new(self)
     settings.build(sidebar)
-    for name in ["All Books", "Recents", "Favorites", "Recently Deleted"]:
+    for name in ["All Books", "Recents", "History", "Favorites", "Recently Deleted"]:
         var choice: String = name
         var nav := navigation(sidebar, name, func():
             filter = choice
@@ -211,7 +213,23 @@ func build() -> void:
     sidebar.add_child(spacer)
     button(sidebar, "Recenter", reader.recenter)
     var settings_button := button(sidebar, "Settings", func(): show_settings())
-    settings_button.icon = preload("res://icons/settings.svg")
+    settings_button.text = ""
+    settings_button.tooltip_text = reader._label("Settings")
+    var settings_center := CenterContainer.new()
+    settings_center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    settings_center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    settings_button.add_child(settings_center)
+    var settings_row := HBoxContainer.new()
+    settings_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    settings_row.add_theme_constant_override("separation", 12)
+    settings_center.add_child(settings_row)
+    var settings_icon := TextureRect.new()
+    settings_icon.texture = preload("res://icons/settings.svg")
+    settings_icon.custom_minimum_size = Vector2(28, 28)
+    settings_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+    settings_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    settings_row.add_child(settings_icon)
+    label(settings_row, "Settings", 24).mouse_filter = Control.MOUSE_FILTER_IGNORE
     settings_button.custom_minimum_size = Vector2(170, 50)
     settings_button.size_flags_horizontal = Control.SIZE_FILL
     settings_button.add_theme_stylebox_override("normal", reader.ui.style(Color(0.64, 0.63, 0.61, 0.22), 25))
@@ -267,7 +285,7 @@ func build() -> void:
     gallery.add_child(grid)
     message = label(body, "Loading library…", 18)
     badge = panel(Vector2(0.23, 0.032), Vector2i(600, 84))
-    badge_title = label(badge.content, "VR Komikku", 36)
+    badge_title = label(badge.content, "Questium", 36)
     badge_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     badge_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     preview = panel(Vector2(0.55, 0.12), Vector2i(660, 160))
@@ -397,7 +415,7 @@ func navigation(parent: Container, caption: String, callback: Callable) -> Butto
     row.mouse_filter = Control.MOUSE_FILTER_IGNORE
     node.add_child(row)
     var icon := TextureRect.new()
-    icon.texture = load("res://icons/" + ({"All Books": "book", "Recents": "recent", "Favorites": "heart", "Recently Deleted": "trash", "Source Search": "search", "Reader": "book"}.get(caption, "book")) + ".svg")
+    icon.texture = load("res://icons/" + ({"All Books": "book", "Recents": "recent", "History": "recent", "Favorites": "heart", "Recently Deleted": "trash", "Source Search": "search", "Reader": "book"}.get(caption, "book")) + ".svg")
     icon.custom_minimum_size = Vector2(30, 30)
     icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -419,6 +437,7 @@ func update_navigation() -> void:
         nav_buttons[name].add_theme_stylebox_override("normal", reader.ui.style(Color(0.86, 0.84, 0.79, 0.30 if selected else 0.0), 14))
         var count: Label = nav_buttons[name].find_child("Count", true, false)
         if name == "All Books": count.text = str(library_items.size())
+        elif name == "History": count.text = str(history_items.size())
         elif name == "Recents": count.text = str(library_items.filter(func(item): return int(item.get("last_read", 0)) > 0).size())
         elif name == "Favorites": count.text = str(library_items.filter(func(item): return str(item.id) in starred).size())
         elif name == "Recently Deleted": count.text = str(deleted_items.size())
@@ -606,7 +625,7 @@ func show_section(name: String) -> void:
     keyboard.node.visible = false
     preview.node.visible = false
     badge.node.visible = name != "Reader"
-    badge_title.text = "VR Komikku"
+    badge_title.text = "Questium"
     hud.node.visible = name != "Reader"
     if name == "Reader" and is_instance_valid(active_book) and not active_book.token.is_empty():
         reader.book.visible = false
@@ -625,14 +644,14 @@ func show_section(name: String) -> void:
     heading.text = reader._label("Books") if source_row.visible else filter
     search.placeholder_text = reader._label("Search books in this source") if source_row.visible else "Search your books"
     search.text = ""
-    if name == "Home": reader._request("library")
+    if name == "Home": reader._request("history" if filter == "History" else "library")
     update_navigation()
     render_grid()
 
 func render_grid() -> void:
     clear(gallery)
     cover_targets.clear()
-    var entries: Array = source_items if section == "Source Search" else (deleted_items if filter == "Recently Deleted" else library_items)
+    var entries: Array = source_items if section == "Source Search" else (history_items if filter == "History" else (deleted_items if filter == "Recently Deleted" else library_items))
     var shown := 0
     var groups: Dictionary = {}
     for item in entries:
@@ -656,7 +675,7 @@ func render_grid() -> void:
         gallery.add_child(grid)
     update_navigation()
     subtitle.text = "%d books" % shown
-    message.text = "" if shown > 0 else reader._label("No books found. Choose a source and search." if section == "Source Search" else "Your library is empty. Find books in Source Search and save them here.")
+    message.text = "" if shown > 0 else reader._label("No books found. Choose a source and search." if section == "Source Search" else ("No reading history yet. Open a chapter to start reading." if filter == "History" else "Your library is empty. Find books in Source Search and save them here."))
 
 func date_group(item: Dictionary) -> String:
     var stamp := int(item.get("last_read", 0))
@@ -711,7 +730,14 @@ func add_card(item: Dictionary) -> void:
     caption.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     caption.custom_minimum_size.x = 180
     caption.add_theme_font_size_override("font_size", 20)
-    label(column, str(item.get("chapters", "")) + (" chapters" if item.has("chapters") else ""), 16)
+    if item.has("history_chapter"):
+        label(column, str(item.history_chapter) + " · " + reader._label("Page") + " " + str(int(item.get("last_page", 0)) + 1), 16)
+    var stamp := int(item.get("last_read", 0))
+    if stamp == 0: stamp = int(item.get("added", 0))
+    if stamp > 100000000000: stamp /= 1000
+    if stamp > 0:
+        var date := Time.get_datetime_dict_from_unix_time(stamp + int(Time.get_time_zone_from_system().bias) * 60)
+        label(column, "%s, %02d:%02d" % [reader._label(date_group(item)), date.hour, date.minute], 16)
     var id := str(item.id)
     cover_targets[id] = cover
     if cover_cache.has(id): cover.texture_normal = cover_cache[id]
@@ -719,7 +745,7 @@ func add_card(item: Dictionary) -> void:
 
 func select_book(item: Dictionary, cover: Control = null) -> void:
     reader._cancel_interactions()
-    reader.ui.options.visible = false
+    reader.ui.close_options()
     reader.toolbar.visible = false
     for candidate in reader.books: candidate.visible = false
     if not reader.book.token.is_empty():
@@ -739,7 +765,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     description.text = reader._label("Loading book details…")
     reader.ui.set_icon_label(read_button, "Read")
     read_button.disabled = true
-    favorite = section == "Home" and filter != "Recently Deleted"
+    favorite = section == "Home" and filter != "Recently Deleted" and filter != "History"
     update_save()
     resume_chapter = ""
     previewing = true
@@ -757,6 +783,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     reader.book.scale = Vector3.ONE * 0.65
     reader.book.set_mode("book")
     reader.book.set_open(0.0)
+    reader.book.set_hard_cover(reader.ui.hard_cover)
     reader.book.set_cover(cover_cache.get(selected_manga))
     reader.book.visible = true
     reader.book.set_preview(true)
@@ -840,6 +867,9 @@ func run_search(new_page: int) -> void:
 func consume(data: Dictionary) -> bool:
     if settings and settings.consume(data): return true
     match str(data.get("kind", "")):
+        "history":
+            history_items = data.get("items", [])
+            if section == "Home" and filter == "History" and not previewing: render_grid()
         "library":
             library_items = data.get("items", [])
             if section == "Home" and not previewing: render_grid()
@@ -977,7 +1007,9 @@ func drag_scroll(target: Dictionary, pixel: Vector2, pressed: bool, previous: bo
     return false
 
 func place_settings() -> void:
-    raise_popup(reader.ui.options)
+    var facing := facing_basis()
+    reader.ui.options.global_transform = Transform3D(facing, head_position() + facing * Vector3(0.26, 0.02, -0.48))
+    raise_popup(reader.ui.options, false)
 
 func show_settings() -> void:
     settings.open()

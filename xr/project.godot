@@ -1,7 +1,7 @@
 config_version=5
 
 [application]
-config/name="VR Komikku Reader"
+config/name="Questium"
 run/main_scene="res://reader.tscn"
 
 [display]

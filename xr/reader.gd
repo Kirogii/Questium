@@ -68,6 +68,7 @@ var hold_basis := Basis.IDENTITY
 var pending_seek := -1
 var chapter_token := ""
 var local_pages: Array[String] = []
+var frosted_glass = preload("res://frosted_glass.gd").new()
 var ui: RefCounted
 var preferred_hand := "right"
 var haptics := true
@@ -100,6 +101,9 @@ func _ready() -> void:
         camera = Camera3D.new()
         camera.position.y = 1.35
         origin.add_child(camera)
+    # Preserve depth precision for sub-millimeter paper above the page block.
+    camera.near = 0.02
+    camera.far = 30.0
     camera.current = true
     book = BookScript.new()
     add_child(book)
@@ -229,7 +233,7 @@ func _head_is_tracked() -> bool:
     return tracker != null and tracker.has_pose("default") and tracker.get_pose("default").has_tracking_data
 
 func toggle_library() -> void:
-    ui.options.visible = false
+    ui.close_options()
     if workspace:
         workspace.show_section("Home")
 
@@ -263,6 +267,7 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     frost_material.shader = preload("res://glass.gdshader")
     frost_material.set_shader_parameter("panel_size", size)
     frost.material_override = frost_material
+    frosted_glass.register(frost_material)
     node.add_child(frost)
     var background := Panel.new()
     background.add_theme_stylebox_override("panel", ui.style(Color(0.40, 0.39, 0.37, 0.08), 32))
@@ -304,6 +309,7 @@ func _slider(row: Container, caption: String, minimum: float, maximum: float, va
     icon.tooltip_text = _label(caption)
     row.add_child(icon)
     var slider := HSlider.new()
+    ui.theme_slider(slider)
     slider.min_value = minimum
     slider.max_value = maximum
     slider.step = 0.01
@@ -446,6 +452,7 @@ func _activate_book(target: SpatialBook) -> void:
     ui.update_title()
 
 func close_book(return_home: bool = true) -> void:
+    ui.close_options()
     if book.token.is_empty():
         return
     _cancel_interactions()
@@ -488,6 +495,7 @@ func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
         if is_instance_valid(native_controls):
             native_controls.global_transform = toolbar.global_transform
             native_controls.global_position -= Vector3.UP * 0.16
+    ui.update_palm_options(active and natural_hands, at)
     if ui.options.visible and not workspace:
         ui.options.global_position = book.global_position + Vector3.UP * 0.50
         ui.options.look_at(camera.global_position, Vector3.UP, true)
@@ -637,6 +645,7 @@ func _response(json: String) -> void:
             book.chapter_title = str(data.title)
             book.vertical_chapter = bool(data.get("vertical", false))
             book.set_chapter(int(data.count), int(data.start), bool(data.get("rtl", false)))
+            book.set_hard_cover(ui.hard_cover)
             book.set_open(previous_open)
             seeker.max_value = maxi(0, book.page_count - 1)
             ui.update_pages(book.first_page)
@@ -733,6 +742,7 @@ func _set_passthrough(enabled: bool) -> void:
         status.text = _label("Passthrough unavailable; using black")
 
 func _process(_delta: float) -> void:
+    frosted_glass.update(self, _delta)
     if android_app and not android_started:
         var surface = android_layer.get_android_surface()
         if surface:
@@ -1147,6 +1157,9 @@ func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: b
                 android_app.call("touch", pixel.x, pixel.y, 0 if pressed and not previous else (2 if pressed else 1))
             if not pressed:
                 ui_capture.clear()
+            return true
+        if ui.swipe_tabs(panel, pixel, pressed, previous):
+            if not pressed: ui_capture.clear()
             return true
         var motion := InputEventMouseMotion.new()
         motion.position = pixel

@@ -1,3 +1,12 @@
+# Questium v1.0.0 - First Release
+
+- Rename the visible VR reader branding to Questium and center the corrected sidebar settings cog.
+- Add camera-backed frosted glass on Quest 3/3S while retaining sharp UI text and covers; camera frames remain in memory.
+- Add hardcover boards and spine, swipeable book-settings sections, and palm-attached settings that hide and restore with the seeker.
+- Match library date/heart metadata and clipped second-row covers; refresh Aero gesture illustrations with actual book controls.
+- Added VR reading History, including books outside the library, with last chapter and page.
+- Centered the Questium controller logo, enlarged it 3.6×, and removed its background.
+- Added application screenshots and animated hand gesture tutorials to the README.
 <!--
 Curated release notes for the NEXT version. Append user-facing bullets here as
 work lands, grouped under the headings below, then bump versionName and push.

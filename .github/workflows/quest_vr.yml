@@ -43,7 +43,7 @@ jobs:
         run: ./gradlew :app:testNomtlDebugUnitTest --tests 'eu.kanade.tachiyomi.ui.vr.VrBorderBoundsTest' --tests 'tachiyomi.core.common.util.system.TallPageSplitterTest' -Pandroid.injected.build.abi=arm64-v8a
       - name: Build standalone Quest APK
         env:
-          VR_RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.1' }}
+          VR_RELEASE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v1.0.0' }}
         run: ./gradlew :app:stageNomtlDebugQuestApk -Pandroid.injected.build.abi=arm64-v8a --build-cache --parallel
       - name: Stage Quest APK
         run: |
@@ -121,9 +121,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          RELEASE_TITLE="$RELEASE_TAG"
+          if [ "$RELEASE_TAG" = "v1.0.0" ]; then RELEASE_TITLE="$RELEASE_TAG - First Release"; fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" quest-apk/* --clobber
-            gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --prerelease=false --draft=false --latest --notes-file .github/alpha-release.md
+            gh release edit "$RELEASE_TAG" --title "$RELEASE_TITLE" --prerelease=false --draft=false --latest --notes-file .github/alpha-release.md
           else
-            gh release create "$RELEASE_TAG" quest-apk/* --verify-tag --title "$RELEASE_TAG" --latest --notes-file .github/alpha-release.md
+            gh release create "$RELEASE_TAG" quest-apk/* --verify-tag --title "$RELEASE_TITLE" --latest --notes-file .github/alpha-release.md
           fi

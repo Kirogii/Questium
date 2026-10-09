@@ -125,6 +125,7 @@ func render(items: Array, parent: Container, semantic: bool) -> void:
         match type:
             "switch":
                 var toggle := CheckButton.new()
+                workspace.reader.ui.theme_switch(toggle)
                 toggle.text = workspace.reader._label("Enabled")
                 toggle.custom_minimum_size.y = 54
                 toggle.button_pressed = bool(row.value)
@@ -133,6 +134,7 @@ func render(items: Array, parent: Container, semantic: bool) -> void:
                 toggle.toggled.connect(func(value: bool): send_value(row, value, semantic))
             "slider":
                 var slider := HSlider.new()
+                workspace.reader.ui.theme_slider(slider)
                 slider.custom_minimum_size.y = 56
                 slider.min_value = float(row.min)
                 slider.max_value = maxf(float(row.max), slider.min_value + 0.001)
@@ -158,6 +160,7 @@ func render(items: Array, parent: Container, semantic: bool) -> void:
                 for index in row.entries.size():
                     var key := str(row.keys[index])
                     var toggle := CheckButton.new()
+                    workspace.reader.ui.theme_switch(toggle)
                     toggle.text = str(row.entries[index])
                     toggle.custom_minimum_size.y = 52
                     toggle.button_pressed = key in selected

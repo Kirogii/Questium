@@ -101,6 +101,9 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
 
     override fun getPluginName() = "HouriVR"
 
+    @UsedByGodot
+    fun frostedRoomFrame(): ByteArray = host.frostedCamera.takeFrame()
+
     override fun getPluginSignals() = setOf(SignalInfo("response", String::class.java))
 
     @UsedByGodot
@@ -224,6 +227,13 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             "All Books" to KMR.strings.vr_frosted_3,
             "All books" to KMR.strings.vr_frosted_4,
             "Recents" to KMR.strings.vr_frosted_5,
+            "History" to KMR.strings.vr_history,
+            "Hard Cover" to KMR.strings.vr_hard_cover,
+            "Layout" to KMR.strings.vr_book_layout,
+            "System Settings" to KMR.strings.vr_system_settings,
+            "Reading progress" to KMR.strings.vr_reading_progress,
+            "No reading history yet. Open a chapter to start reading." to KMR.strings.vr_history_empty,
+            "Page" to KMR.strings.vr_history_page,
             "Favorites" to KMR.strings.vr_frosted_6,
             "Recenter" to KMR.strings.vr_frosted_7,
             "Book Settings" to KMR.strings.vr_frosted_8,
@@ -366,6 +376,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 session.listFiles()?.filter { it.name.startsWith(closed) }?.forEach { it.delete() }
             }
             "library" -> library()
+            "history" -> history()
             "chapters" -> chapters(request.getString("manga").toLong())
             "cover" -> cover(request.getString("manga").toLong())
             "open" -> open(request.getString("manga").toLong(), request.getString("chapter").toLong())
@@ -496,6 +507,23 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             categories.put(JSONObject().put("id", it.id.toString()).put("title", it.name))
         }
         send(JSONObject().put("kind", "library").put("items", items).put("categories", categories))
+    }
+
+    private suspend fun history() {
+        val entries = graph.getHistory.subscribe("", null, null, null).first()
+            .filter { it.readAt != null }
+            .sortedByDescending { it.readAt?.time ?: 0L }
+            .distinctBy { it.mangaId }
+        val items = JSONArray()
+        entries.forEach {
+            val chapter = graph.getChapter.await(it.chapterId)
+            items.put(
+                JSONObject().put("id", it.mangaId.toString()).put("title", it.title)
+                    .put("last_read", it.readAt?.time ?: 0L).put("last_page", it.lastPageRead)
+                    .put("history_chapter", chapter?.name.orEmpty()).put("resume", it.chapterId.toString()),
+            )
+        }
+        send(JSONObject().put("kind", "history").put("items", items))
     }
 
     private suspend fun cover(mangaId: Long) {

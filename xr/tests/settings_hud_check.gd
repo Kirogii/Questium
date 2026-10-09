@@ -29,7 +29,7 @@ func check() -> void:
     var popup: Vector3 = reader.ui.options.global_position
     var distance: float = popup.distance_to(reader.camera.global_position)
     assert(distance >= 0.379 and distance <= 0.561, "Book settings are at reachable distance")
-    assert(popup.direction_to(ui.hud.node.global_position).dot(-ui.facing_basis().z) > 0.9, "Popup is centered in front of HUD")
+    assert((ui.facing_basis().inverse() * (popup - reader.camera.global_position)).x > 0.20, "Book settings open to the right")
     ui.show_repositories()
     ui.show_languages()
     ui.begin_drag(ui.hud.node)

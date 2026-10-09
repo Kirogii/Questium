@@ -17,7 +17,7 @@ runs:
       run: |
         set -euo pipefail
         "$GODOT_BIN" --headless --xr-mode off --path xr --editor --quit
-        for test in book_check book_interaction_check input_check controls_check tracking_check app_panel_check workspace_check remote_check scroll_check palm_check hand_check hand_rig_check hand_sweep_check locomotion_check frosted_check hand_controls_check preview_input_check reach_controls_check bar_hand_check popup_drag_check chopping_check repository_check hand_touch_check settings_hud_check reader_settings_check; do
+        for test in aero_settings_check book_check book_interaction_check input_check controls_check tracking_check app_panel_check workspace_check remote_check scroll_check palm_check hand_check hand_rig_check hand_sweep_check locomotion_check frosted_check hand_controls_check preview_input_check reach_controls_check bar_hand_check popup_drag_check chopping_check repository_check hand_touch_check settings_hud_check reader_settings_check; do
           timeout 60 "$GODOT_BIN" --headless --xr-mode off --path xr --script "res://tests/$test.gd" --quit-after 300 2>&1 | tee "$RUNNER_TEMP/$test.log"
           if grep -Eq 'SCRIPT ERROR|Parse Error|Assertion failed' "$RUNNER_TEMP/$test.log"; then
             exit 1

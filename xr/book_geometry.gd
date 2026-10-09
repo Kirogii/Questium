@@ -34,7 +34,7 @@ static func cover(size: Vector3) -> ArrayMesh:
     return mesh.commit()
 
 # Top follows the resting leaf with clearance below its printed surface.
-static func stack(side: int, width: float, height: float, rest_angle: float = 0.035) -> ArrayMesh:
+static func stack(side: int, width: float, height: float, rest_angle: float = 0.035, thickness: float = 0.0016) -> ArrayMesh:
     var mesh := SurfaceTool.new()
     mesh.begin(Mesh.PRIMITIVE_TRIANGLES)
     for section in range(64):
@@ -45,17 +45,17 @@ static func stack(side: int, width: float, height: float, rest_angle: float = 0.
                 var z: float = u * width * sin(rest_angle) + sin(rest_angle) * 0.002 * sin(u * PI) - 0.0005
                 if face < 2:
                     for y in [-height / 2, height / 2]:
-                        points.append(Vector3(x, y, z - face * 0.0016))
+                        points.append(Vector3(x, y, z - face * thickness))
                 else:
-                    for depth in [0.0, 0.0016]:
+                    for depth in [0.0, thickness]:
                         points.append(Vector3(x, (-1 if face == 2 else 1) * height / 2, z - depth))
             for i in [0, 1, 2, 2, 1, 3]:
-                mesh.set_uv(Vector2(points[i].x / width, points[i].z / 0.0016))
+                mesh.set_uv(Vector2(points[i].x / width, points[i].z / thickness))
                 mesh.add_vertex(points[i])
     var x := side * width * cos(rest_angle)
     var z := width * sin(rest_angle) - 0.0005
-    for v in [Vector3(x, -height / 2, z), Vector3(x, height / 2, z), Vector3(x, -height / 2, z - 0.0016), Vector3(x, -height / 2, z - 0.0016), Vector3(x, height / 2, z), Vector3(x, height / 2, z - 0.0016)]:
-        mesh.set_uv(Vector2(v.y / height, v.z / 0.0016))
+    for v in [Vector3(x, -height / 2, z), Vector3(x, height / 2, z), Vector3(x, -height / 2, z - thickness), Vector3(x, -height / 2, z - thickness), Vector3(x, height / 2, z), Vector3(x, height / 2, z - thickness)]:
+        mesh.set_uv(Vector2(v.y / height, v.z / thickness))
         mesh.add_vertex(v)
     mesh.generate_normals()
     return mesh.commit()

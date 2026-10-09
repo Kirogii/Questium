@@ -13,6 +13,8 @@ const COVER_OFFSET := 0.003
 const PAPER_SHADER = preload("res://paper.gdshader")
 const GEOMETRY = preload("res://book_geometry.gd")
 
+var hard_cover := false
+var board_offset := COVER_OFFSET
 var page_count := 0
 var first_page := 0
 var requested_spread := -1
@@ -203,6 +205,33 @@ func _ready() -> void:
     add_child(close_marker)
     _refresh()
 
+func set_hard_cover(enabled: bool) -> void:
+    hard_cover = enabled
+    board_offset = 0.021 if enabled else COVER_OFFSET
+    var thickness := 0.006 if enabled else COVER_THICKNESS
+    var overhang := 0.012 if enabled else 0.002
+    for index in [0, 2]:
+        body_parts[index].mesh = GEOMETRY.cover(Vector3(PAGE_WIDTH + overhang, PAGE_HEIGHT + overhang, thickness))
+        body_parts[index].material_override.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL if enabled else BaseMaterial3D.SHADING_MODE_UNSHADED
+        body_parts[index].material_override.roughness = 0.82
+    body_parts[0].position.z = -board_offset
+    for entry in [[1, -1], [3, 1]]:
+        body_parts[entry[0]].mesh = GEOMETRY.stack(entry[1], PAGE_WIDTH, PAGE_HEIGHT, REST_ANGLE, 0.017 if enabled else 0.0016)
+    if enabled:
+        var spine := CylinderMesh.new()
+        spine.top_radius = 0.010
+        spine.bottom_radius = 0.010
+        spine.height = PAGE_HEIGHT + overhang
+        spine.radial_segments = 24
+        body_parts[4].mesh = spine
+        body_parts[4].position.z = -0.011
+    else:
+        body_parts[4].mesh = GEOMETRY.cover(Vector3(0.003, PAGE_HEIGHT + 0.002, 0.005))
+        body_parts[4].position.z = -0.001
+    cover_face.mesh.size = Vector2(PAGE_WIDTH + overhang, PAGE_HEIGHT + overhang)
+    cover_face.position.z = -board_offset - thickness * 0.51
+    _refresh()
+
 func set_preview(enabled: bool) -> void:
     preview_only = enabled
     _refresh()
@@ -310,7 +339,7 @@ func _refresh() -> void:
     # Flatten the closed page block so it cannot sit in front of the cover art.
     body_parts[3].rotation.y = (1.0 - openness) * REST_ANGLE
     body_parts[2].rotation.y = -openness * REST_ANGLE
-    body_parts[2].position = Vector3(PAGE_WIDTH / 2 * cos(openness * REST_ANGLE), 0, PAGE_WIDTH / 2 * sin(openness * REST_ANGLE) - COVER_OFFSET)
+    body_parts[2].position = Vector3(PAGE_WIDTH / 2 * cos(openness * REST_ANGLE), 0, PAGE_WIDTH / 2 * sin(openness * REST_ANGLE) - board_offset)
     cover_face.material_override.set_shader_parameter("cover_image", cover_texture if cover_texture != null else blank)
     # Collapse the left paper stack into the closed book until the cover opens.
     body_parts[1].visible = not scroll_mode and openness > 0.04

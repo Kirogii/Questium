@@ -8,6 +8,10 @@
     <uses-feature android:name="com.oculus.feature.RENDER_MODEL" android:required="false" />
     <uses-feature android:name="oculus.software.overlay_keyboard" android:required="false" />
     <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+    <!-- Local in-memory room blur behind VR panels. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Internet -->
     <uses-permission android:name="android.permission.INTERNET" />

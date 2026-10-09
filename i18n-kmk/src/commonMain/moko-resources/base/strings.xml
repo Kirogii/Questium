@@ -772,4 +772,11 @@
     <string name="ext_error_version_label">Version %1$s</string>
     <string name="ext_error_source_label">Source: %1$s</string>
     <string name="ext_error_repo_label">Repository: %1$s</string>
+    <string name="vr_history">History</string>
+    <string name="vr_history_empty">No reading history yet. Open a chapter to start reading.</string>
+    <string name="vr_history_page">Page</string>
+    <string name="vr_hard_cover">Hard Cover</string>
+    <string name="vr_book_layout">Layout</string>
+    <string name="vr_system_settings">System Settings</string>
+    <string name="vr_reading_progress">Reading progress</string>
 </resources>

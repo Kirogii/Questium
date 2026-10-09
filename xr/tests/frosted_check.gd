@@ -17,6 +17,14 @@ func check() -> void:
     ui.search.text = "Book A"
     ui.search.text_changed.emit(ui.search.text)
     assert(ui.grid.get_child_count() == 1, "Library search filters grid")
+    ui.filter = "History"
+    ui.show_section("Home")
+    reader._response(JSON.stringify({"kind": "history", "items": [{"id": "99", "title": "Outside Library", "last_read": 1000, "history_chapter": "Chapter 2", "last_page": 4}]}))
+    assert(ui.nav_buttons.has("History") and ui.cover_targets.has("99") and not ui.cover_targets.has("42"), "History includes read books outside the library")
+    reader._response(JSON.stringify({"kind": "library", "items": [{"id": "42", "title": "Book A"}, {"id": "43", "title": "Book B"}]}))
+    assert(ui.cover_targets.has("99"), "Library refresh preserves the History view")
+    ui.filter = "All Books"
+    ui.show_section("Home")
     var artwork := ImageTexture.create_from_image(Image.create(16, 24, false, Image.FORMAT_RGB8))
     ui.cover_cache["42"] = artwork
     ui.select_book({"id": "42", "title": "Book A"}, ui.cover_targets["42"])
