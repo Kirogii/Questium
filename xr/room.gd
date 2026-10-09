@@ -7,7 +7,7 @@ extends Node3D
 ## checkout still has a usable bar, floor, walls, seats, and fire.
 
 const MAP_DIRECTORY := "res://scenes"
-const MAP_NAMES := ["bar_end.tscn", "bar_end.glb", "bar_end.gltf", "bar_end.fbx"]
+const MAP_NAMES := ["bar_end.tscn", "bar_end.glb", "bar_end.gltf"]
 const TOON_SHADER = preload("res://toon_environment.gdshader")
 const FIRE_SHADER = preload("res://fire_animated.gdshader")
 const POST_SHADER = preload("res://scene_post_process.gdshader")
