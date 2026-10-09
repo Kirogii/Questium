@@ -22,6 +22,7 @@ var message: Label
 var detail_title: Label
 var description: Label
 var source_row: HBoxContainer
+var source_category_row: HBoxContainer
 var search_row: HBoxContainer
 var gallery: VBoxContainer
 var nav_buttons: Dictionary = {}
@@ -37,6 +38,10 @@ var history_items: Array = []
 var source_items: Array = []
 var chapters: Array = []
 var selected_source := ""
+var source_category := "latest"
+var source_tag_query := ""
+var source_filters: Dictionary = {}
+var source_filter_panel: Dictionary
 var selected_manga := ""
 var active_manga := ""
 var resume_chapter := ""
@@ -106,6 +111,7 @@ func minimize_popups() -> void:
     reader.ui.close_options()
     # Keep each menu's contents and scroll state for the next open.
     var nodes := [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
+    if source_filter_panel: nodes.append(source_filter_panel.node)
     if settings: nodes.append(settings.details.node)
     for node in nodes:
         node.visible = false
@@ -127,6 +133,7 @@ func popup_ray(start: Vector3, direction: Vector3) -> bool:
 
 func roots() -> Array:
     var nodes: Array = [hud.node, badge.node, preview.node, info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
+    if source_filter_panel: nodes.append(source_filter_panel.node)
     if settings: nodes.append(settings.details.node)
     for model in reader.books:
         if model.visible: nodes.append(model)
@@ -259,6 +266,21 @@ func build() -> void:
     button(source_row, "Previous", func(): run_search(maxi(1, page - 1)))
     button(source_row, "Next", func(): run_search(page + 1))
     source_row.visible = false
+    source_category_row = HBoxContainer.new()
+    source_category_row.add_theme_constant_override("separation", 10)
+    body.add_child(source_category_row)
+    for mode in [{"id":"latest", "title":"Latest"}, {"id":"browse", "title":"Browse"}, {"id":"tags", "title":"Search by tags"}]:
+        var category: Dictionary = mode
+        var category_button := button(source_category_row, category.title, func():
+            source_category = category.id
+            if source_category == "tags": search.placeholder_text = "Search by tags"
+            else: search.placeholder_text = "Search this source"
+            run_search(1)
+        )
+        category_button.custom_minimum_size.x = 150
+    var filters_button := button(source_category_row, "Filters", func(): show_source_filters())
+    filters_button.custom_minimum_size.x = 130
+    source_category_row.visible = false
     search_row = HBoxContainer.new()
     body.add_child(search_row)
     search_row.visible = false
@@ -654,6 +676,7 @@ func show_section(name: String) -> void:
         return
     reading = false
     source_row.visible = name == "Source Search"
+    source_category_row.visible = source_row.visible
     search_row.visible = source_row.visible
     subtitle.visible = source_row.visible
     heading.text = reader._label("Books") if source_row.visible else filter
@@ -877,7 +900,33 @@ func run_search(new_page: int) -> void:
     if selected_source.is_empty(): return
     page = new_page
     message.text = reader._label("Searching…")
-    reader._request("source_search", {"source": selected_source, "query": search.text, "page": page})
+    var query := search.text if source_category == "tags" else ""
+    reader._request("source_search", {"source": selected_source, "query": query, "page": page, "category": source_category, "filters": source_filters})
+
+func show_source_filters() -> void:
+    if not source_filter_panel:
+        source_filter_panel = panel(Vector2(0.42, 0.46), Vector2i(640, 700))
+        var content: VBoxContainer = source_filter_panel.content
+        var header := HBoxContainer.new()
+        content.add_child(header)
+        label(header, "Source Filters", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        reader.ui.icon_button(header, "close", func(): source_filter_panel.node.visible = false, Vector2(48, 48))
+        var tag := edit(content, "Tags (comma separated)")
+        tag.text = str(source_filters.get("tags", ""))
+        tag.text_changed.connect(func(value: String): source_filters["tags"] = value)
+        var hint := label(content, "Filters are applied to Browse and tag searches.", 16)
+        hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        button(content, "Apply Filters", func():
+            source_filter_panel.node.visible = false
+            source_category = "browse"
+            run_search(1)
+        )
+        button(content, "Clear Filters", func():
+            source_filters.clear()
+            tag.text = ""
+        )
+        reader.add_child(source_filter_panel.node)
+    raise_popup(source_filter_panel.node)
 
 func consume(data: Dictionary) -> bool:
     if settings and settings.consume(data): return true

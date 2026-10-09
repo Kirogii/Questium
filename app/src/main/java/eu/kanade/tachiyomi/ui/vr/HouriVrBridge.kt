@@ -474,7 +474,19 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             ?: error("Source is unavailable")
         val query = request.optString("query")
         val page = request.optInt("page", 1).coerceAtLeast(1)
-        val result = if (query.isBlank()) source.getPopularManga(page) else source.getSearchManga(page, query, source.getFilterList())
+        val category = request.optString("category", "latest")
+        val filters = source.getFilterList()
+        val filterJson = request.optJSONObject("filters")
+        if (filterJson != null) {
+            filterJson.optString("tags").takeIf { it.isNotBlank() }?.let { tags ->
+                filters.filterIsInstance<eu.kanade.tachiyomi.source.model.Filter.Text>().firstOrNull { it.name.contains("tag", true) || it.name.contains("genre", true) }?.state = tags
+            }
+        }
+        val result = when (category) {
+            "latest" -> source.getLatestUpdates(page)
+            "browse" -> source.getSearchManga(page, "", filters)
+            else -> source.getSearchManga(page, query, filters)
+        }
         val items = JSONArray()
         graph.networkToLocalManga(result.mangas.map { it.toDomainManga(source.id) }).forEach {
             items.put(JSONObject().put("id", it.id.toString()).put("title", it.title))
