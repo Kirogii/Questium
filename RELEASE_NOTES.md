@@ -34,6 +34,7 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Add a Windows Quest build helper that reuses and verifies an existing ARM64 decoder and stages the APK through the current Android build tools.
 - Raise Quest eye rendering to 150% and UI to 200%, request the highest supported antialiasing up to 8x, and use 16x anisotropic filtering for clearer angled book pages, covers and room textures. Preserve higher-resolution page images and long-page strips up to the GPU texture limit with bounded page memory.
 - Unify spatial settings and source filters with frosted panels, pill buttons and option menus, green switches, rounded checkboxes and matching sliders.
 - Make lateral controller page curls continuous with equal travel in both directions; add saved Follow source, Left to right and Right to left reading options.

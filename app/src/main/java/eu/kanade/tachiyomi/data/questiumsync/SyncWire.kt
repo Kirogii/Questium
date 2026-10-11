@@ -35,7 +35,8 @@ data class SyncMessage(
 object SyncWire {
     const val PORT = 37443
     private const val MAGIC = 0x51535931
-    private const val MAX_BYTES = 32 * 1024 * 1024
+    // The wire length is an Int, so the protocol itself is the only practical bound.
+    private const val MAX_BYTES = Int.MAX_VALUE - 28
     val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -93,7 +94,7 @@ object SyncWire {
 
     private fun write(output: DataOutputStream, secret: String, aad: ByteArray, message: SyncMessage) {
         val bytes = json.encodeToString(SyncMessage.serializer(), message).toByteArray(Charsets.UTF_8)
-        require(bytes.size <= MAX_BYTES) { "Library exceeds the 32 MiB sync limit" }
+        require(bytes.size <= MAX_BYTES) { "Sync payload is too large for the wire protocol" }
         val nonce = ByteArray(12).also(random::nextBytes)
         val cipher = cipher(Cipher.ENCRYPT_MODE, secret, nonce, aad)
         val encrypted = cipher.doFinal(bytes)
