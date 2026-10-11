@@ -41,12 +41,12 @@ func check() -> void:
     ui.consume({"kind": "keyboard_text", "field": ui.keyboard_field, "text": "finished", "closed": true})
     assert(ui.search.text == "finished" and not ui.search.has_meta("native_keyboard_open"), "Dismiss keeps typed text and allows reopening")
     ui.select_book({"id": "first", "title": "First book"})
-    await create_timer(0.55).timeout
+    await ui.opening.finished
     reader._response(JSON.stringify({"kind": "chapter", "token": "first-token", "count": 4, "start": 0, "title": "First book"}))
     var original: SpatialBook = reader.book
     ui.show_section("Home")
     ui.select_book({"id": "second", "title": "Second book"})
-    await create_timer(0.55).timeout
+    await ui.opening.finished
     assert(reader.book != original and not original.visible, "New preview cannot overlap a previous reader book")
     assert(is_equal_approx(reader.book.scale.x, 1.05), "Preview uses the smaller cover scale")
     var front: Vector3 = reader.camera.global_position

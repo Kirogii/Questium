@@ -12,6 +12,8 @@ window/size/viewport_height=800
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/default_filters/use_nearest_mipmap_filter=false
+anti_aliasing/quality/msaa_3d=3
+textures/default_filters/anisotropic_filtering_level=4
 
 [xr]
 openxr/enabled=true
@@ -20,4 +22,6 @@ openxr/extensions/meta/passthrough=true
 openxr/extensions/meta/hand_tracking_mesh=true
 openxr/extensions/meta/render_model=true
 openxr/startup_alert=false
+openxr/foveation_level=0
+openxr/foveation_dynamic=false
 shaders/enabled=true

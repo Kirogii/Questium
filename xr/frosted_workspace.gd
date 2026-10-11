@@ -43,12 +43,17 @@ var source_items: Array = []
 var chapters: Array = []
 var selected_source := ""
 var source_category := "latest"
+var search_revision := 0
 var source_tag_query := ""
 var source_filters: Dictionary = {}
 var source_filter_defs: Array = []
+var filter_revision := 0
+var filter_refresh_remaining := 0.0
+var filter_poll_elapsed := 0.0
 var source_filter_panel: Dictionary
 var source_filter_body: VBoxContainer
 var source_filter_tween: Tween
+var source_filter_offset := 0.0
 var selected_manga := ""
 var active_manga := ""
 var resume_chapter := ""
@@ -68,6 +73,7 @@ var extensions: Array = []
 var browsing_extensions := false
 var keyboard_requested_at := -1000
 var keyboard_session := 0
+var keyboard_revision := -1
 var keyboard_field := ""
 var keyboard_poll_elapsed := 0.0
 var active_book: SpatialBook
@@ -83,14 +89,16 @@ var repositories: Array = []
 var repository_pending := false
 var hud_scale := 0.5
 var gui_distance := 0.62
-var popup_order := 10
+var popup_order := 121
 var settings: RefCounted
 var sidebar_spacer: Control
+var hud_back: Button
+var app_updater: RefCounted
 
 func raise_popup(node: Node3D, center: bool = true) -> void:
     if center and node != preview.node:
         place_popup(node)
-    popup_order = mini(popup_order + 2, 120)
+    popup_order = mini(popup_order + 2, 126)
     node.set_meta("popup_priority", popup_order)
     for target in reader.panels:
         if target.node != node: continue
@@ -117,12 +125,12 @@ func place_popup(node: Node3D) -> void:
     var distance := clampf(head.distance_to(target) - 0.16, 0.38, 0.56)
     node.global_transform = Transform3D(facing, head + (target - head).normalized() * distance)
 
-func minimize_popups() -> void:
+func minimize_popups(keep_filter_sheet: bool = false) -> void:
     reader.ui.close_options()
-    if source_filter_tween and source_filter_tween.is_running(): source_filter_tween.kill()
+    if not keep_filter_sheet and source_filter_tween and source_filter_tween.is_running(): source_filter_tween.kill()
     # Keep each menu's contents and scroll state for the next open.
     var nodes := [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
-    if source_filter_panel: nodes.append(source_filter_panel.node)
+    if source_filter_panel and not keep_filter_sheet: nodes.append(source_filter_panel.node)
     if settings: nodes.append(settings.details.node)
     for node in nodes:
         node.visible = false
@@ -131,9 +139,9 @@ func toggle_info() -> void:
     if info.node.visible: info.node.visible = false
     else: raise_popup(info.node)
 
-func popup_ray(start: Vector3, direction: Vector3) -> bool:
+func popup_ray(start: Vector3, direction: Vector3, popups_only: bool = true) -> bool:
     for target in reader.panels:
-        if not target.get("popup", false) or not target.node.is_visible_in_tree(): continue
+        if (popups_only and not target.get("popup", false)) or not target.node.is_visible_in_tree(): continue
         var local: Vector3 = target.node.to_local(start)
         var ray: Vector3 = target.node.global_basis.inverse() * direction
         if absf(ray.z) < 0.0001: continue
@@ -179,6 +187,7 @@ func panel(size: Vector2, pixels: Vector2i) -> Dictionary:
     return result
 
 func build() -> void:
+    app_updater = preload("res://vr_update.gd").new(self)
     preferences.load("user://library.cfg")
     enabled_languages = preferences.get_value("sources", "languages", ["en"])
     hud_scale = float(preferences.get_value("workspace", "hud_scale", 0.5))
@@ -209,7 +218,10 @@ func build() -> void:
     var hud_header := HBoxContainer.new()
     sidebar.add_child(hud_header)
     label(hud_header, "Questium", 32).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    reader.ui.icon_button(hud_header, "close", func(): hud.node.visible = false, Vector2(48, 48))
+    hud_back = reader.ui.icon_button(hud_header, "close", func():
+        if section == "Settings": show_section("Home")
+        else: hud.node.visible = false
+    , Vector2(48, 48))
     var gap := Control.new()
     gap.custom_minimum_size.y = 18
     sidebar.add_child(gap)
@@ -288,9 +300,9 @@ func build() -> void:
         var category: Dictionary = mode
         var category_button := button(source_category_row, category.title, func():
             source_category = category.id
-            if source_category == "tags": search.placeholder_text = "Search by tags"
-            else: search.placeholder_text = "Search this source"
-            run_search(1)
+            search.placeholder_text = "Search this source"
+            if source_category == "tags": show_source_filters()
+            else: run_search(1)
         )
         category_button.custom_minimum_size.x = 150
     var filters_button := button(source_category_row, "Filters", func(): show_source_filters())
@@ -534,29 +546,53 @@ func show_keyboard(target: LineEdit) -> void:
     if keyboard_target == target and target.has_meta("native_keyboard_open"): return
     if keyboard_target == target and Time.get_ticks_msec() - keyboard_requested_at < 350: return
     keyboard_requested_at = Time.get_ticks_msec()
+    if keyboard_target != target: close_keyboard()
     keyboard_target = target
     keyboard_session += 1
+    keyboard_revision = -1
     keyboard_field = str(target.get_instance_id()) + ":" + str(keyboard_session)
     keyboard.node.visible = false
-    if reader.bridge and reader.bridge.has_method("showKeyboard"):
+    # Android JNI plugin methods are callable but Object.has_method() omits them.
+    if reader.bridge:
         target.set_meta("native_keyboard_open", true)
         reader.bridge.call("showKeyboard", target.text, keyboard_field)
     elif DisplayServer.has_feature(DisplayServer.FEATURE_VIRTUAL_KEYBOARD):
-        DisplayServer.virtual_keyboard_show(target.text)
+        # Godot's API takes screen rect, keyboard type, maximum length and
+        # selection. This fallback uses Godot's own InputConnection/events.
+        target.virtual_keyboard_enabled = true
+        target.grab_focus()
+        DisplayServer.virtual_keyboard_show(target.text, target.get_global_rect(), DisplayServer.KEYBOARD_TYPE_DEFAULT, -1, target.caret_column, target.caret_column)
+
+func close_keyboard() -> void:
+    var field := keyboard_field
+    keyboard_field = ""
+    if is_instance_valid(keyboard_target):
+        keyboard_target.remove_meta("native_keyboard_open")
+        keyboard_target.release_focus()
+    if reader.bridge:
+        reader.bridge.call("hideKeyboard", field)
+    else:
+        DisplayServer.virtual_keyboard_hide()
 
 func _process(delta: float) -> void:
+    if source_filter_panel and source_filter_panel.node.visible:
+        source_filter_panel.node.global_transform = source_filter_pose(source_filter_offset)
+        if filter_refresh_remaining > 0:
+            filter_refresh_remaining = maxf(0.0, filter_refresh_remaining - delta)
+            filter_poll_elapsed += delta
+            if filter_refresh_remaining == 0:
+                if source_filter_defs.is_empty(): render_source_filters()
+            elif filter_poll_elapsed >= 1.0:
+                filter_poll_elapsed = 0.0
+                request_source_filters()
+    if is_instance_valid(keyboard_target) and not keyboard_target.is_visible_in_tree(): close_keyboard()
     if not is_instance_valid(keyboard_target) or keyboard_field.is_empty(): return
     keyboard_poll_elapsed += delta
     if keyboard_poll_elapsed < 0.05: return
     keyboard_poll_elapsed = 0.0
-    if not reader.bridge or not reader.bridge.has_method("keyboardSnapshot"): return
+    if not reader.bridge: return
     var snapshot = JSON.parse_string(str(reader.bridge.call("keyboardSnapshot")))
-    if snapshot is Dictionary and str(snapshot.get("field", "")) == keyboard_field:
-        var value := str(snapshot.get("text", ""))
-        if value != keyboard_target.text:
-            keyboard_target.text = value
-            keyboard_target.caret_column = value.length()
-            keyboard_target.text_changed.emit(value)
+    if snapshot is Dictionary: consume_keyboard(snapshot)
 
 func show_sources(available: bool) -> void:
     browsing_extensions = available
@@ -673,6 +709,7 @@ func type_key(key: String) -> void:
     else: keyboard_target.insert_text_at_caret(key)
 
 func show_section(name: String) -> void:
+    close_keyboard()
     if settings: settings.leave()
     if opening and opening.is_running(): opening.kill()
     section = name
@@ -715,7 +752,7 @@ func render_grid() -> void:
     var shown := 0
     var groups: Dictionary = {}
     for item in entries:
-        if not search.text.is_empty() and not str(item.title).to_lower().contains(search.text.to_lower()): continue
+        if section == "Home" and not search.text.is_empty() and not str(item.title).to_lower().contains(search.text.to_lower()): continue
         if section == "Home" and filter == "Recents" and int(item.get("last_read", 0)) == 0: continue
         if section == "Home" and filter == "Favorites" and not str(item.id) in starred: continue
         var group := ""
@@ -754,12 +791,12 @@ func add_card(item: Dictionary) -> void:
     var card := PanelContainer.new()
     # The panel style contributes 16 px of horizontal inset on each side;
     # reserve that space so the child controls remain exactly COVER_BOX wide.
-    card.custom_minimum_size = Vector2(COVER_BOX.x + 32.0, 390)
+    card.custom_minimum_size = Vector2(COVER_BOX.x + 32.0, 417 if item.has("history_chapter") else 390)
     card.add_theme_stylebox_override("panel", reader.ui.style(Color(0, 0, 0, 0), 24))
     grid.add_child(card)
     var column := VBoxContainer.new()
     column.custom_minimum_size.x = COVER_BOX.x
-    column.add_theme_constant_override("separation", 12)
+    column.add_theme_constant_override("separation", 8)
     card.add_child(column)
     var cover := TextureButton.new()
     cover.custom_minimum_size = COVER_BOX
@@ -790,21 +827,34 @@ func add_card(item: Dictionary) -> void:
     cover.mouse_exited.connect(func(): card.add_theme_stylebox_override("panel", reader.ui.style(Color(0, 0, 0, 0), 24)))
     var entry: Dictionary = item
     cover.pressed.connect(func(): select_book(entry, cover))
-    var caption := button(column, str(item.title), func(): select_book(entry, cover))
+    # Button text can enlarge its minimum height despite clip_text. A child
+    # label clips at two lines without participating in the card's sizing.
+    var caption := button(column, "", func(): select_book(entry, cover))
     caption.add_theme_stylebox_override("normal", reader.ui.style(Color(0, 0, 0, 0), 16))
-    caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-    caption.alignment = HORIZONTAL_ALIGNMENT_LEFT
-    caption.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    caption.clip_text = true
-    # Reserve two line heights so every card has the same title region. The
-    # tooltip keeps the complete title available without changing the action.
     caption.custom_minimum_size = TITLE_BOX
     caption.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
     caption.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
     caption.tooltip_text = str(item.title)
-    caption.add_theme_font_size_override("font_size", 20)
+    caption.clip_contents = true
+    var title_label := Label.new()
+    title_label.text = str(item.title)
+    title_label.add_theme_font_size_override("font_size", 20)
+    title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    title_label.max_lines_visible = 2
+    title_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    title_label.clip_text = true
+    title_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    caption.add_child(title_label)
+    title_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    title_label.offset_left = 8
+    title_label.offset_right = -8
+    title_label.offset_top = 4
+    title_label.offset_bottom = -4
     if item.has("history_chapter"):
-        label(column, str(item.history_chapter) + " · " + reader._label("Page") + " " + str(int(item.get("last_page", 0)) + 1), 16)
+        var chapter := label(column, str(item.history_chapter) + " · " + reader._label("Page") + " " + str(int(item.get("last_page", 0)) + 1), 16)
+        chapter.clip_text = true
+        chapter.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+        chapter.tooltip_text = chapter.text
     var stamp := int(item.get("last_read", 0))
     if stamp == 0: stamp = int(item.get("added", 0))
     if stamp > 100000000000: stamp /= 1000
@@ -857,16 +907,14 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     reader.book.set_mode("book")
     reader.book.set_open(0.0)
     reader.book.set_hard_cover(reader.ui.hard_cover)
+    reader.book.sfx_enabled = reader.ui.book_sfx
+    reader.book.play_sfx("summon")
     reader.book.set_cover(cover_cache.get(selected_manga))
     reader.book.visible = true
     reader.book.set_preview(true)
     if opening and opening.is_running(): opening.kill()
-    opening = reader.create_tween().set_parallel(true)
-    opening.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-    opening.tween_property(reader.book, "global_position", target.origin, 0.48)
-    opening.tween_property(reader.book, "quaternion", target.basis.get_rotation_quaternion(), 0.48)
-    opening.tween_property(reader.book, "scale", Vector3.ONE * 1.05, 0.48)
-    opening.chain().tween_callback(func(): hud.node.visible = false)
+    opening = reader.fly_book(target.scaled_local(Vector3.ONE * 1.05))
+    opening.tween_callback(func(): hud.node.visible = false)
     reader._request("details", {"manga": selected_manga})
     reader._request("cover", {"manga": selected_manga})
 
@@ -915,10 +963,12 @@ func chapter_opened() -> void:
     keyboard.node.visible = false
     reader.book.set_preview(false)
     reader.book.set_cover(cover_cache.get(active_manga))
+    reader.book.sfx_enabled = reader.ui.book_sfx
+    reader.book.set_hard_cover(reader.ui.hard_cover)
     reader.book.set_mode(reader.ui.layout_mode)
     reader.book.settle_cover(true)
     var size := Vector3.ONE * 0.85
-    reader.book.global_transform = Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0, -0.10, -0.85)).scaled_local(size)
+    reader.fly_book(Transform3D(facing_basis(), head_position() + facing_basis() * Vector3(0, -0.10, -0.85)).scaled_local(size))
     read_button.disabled = false
     reader.ui.set_icon_label(read_button, "Read")
 
@@ -932,18 +982,29 @@ func render_chapters() -> void:
         row.custom_minimum_size.x = 440
 
 func run_search(new_page: int) -> void:
-    if selected_source.is_empty(): return
+    if selected_source.is_empty():
+        show_sources(false)
+        return
     page = new_page
+    search_revision += 1
     message.text = reader._label("Searching…")
-    var query := search.text if source_category == "tags" else ""
-    reader._request("source_search", {"source": selected_source, "query": query, "page": page, "category": source_category, "filters": source_filters})
+    var query := search.text.strip_edges()
+    var category := "browse" if not query.is_empty() or not source_filters.is_empty() else source_category
+    reader._request("source_search", {"source": selected_source, "query": query, "page": page, "category": category, "filters": source_filters, "request_id": search_revision})
 
 func show_source_filters() -> void:
+    if selected_source.is_empty():
+        show_sources(false)
+        return
+    filter_refresh_remaining = 8.0
+    filter_poll_elapsed = 0.0
+    request_source_filters()
     if not source_filter_panel:
         # This is deliberately attached as a sheet-sized world panel rather
         # than a centered popup. Its pose is tied to the frosted search HUD so
         # it rises from that window's lower edge in VR.
         source_filter_panel = panel(SOURCE_FILTER_SHEET_SIZE, Vector2i(1320, 630))
+        source_filter_panel.background.add_theme_stylebox_override("panel", reader.ui.settings_surface())
         var content: VBoxContainer = source_filter_panel.content
         var header := HBoxContainer.new()
         content.add_child(header)
@@ -966,7 +1027,7 @@ func show_source_filters() -> void:
         content.add_child(actions)
         button(actions, "Apply Filters", func():
             hide_source_filters()
-            source_category = "browse"
+            if source_category == "latest": source_category = "browse"
             run_search(1)
         )
         button(actions, "Clear Filters", func():
@@ -974,25 +1035,28 @@ func show_source_filters() -> void:
             render_source_filters()
         )
     render_source_filters()
-    var rest := source_filter_pose()
-    var hidden := source_filter_pose(-source_filter_panel.size.y - 0.05)
     if source_filter_tween and source_filter_tween.is_running(): source_filter_tween.kill()
-    source_filter_panel.node.global_transform = hidden
+    source_filter_offset = -source_filter_panel.size.y - 0.05
+    place_source_filter_panel()
     raise_popup(source_filter_panel.node, false)
     source_filter_tween = reader.create_tween()
     source_filter_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-    source_filter_tween.tween_property(source_filter_panel.node, "global_position", rest.origin, 0.22)
+    source_filter_tween.tween_property(self, "source_filter_offset", 0.0, 0.22)
+
+func request_source_filters() -> void:
+    filter_revision += 1
+    reader._request("source_filters", {"source": selected_source, "request_id": filter_revision})
 
 func source_filter_pose(offset: float = 0.0) -> Transform3D:
-    var facing: Basis = hud.node.global_basis.orthonormalized()
-    var hud_height: float = float(hud.size.y) * hud.node.global_basis.y.length()
+    var facing: Basis = hud.node.global_basis
+    var hud_height: float = float(hud.size.y)
     var sheet_height: float = float(source_filter_panel.size.y)
     var center_y: float = -hud_height * 0.5 + sheet_height * 0.5 + 0.012 + offset
-    return Transform3D(facing, hud.node.global_position + facing.y * center_y)
+    return Transform3D(facing, hud.node.to_global(Vector3(0, center_y, 0.035)))
 
 func place_source_filter_panel() -> void:
     if not source_filter_panel: return
-    source_filter_panel.node.global_transform = source_filter_pose()
+    source_filter_panel.node.global_transform = source_filter_pose(source_filter_offset)
 
 func hide_source_filters(animated: bool = true) -> void:
     if not source_filter_panel: return
@@ -1003,18 +1067,21 @@ func hide_source_filters(animated: bool = true) -> void:
         return
     source_filter_tween = reader.create_tween()
     source_filter_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
-    source_filter_tween.tween_property(source_filter_panel.node, "global_position", source_filter_pose(-source_filter_panel.size.y - 0.05).origin, 0.16)
+    source_filter_tween.tween_property(self, "source_filter_offset", -source_filter_panel.size.y - 0.05, 0.16)
     source_filter_tween.tween_callback(func(): source_filter_panel.node.visible = false)
 
 func render_source_filters() -> void:
     if not source_filter_body: return
     clear(source_filter_body)
     if source_filter_defs.is_empty():
-        label(source_filter_body, "This source has no filters.", 18)
+        label(source_filter_body, "Loading…" if filter_refresh_remaining > 0 else "This source has no filters.", 18)
         return
-    for definition in source_filter_defs:
+    render_filter_definitions(source_filter_defs)
+
+func render_filter_definitions(definitions: Array) -> void:
+    for definition in definitions:
         var filter_index := int(definition.get("index", -1))
-        var key := str(filter_index)
+        var key := str(definition.get("key", str(filter_index)))
         var kind := str(definition.get("type", ""))
         var title := str(definition.get("name", ""))
         if kind == "separator":
@@ -1024,7 +1091,7 @@ func render_source_filters() -> void:
             label(source_filter_body, title, 22)
             continue
         if kind == "checkbox":
-            var check := CheckButton.new()
+            var check := CheckBox.new()
             check.text = title
             check.button_pressed = bool(source_filters.get(key, definition.get("state", false)))
             source_filter_body.add_child(check)
@@ -1071,12 +1138,12 @@ func render_source_filters() -> void:
             var selected: Array = raw_selected if raw_selected is Array else []
             for value in definition.get("values", []):
                 var text := str(value)
-                var tag := CheckButton.new()
+                var tag := CheckBox.new()
                 tag.text = text
                 tag.button_pressed = text in selected
                 source_filter_body.add_child(tag)
                 tag.toggled.connect(func(enabled: bool):
-                    var values: Array = source_filters.get(key, []).duplicate()
+                    var values: Array = source_filters.get(key, definition.get("state", [])).duplicate()
                     if enabled and text not in values: values.append(text)
                     elif not enabled: values.erase(text)
                     source_filters[key] = values
@@ -1087,31 +1154,32 @@ func render_source_filters() -> void:
             text.text_changed.connect(func(value: String): source_filters[key] = value)
         elif kind == "group":
             label(source_filter_body, title, 18)
-            # Some source implementations expose group choices in addition to
-            # the group heading. Render those choices when present while
-            # retaining the protocol's array state.
-            var raw_group_selected = source_filters.get(key, definition.get("state", []))
-            var group_selected: Array = raw_group_selected if raw_group_selected is Array else []
-            for value in definition.get("values", []):
-                var group_value := str(value)
-                var group_check := CheckButton.new()
-                group_check.text = group_value
-                group_check.button_pressed = group_value in group_selected
-                source_filter_body.add_child(group_check)
-                group_check.toggled.connect(func(enabled: bool):
-                    var values: Array = source_filters.get(key, []).duplicate()
-                    if enabled and group_value not in values: values.append(group_value)
-                    elif not enabled: values.erase(group_value)
-                    source_filters[key] = values
-                )
+            render_filter_definitions(definition.get("children", []))
         else:
-            # Keep an extension-specific/forward-compatible filter visible and
-            # editable instead of silently dropping it from the sheet.
-            var fallback := edit(source_filter_body, title)
-            fallback.text = str(source_filters.get(key, definition.get("state", "")))
-            fallback.text_changed.connect(func(value: String): source_filters[key] = value)
+            label(source_filter_body, title + " (unsupported filter)", 18)
+    reader.ui.theme_settings(source_filter_panel.content)
+
+func consume_keyboard(data: Dictionary) -> void:
+    if keyboard_field.is_empty() or not is_instance_valid(keyboard_target) or str(data.get("field", "")) != keyboard_field: return
+    var revision := int(data.get("revision", keyboard_revision + 1))
+    if revision <= keyboard_revision: return
+    keyboard_revision = revision
+    var target := keyboard_target
+    var value := str(data.get("text", ""))
+    if target.text != value:
+        target.text = value
+        target.caret_column = value.length()
+        target.text_changed.emit(value)
+    if reader.bridge and reader.bridge.call("keyboardProbeEnabled"):
+        reader.bridge.call("keyboardProbeResult", value, bool(data.get("submitted", false)))
+    if data.get("submitted", false) or data.get("closed", false):
+        keyboard_field = ""
+        target.remove_meta("native_keyboard_open")
+        target.release_focus()
+        if data.get("submitted", false): target.text_submitted.emit(value)
 
 func consume(data: Dictionary) -> bool:
+    if app_updater and app_updater.consume(data): return true
     if settings and settings.consume(data): return true
     match str(data.get("kind", "")):
         "history":
@@ -1144,25 +1212,20 @@ func consume(data: Dictionary) -> bool:
             if data.get("success", false): repository_url.text = ""
         "source_filters":
             if str(data.get("source", "")) != selected_source: return true
-            source_filter_defs = data.get("items", [])
-            render_source_filters()
+            if data.has("request_id") and int(data.request_id) != filter_revision: return true
+            if not data.has("request_id") and source_filter_panel and source_filter_panel.node.visible: return true
+            var definitions: Array = data.get("items", [])
+            if definitions != source_filter_defs:
+                source_filter_defs = definitions
+                render_source_filters()
         "keyboard_text":
-            if is_instance_valid(keyboard_target) and str(data.get("field", "")) == keyboard_field:
-                keyboard_target.text = str(data.text)
-                keyboard_target.caret_column = keyboard_target.text.length()
-                keyboard_target.text_changed.emit(keyboard_target.text)
-                if reader.bridge and reader.bridge.has_method("keyboardProbeEnabled") and reader.bridge.call("keyboardProbeEnabled"):
-                    reader.bridge.call("keyboardProbeResult", keyboard_target.text)
-                if data.get("submitted", false) or data.get("closed", false):
-                    keyboard_target.remove_meta("native_keyboard_open")
-                    if data.get("submitted", false): keyboard_target.text_submitted.emit(keyboard_target.text)
-                    keyboard_target.release_focus()
-                    keyboard_field = ""
+            consume_keyboard(data)
         "install_status":
             message.text = str(data.message)
             picker_status.text = reader._label(str(data.message))
         "source_results":
             if str(data.source) != selected_source or int(data.page) != page: return true
+            if int(data.get("request_id", search_revision)) != search_revision: return true
             source_items = data.get("items", [])
             if section == "Source Search": render_grid()
         "details":
@@ -1221,7 +1284,8 @@ func head_position() -> Vector3:
     return reader.camera.global_position
 
 func scroll_ui(amount: float) -> bool:
-    for target in [hud, info]:
+    for target in [source_filter_panel, picker, repository_panel, hud, info]:
+        if target.is_empty(): continue
         if not target.node.is_visible_in_tree(): continue
         var hovered: Control = target.viewport.gui_get_hovered_control()
         while is_instance_valid(hovered):
@@ -1312,7 +1376,9 @@ func preview_snap(_node: Node3D) -> int:
     return -1
 
 func begin_drag(node: Node3D) -> void:
-    if node == hud.node: minimize_popups()
+    if node == hud.node:
+        # The filter sheet is HUD-attached and follows while dragging.
+        minimize_popups(true)
     else: raise_popup(node, false)
 
 func finish_drag(_node: Node3D) -> void:

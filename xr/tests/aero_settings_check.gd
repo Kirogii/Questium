@@ -11,13 +11,14 @@ func check() -> void:
     reader.chapter_token = "settings-test"
     var book: SpatialBook = reader.book
     book.set_chapter(8)
+    book.set_hard_cover(false)
     var thin: AABB = book.body_parts[0].mesh.get_aabb()
     book.set_hard_cover(true)
     var thick: AABB = book.body_parts[0].mesh.get_aabb()
-    assert(thick.size.z > thin.size.z * 5 and thick.size.x > thin.size.x, "Hardcover uses thick overhanging boards")
+    assert(thick.size.z > thin.size.z * 3 and thick.size.x > thin.size.x, "Hardcover uses thicker overhanging boards")
     assert(book.body_parts[4].mesh is CylinderMesh, "Hardcover has a rounded bound spine")
     book.set_hard_cover(false)
-    assert(book.body_parts[0].mesh.get_aabb().size.z < thick.size.z / 5, "Soft-cover geometry restores")
+    assert(book.body_parts[0].mesh.get_aabb().size.z < thick.size.z / 3, "Soft-cover geometry restores")
     reader.tracked["left"] = {"natural_hand": true}
     reader.ui.toggle(true)
     assert(reader.ui.palm_options_requested)

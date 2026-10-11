@@ -49,19 +49,18 @@ class GetApplicationRelease(
         } else {
             // Release builds: based on releases in "PineappleTwilight/komikku-pineapple" repo
             // tagged as something like "v0.1.2"
-            val oldVersion = versionName.replace("[^\\d.]".toRegex(), "")
-
-            val newSemVer = newVersion.split(".").map { it.toInt() }
-            val oldSemVer = oldVersion.split(".").map { it.toInt() }
-
-            oldSemVer.mapIndexed { index, i ->
-                if (newSemVer[index] > i) {
-                    return true
-                }
-                if (newSemVer[index] < i) return false
+            // KMK --> Ignore build suffixes; pad missing version components.
+            fun parts(value: String): List<Int>? = value.removePrefix("v").substringBefore('-').split('.').map {
+                it.toIntOrNull() ?: return null
             }
-
+            val latest = parts(versionTag) ?: return false
+            val current = parts(versionName) ?: return false
+            for (index in 0 until maxOf(latest.size, current.size)) {
+                val comparison = (latest.getOrElse(index) { 0 }).compareTo(current.getOrElse(index) { 0 })
+                if (comparison != 0) return comparison > 0
+            }
             false
+            // KMK <--
         }
     }
 

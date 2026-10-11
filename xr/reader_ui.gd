@@ -13,7 +13,9 @@ var options_title: Label
 var config_scroll: ScrollContainer
 var footer: HBoxContainer
 var layout_mode := "auto"
-var hard_cover := false
+var hard_cover := true
+var book_sfx := true
+var reading_direction := "auto"
 var options_page := 0
 var dots: HBoxContainer
 var palm_options_requested := false
@@ -44,21 +46,32 @@ func load_config() -> void:
     reader.haptics = bool(config.get_value("reader", "haptics", true))
     reader.scenes_enabled = bool(config.get_value("reader", "scenes", true))
     layout_mode = str(config.get_value("reader", "layout", "auto"))
-    hard_cover = bool(config.get_value("reader", "hard_cover", false))
+    hard_cover = bool(config.get_value("reader", "hard_cover", true))
+    book_sfx = bool(config.get_value("reader", "book_sfx", true))
+    reading_direction = str(config.get_value("reader", "reading_direction", "auto"))
+    if reading_direction not in ["auto", "ltr", "rtl"]: reading_direction = "auto"
+    for model in reader.books: model.set_reading_direction(reading_direction)
     for key in reader.bindings:
         var saved := str(config.get_value("buttons", key, reader.bindings[key]))
+        if int(config.get_value("reader", "controls_version", 0)) == 0 and key.ends_with(":trigger_click") and saved == ("Previous page" if key.begins_with("left:") else "Next page"):
+            saved = "Interact"
         if saved in ACTIONS:
             reader.bindings[key] = saved
+    if int(config.get_value("reader", "controls_version", 0)) == 0:
+        save()
 
 func save() -> void:
+    config.set_value("reader", "controls_version", 1)
     for key in reader.bindings:
         config.set_value("buttons", key, reader.bindings[key])
     config.set_value("reader", "hand", reader.preferred_hand)
     config.set_value("reader", "haptics", reader.haptics)
     config.set_value("reader", "scenes", reader.scenes_enabled)
+    config.set_value("reader", "book_sfx", book_sfx)
     config.save(config_path)
 
 func apply_book_settings() -> void:
+    reader.book.set_reading_direction(reading_direction)
     # Chapter tokens are session-scoped, so use the stable displayed chapter
     # title for the local override key. A missing key intentionally follows the
     # Android/global VR preference until the user changes this book's switch.
@@ -146,6 +159,7 @@ func set_icon_label(button: Button, caption: String) -> void:
 
 func build() -> void:
     var panel: Dictionary = reader._panel(reader.book, Vector2(0.34, 0.082), Vector2i(1000, 242), Vector3.ZERO)
+    panel.background.add_theme_stylebox_override("panel", style(Color(0.04, 0.045, 0.055, 0.86), 22))
     reader.toolbar_view = panel.viewport
     var column: VBoxContainer = panel.content
     reader.title = label(column, "Questium", 30)
@@ -166,7 +180,8 @@ func build() -> void:
     total.visible = false
     total.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     labeled_icon(row, "next", "Next", func(): reader._turn(1))
-    labeled_icon(row, "book", "Book Options", func(): toggle(true))
+    labeled_icon(row, "book", "Get book", reader.summon_book)
+    labeled_icon(row, "settings", "Book Options", func(): toggle(true))
     labeled_icon(row, "close", "Close", reader.close_book, Vector2(70, 60))
     reader.status = label(column, "Loading library…", 16)
     reader.status.visible = false
@@ -176,7 +191,7 @@ func build_options() -> void:
     var panel: Dictionary = reader._panel(reader.book, Vector2(0.32, 0.48), Vector2i(800, 1200), Vector3.ZERO)
     options = panel.node
     options.visible = false
-    panel.background.add_theme_stylebox_override("panel", style(Color(0.40, 0.39, 0.37, 0.08), 62, true))
+    panel.background.add_theme_stylebox_override("panel", settings_surface(42))
     var outer := VBoxContainer.new()
     panel.content.add_child(outer)
     outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -238,7 +253,20 @@ func show_book() -> void:
     options_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
     options_title.clip_text = true
     line(content)
-    if options_page == 0:
+    render_book_options(content, options_page)
+    reader._button(footer, "Recenter", reader.recenter)
+    theme_settings(footer)
+
+func render_book_options(content: VBoxContainer, page: int, embedded: bool = false) -> void:
+    if page == 0:
+        label(content, "Reading direction", 26)
+        var direction := OptionButton.new()
+        for caption in ["Follow source", "Left to right", "Right to left"]:
+            direction.add_item(reader._label(caption))
+        direction.selected = ["auto", "ltr", "rtl"].find(reading_direction)
+        direction.custom_minimum_size.y = 64
+        content.add_child(direction)
+        direction.item_selected.connect(func(index: int): set_reading_direction(["auto", "ltr", "rtl"][index]))
         switch_row(content, "Stretch pages to fit", reader.book.stretch_to_fit, func(enabled: bool):
             set_book_stretch_to_fit(enabled)
         )
@@ -246,9 +274,16 @@ func show_book() -> void:
             reader._button(content, "Use global setting", clear_book_stretch_override)
         switch_row(content, "Hard Cover", hard_cover, func(enabled: bool):
             hard_cover = enabled
-            reader.book.set_hard_cover(enabled)
+            for model in reader.books: model.set_hard_cover(enabled)
             config.set_value("reader", "hard_cover", enabled)
             config.save(config_path)
+        )
+        switch_row(content, "Book SFX", book_sfx, func(enabled: bool):
+            book_sfx = enabled
+            for model in reader.books:
+                model.sfx_enabled = enabled
+                if not enabled: model.stop_sfx()
+            save()
         )
         switch_row(content, "Upscale Manga", reader.book.upscale_enabled, func(enabled: bool):
             reader.book.upscale_enabled = enabled
@@ -264,7 +299,7 @@ func show_book() -> void:
         icon_button(pages, "previous", func(): reader._turn(-1), Vector2(100, 70))
         icon_button(pages, "next", func(): reader._turn(1), Vector2(100, 70))
         icon_button(pages, "book", func(): reader.book.settle_cover(reader.book.openness < 0.5), Vector2(100, 70))
-    elif options_page == 1:
+    elif page == 1:
         for entry in [["Force two pages", "book"], ["Force long scroll", "scroll"]]:
             var forced: String = entry[1]
             switch_row(content, entry[0], reader.book.mode == forced, func(enabled: bool):
@@ -273,7 +308,8 @@ func show_book() -> void:
                 config.set_value("reader", "layout", layout_mode)
                 config.save(config_path)
                 reader._preload(reader.book.first_page)
-                show_book.call_deferred()
+                if embedded: reader.workspace.settings.select_tab.call_deferred(1)
+                else: show_book.call_deferred()
             )
         line(content)
         for entry in [["Size", 0.5, 2.5, reader.book.scale.x], ["Tilt", -60, 45, rad_to_deg(reader.book.rotation.x)], ["Distance", 0.35, 2, reader.book.global_position.distance_to(reader.camera.global_position)]]:
@@ -282,6 +318,7 @@ func show_book() -> void:
             var row := HBoxContainer.new()
             content.add_child(row)
             reader._slider(row, kind, entry[1], entry[2], entry[3], func(value: float):
+                reader.book.play_sfx("resize")
                 match kind:
                     "Size": reader.book.scale = Vector3.ONE * value
                     "Tilt": reader.book.rotation.x = deg_to_rad(value)
@@ -292,8 +329,15 @@ func show_book() -> void:
         switch_row(content, "See through", reader.passthrough_enabled, reader._set_passthrough)
         reader._button(content, "Controller configuration", show_controllers)
         reader._button(content, "Switch hands", func(): perform("Switch hands"))
-        reader._button(content, "Edit Settings", func(): reader.workspace.show_settings())
-    reader._button(footer, "Recenter", reader.recenter)
+        if not embedded: reader._button(content, "Edit Settings", func(): reader.workspace.show_settings())
+    theme_settings(content)
+
+func set_reading_direction(value: String) -> void:
+    reading_direction = value
+    reader._cancel_interactions()
+    for model in reader.books: model.set_reading_direction(value)
+    config.set_value("reader", "reading_direction", value)
+    config.save(config_path)
 
 func close_options() -> void:
     options.visible = false
@@ -307,7 +351,10 @@ func switch_row(parent: Container, caption: String, value: bool, callback: Calla
     theme_switch(toggle)
     toggle.button_pressed = value
     row.add_child(toggle)
-    toggle.toggled.connect(callback)
+    toggle.toggled.connect(func(enabled: bool):
+        callback.call(enabled)
+        reader.book.play_sfx("seek")
+    )
 
 func theme_switch(toggle: CheckButton) -> void:
     toggle.add_theme_icon_override("checked", preload("res://icons/switch_on.svg"))
@@ -316,6 +363,57 @@ func theme_switch(toggle: CheckButton) -> void:
     toggle.add_theme_icon_override("unchecked_disabled", preload("res://icons/switch_off.svg"))
     toggle.custom_minimum_size.y = 60
 
+func settings_surface(radius: int = 32) -> StyleBoxFlat:
+    var panel := style(Color(0.38, 0.38, 0.37, 0.18), radius)
+    panel.set_border_width_all(1)
+    panel.border_color = Color(1, 1, 1, 0.14)
+    return panel
+
+func theme_settings(node: Node) -> void:
+    if node is Button:
+        for state in ["normal", "hover", "pressed", "disabled"]:
+            var box := style(Color(0.64, 0.63, 0.60, 0.18 if state == "normal" else 0.28), 22)
+            box.set_border_width_all(1)
+            box.border_color = Color(1, 1, 1, 0.10)
+            node.add_theme_stylebox_override(state, box)
+        var focus := style(Color(0.74, 0.48, 0.25, 0.18), 22)
+        focus.set_border_width_all(2)
+        focus.border_color = Color(0.90, 0.65, 0.38, 0.65)
+        node.add_theme_stylebox_override("focus", focus)
+        node.add_theme_font_size_override("font_size", 22)
+        node.add_theme_color_override("font_color", Color(0.96, 0.95, 0.93))
+        node.add_theme_color_override("font_disabled_color", Color(0.96, 0.95, 0.93, 0.40))
+        node.custom_minimum_size.y = maxf(node.custom_minimum_size.y, 56)
+        if node is CheckButton or node is CheckBox:
+            for state in ["normal", "hover", "pressed", "disabled"]:
+                node.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+        if node is CheckButton: theme_switch(node)
+        if node is CheckBox:
+            for suffix in ["", "_disabled"]:
+                node.add_theme_icon_override("checked" + suffix, preload("res://icons/checkbox_on.svg"))
+                node.add_theme_icon_override("unchecked" + suffix, preload("res://icons/checkbox_off.svg"))
+            node.add_theme_constant_override("h_separation", 14)
+        if node is OptionButton:
+            var popup: PopupMenu = node.get_popup()
+            var panel := style(Color(0.24, 0.24, 0.23, 0.97), 22)
+            panel.set_border_width_all(1)
+            panel.border_color = Color(1, 1, 1, 0.16)
+            popup.add_theme_stylebox_override("panel", panel)
+            popup.add_theme_stylebox_override("hover", focus)
+            popup.add_theme_font_size_override("font_size", 22)
+            popup.add_theme_constant_override("v_separation", 18)
+            popup.add_theme_color_override("font_color", Color(0.96, 0.95, 0.93))
+            popup.add_theme_color_override("font_hover_color", Color.WHITE)
+    elif node is HSlider:
+        theme_slider(node)
+    elif node is LineEdit:
+        node.add_theme_stylebox_override("normal", settings_surface(18))
+        var focus := settings_surface(18)
+        focus.border_color = Color(0.90, 0.65, 0.38, 0.65)
+        node.add_theme_stylebox_override("focus", focus)
+        node.add_theme_font_size_override("font_size", 22)
+    for child in node.get_children(): theme_settings(child)
+
 func theme_slider(slider: HSlider) -> void:
     var track := StyleBoxFlat.new()
     track.bg_color = Color(0.08, 0.08, 0.08, 0.34)
@@ -323,6 +421,8 @@ func theme_slider(slider: HSlider) -> void:
     track.content_margin_top = 9
     track.content_margin_bottom = 9
     slider.add_theme_stylebox_override("slider", track)
+    slider.add_theme_stylebox_override("grabber_area", StyleBoxEmpty.new())
+    slider.add_theme_stylebox_override("grabber_area_highlight", StyleBoxEmpty.new())
     slider.add_theme_icon_override("grabber", preload("res://icons/knob.svg"))
     slider.add_theme_icon_override("grabber_highlight", preload("res://icons/knob.svg"))
     slider.add_theme_icon_override("tick", preload("res://icons/tick.svg"))
@@ -381,6 +481,8 @@ func show_settings() -> void:
     reader._button(content, "Book Options", show_book)
 
 func show_controllers() -> void:
+    options.visible = true
+    if reader.workspace: reader.workspace.raise_popup(options)
     clear()
     heading("Quest 3 / 3S Controllers")
     var diagrams := HBoxContainer.new()
@@ -394,11 +496,24 @@ func show_controllers() -> void:
         diagrams.add_child(diagram)
     var scroll := ScrollContainer.new()
     config_scroll = scroll
-    scroll.custom_minimum_size.y = 265
+    scroll.custom_minimum_size.y = 580
     content.add_child(scroll)
     var rows := VBoxContainer.new()
     rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     scroll.add_child(rows)
+    for instruction in [
+        "Trigger · Point at either white page bar, hold, pull across the spine, then release. Release before halfway to return the page. Works close up or with the ray.",
+        "Trigger · Click buttons, textboxes and Search with either hand. Hold and drag sliders. On a closed book, pull its white bar to open the cover.",
+        "Grip · Hold the book body to move and rotate it. Hold with both grips and spread your hands to resize. Grip a window handle to move the window.",
+        "Right stick · Flick left/right for quick page turns. Up/down scrolls long pages or the panel you are pointing at.",
+        "Left stick · Left/right rotates around your head. Up/down aims a floor or chair teleport; trigger confirms the glowing target.",
+        "A / X · Click with your selected pointer hand. B / Menu · Show the seeker. Y · Open the library. Right stick click · Recenter. Left stick click · Switch pointer hand.",
+        "Get book · Select the book icon on the seeker to recall the book. Controllers are configurable below. Meta button keeps its system function."
+    ]:
+        var help := label(rows, instruction, 21)
+        help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+        help.custom_minimum_size.x = 620
+    line(rows)
     for key in reader.bindings:
         var binding_key: String = key
         var row := HBoxContainer.new()
@@ -418,16 +533,17 @@ func show_controllers() -> void:
                 diagram.queue_redraw()
             haptic(reader.ui_hand)
         )
-    label(content, "Left stick: move / turn; right stick: pages / vertical scroll", 14)
+    label(content, "Scroll for the control guide and button assignments", 16)
     var bottom := HBoxContainer.new()
     content.add_child(bottom)
     reader._button(bottom, "Switch hands", func(): perform("Switch hands"))
     reader._button(bottom, "Reset controls", reset_controls)
     reader._button(bottom, "Back", show_settings)
+    theme_settings(content)
 
 func reset_controls() -> void:
     reader._cancel_interactions()
-    reader.bindings = {"left:trigger_click": "Previous page", "right:trigger_click": "Next page", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
+    reader.bindings = {"left:trigger_click": "Interact", "right:trigger_click": "Interact", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
     reader.preferred_hand = "right"
     save()
     show_controllers()
@@ -495,18 +611,27 @@ func controller_input(hand: String, controller: XRController3D) -> bool:
         var input_name: String = key.get_slice(":", 1)
         var down := controller.is_button_pressed(input_name)
         current[input_name] = down
+        if reader.locomotion_hand == hand:
+            continue
         var action: String = reader.bindings[key]
         if action == "Grab":
-            reader.tracked[hand].can_grab = down
+            reader.tracked[hand].can_grab = reader.tracked[hand].can_grab or down
             if down:
                 reader.tracked[hand].can_ui = false
             pressed = pressed or down
-        elif (action == "Interact" and (reader.library_panel.visible or hand == reader.preferred_hand)) or (action in ["Next page", "Previous page"] and reader.library_panel.visible):
+        elif input_name == "trigger_click" and action in ["Interact", "Next page", "Previous page"]:
+            # Legacy page bindings now use the pointed rail/UI; the right stick
+            # retains quick page turns without stealing a held trigger gesture.
+            reader.tracked[hand].can_grab = reader.tracked[hand].can_grab or down
+            reader.tracked[hand].can_ui = true
+            pressed = pressed or down
+        elif action == "Interact" and (reader.library_panel.visible or hand == reader.preferred_hand):
             pressed = pressed or down
         elif down and not reader.tracked[hand].get("buttons", {}).get(input_name, false):
             haptic(hand)
             perform(action)
     reader.tracked[hand].buttons = current
+    if reader.locomotion_hand == hand: return false
     var stick := controller.get_vector2("primary")
     if absf(stick.y) > 0.2:
         if is_instance_valid(config_scroll) and options.visible:

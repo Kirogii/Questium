@@ -1,4 +1,4 @@
-# Questium v1.0.0 - First Release
+# Questium v1.0.0
 
 - Merge Houri v1.23.13–v1.23.14: source-grid placeholders, retained cover fixes, reader preload/cache bounds, and WebGPU reader maintenance.
 
@@ -20,10 +20,11 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Check stable releases from Questium’s own GitHub repository at startup and offer Update now or Continue. Testing releases are excluded. Downloads verify the installed app variant and signing key before opening Android’s installer.
+- Add Questium Sync in Questium Settings: pair and select multiple local devices, coordinate library sync on an Android main device, keep furthest reading progress, and save previous progress in a Revert log. Includes manual backup uploads through Google Drive and Proton Drive.
 - Add an enabled-by-default VR Scenes setting with persisted map selection, a bar-scene loader, a procedural fallback bar, interactable two-person seat points, room collision surfaces, and animated toon/fire scene materials.
 - Quest v1.0.1: add real ONNX AI upscaling to both the spatial book and long-page strips, including a per-book Upscale Manga toggle and live page refresh when processing settings change.
 - Make spatial reader crop, scale, contrast, scroll aspect/padding, page transitions, page numbers, preloading and keep-screen-on consume shared settings; label Android-only reader options explicitly.
-- Publish v1.0.1 through the signed Quest workflow as a regular release with an alpha-testing disclaimer. Most features are added, but continued headset testing is required.
 - Add a frosted VR settings hub with the app's shared settings categories, native Quest text entry, and live reader tint, hue, grayscale, inversion and brightness controls.
 - Add extension repositories directly from the VR Sources section, using the Quest keyboard and showing configured repositories.
 - Rebrand the app as Questium with a single Touch controller logo.
@@ -33,6 +34,26 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Raise Quest eye rendering to 150% and UI to 200%, request the highest supported antialiasing up to 8x, and use 16x anisotropic filtering for clearer angled book pages, covers and room textures. Preserve higher-resolution page images and long-page strips up to the GPU texture limit with bounded page memory.
+- Unify spatial settings and source filters with frosted panels, pill buttons and option menus, green switches, rounded checkboxes and matching sliders.
+- Make lateral controller page curls continuous with equal travel in both directions; add saved Follow source, Left to right and Right to left reading options.
+- Add Livro-style controller trigger grabs on either white page bar, retained ray dragging, quick right-stick page turns and a detailed in-app controller guide.
+- Start facing the bar's counter regardless of the Quest boundary heading; retain the current seated and standing reading heights.
+- Sharpen Quest rendering with larger eye targets, 4x antialiasing and higher-resolution UI; remove dithered room lighting and screen-texture feedback from glass panels.
+- Smooth the pendant light rays, correct their stereo depth, block them behind opaque furniture and stop each beam at its table, counter or floor surface.
+- Add a palm-seeker Get book action with a smooth arcing recall, slimmer dark hardcover boards enabled by default, and a Book SFX switch for spatial book-action sounds.
+- Split settings into Tachiyomi Settings and Questium Settings, share all Book Options with the Questium tab, and replace the settings close control with a back arrow to the main UI.
+- Turn the VR view with horizontal left-stick input, pivoting around the headset; vertical stick input retains teleport targeting.
+- Detect seated or standing posture from stable startup headset height; preserve standing reading height and lift seated reading with controls centered within reach.
+- Set standing VR camera height fifteen percent above tracked eye level for a clearer view over the bar stools.
+- Give the bar countertops, tables and floor glossy finishes with warm light highlights and room reflections.
+- Add joystick-hover floor and imported bar-stool targets with glowing placement rings; trigger commits the target and preserves a seated-height reach pose.
+- Make Quest 3/3S keyboard text and Enter/Search submission commit to the currently selected VR textbox, including stale-session protection.
+- Fix Android plugin method detection so the Quest keyboard bridge and camera-backed frosted glass actually run; allow floor/chair teleport targeting with the HUD open when aiming away from its panels.
+- Balance the imported bar lighting for readability: warm countertop washes, clearly visible depth-clipped godrays with soft dust streaks under the pendant bulbs, reflective worktops, and stepped shadow contrast outside the pools.
+- Use the supplied bar_end.fbx map with texture-preserving noir dithering, chair-focused lighting, depth-feathered shafts, subtle dust and white flame halos at its pendant bulbs.
+- Correct the palm-facing seeker to Godot's hand-joint axes and allow clenched-fist carrying inside long-page mode.
+- Keep source filters above the HUD, expose nested source tag choices, and poll Quest keyboard sessions so textbox updates and Search submission are delivered.
 - Standardize VR library and source covers into a fixed cropped box, cap card titles at two lines with full-title hover tooltips, and present source filters in a bottom sheet with every extension-provided option.
 - Keep the Quest keyboard connected to the selected textbox, support fingertip taps on the book's close button, and show the hand seeker only when the palm faces you.
 - Make fingertip taps work on library and popup buttons even when the thumb is obscured, capture fast taps on resized panels, and smooth hand-pointer jitter without freezing aim during pinches.
@@ -60,6 +81,9 @@ files moved. See .github/scripts/release_notes.py.
 - Replace the three-window workspace with a single frosted Home, Source Search and Reader interface in the VR room; selecting a cover brings out the physical book preview.
 
 ### Fix
+- Refresh source-provided tags when opening Filters or Search by tags, including tags loaded asynchronously by extensions; preserve selected filters during refresh.
+- Keep History and library cards uniform with cropped covers, two-line titles and clipped chapter names; long text no longer expands the grid.
+- Make Source Search use typed queries and selected filters even from Latest, and ignore results from an older search when a newer search is pending.
 - Make the non-dominant palm seeker tolerate brief Quest tracking-bit dropouts while still rejecting the back of the hand.
 - Stretch two-page chapter images to the physical page by default, with global and per-book controls to disable or restore the global setting.
 - Show each source's real filter choices in VR instead of a generic typed tags field, and keep the Meta Quest keyboard's textbox session alive through IME composition.

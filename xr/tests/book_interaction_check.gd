@@ -41,12 +41,14 @@ func check() -> void:
     assert(is_equal_approx(book.openness, 1.0), "Right bar opens the front cover")
     assert(book.global_transform.is_equal_approx(held), "Cover opening must not move the body")
     assert(bar.position.x < 0 and bar.position.z > 0)
+    reader.tracked.left.natural_hand = true
     reader._pointer("left", book.to_global(bar.position), Vector3.FORWARD, true, true)
     assert(book.cover_dragged and not reader.moving, "Left bar closes the open cover, as at 37.3 s")
     reader._pointer("left", book.to_global(Vector3(0.305, 0, 0)), Vector3.FORWARD, true, true)
     reader._pointer("left", book.to_global(bar.position), Vector3.FORWARD, false, true)
     await create_timer(0.35).timeout
     assert(is_zero_approx(book.openness))
+    reader.tracked.left.natural_hand = false
     book.set_open(0.5)
     assert(reader._reader_at(book.to_global(bar.position)) == book, "Half-open moving handle remains reachable above the spine")
     book.hover_edges([bar.position, Vector3(3, 3, 3)])

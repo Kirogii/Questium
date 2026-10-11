@@ -15,11 +15,12 @@ func check() -> void:
     reader.book.set_mode("book")
     reader.book.set_open(1)
     var hand := XRHandTracker.new()
-    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
+    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED | XRHandTracker.HAND_JOINT_FLAG_POSITION_VALID
     # Palm normal points across the book; the fingers form the upright flat
     # hand shown in the user's front and side reference photos.
-    var palm_basis: Basis = reader.origin.global_basis.inverse() * reader.book.global_basis * Basis(Vector3.FORWARD, PI / 2)
+    var palm_basis: Basis = reader.origin.global_basis.inverse() * reader.book.global_basis * Basis(Vector3.UP, PI / 2)
     hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, Transform3D(palm_basis, Vector3.ZERO))
+    hand.set_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM, XRHandTracker.HAND_JOINT_FLAG_ORIENTATION_VALID)
     for pair in [[XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP], [XRHandTracker.HAND_JOINT_MIDDLE_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_MIDDLE_FINGER_TIP], [XRHandTracker.HAND_JOINT_RING_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_RING_FINGER_TIP]]:
         hand.set_hand_joint_flags(pair[0], flags)
         hand.set_hand_joint_flags(pair[1], flags)

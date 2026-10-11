@@ -25,9 +25,11 @@ class ReleaseServiceImpl(
     override suspend fun latest(arguments: GetApplicationRelease.Arguments): Release? {
         val release = with(json) {
             networkService.client
+                // KMK --> Only offer the stable Questium release; testing tags may have higher versions.
                 .newCall(GET("https://api.github.com/repos/${arguments.repository}/releases/latest"))
                 .awaitSuccess()
                 .parseAs<GithubRelease>()
+            // KMK <--
         }
 
         val downloadLink = getDownloadLink(release = release, isFoss = arguments.isFoss, nomtl = arguments.nomtl) ?: return null
@@ -45,8 +47,8 @@ class ReleaseServiceImpl(
     private fun getDownloadLink(release: GithubRelease, isFoss: Boolean, nomtl: Boolean): String? {
         // The no-MTL variant publishes assets prefixed "nomtl" (Houri-nomtl-<abi>-<tag>.apk);
         // each variant must only ever match its own assets.
-        val assets = release.assets.filter { asset ->
-            if (nomtl) "-nomtl-" in asset.name else "-nomtl-" !in asset.name
+        val assets = release.assets.filter { it.name.endsWith(".apk", ignoreCase = true) }.filter { asset ->
+            if (nomtl) "-nomtl-" in asset.name || asset.name == "VR-Tachiyomi-alpha.apk" || asset.name.startsWith("Questium-Quest-") else "-nomtl-" !in asset.name && asset.name != "VR-Tachiyomi-alpha.apk" && !asset.name.startsWith("Questium-Quest-")
         }
         val map = assets.associate { asset ->
             BUILD_TYPES.find { "-$it-" in asset.name } to asset.downloadLink

@@ -1,10 +1,10 @@
 shader_type spatial;
 #include "res://reader_filter.gdshaderinc"
 render_mode unshaded, cull_disabled;
-uniform sampler2D page_image : source_color, filter_linear_mipmap;
+uniform sampler2D page_image : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform float page_top = 0.0;
 uniform float page_height = 1.0;
-uniform sampler2D next_image : source_color, filter_linear_mipmap;
+uniform sampler2D next_image : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform float strip_start = 0.0;
 uniform float strip_fraction = 1.0;
 uniform float next_fraction = 1.0;

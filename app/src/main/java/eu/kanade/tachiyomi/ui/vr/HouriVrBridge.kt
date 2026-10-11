@@ -8,12 +8,15 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.drawable.ColorDrawable
+import android.opengl.GLES20
 import android.text.Editable
 import android.text.TextWatcher
 import android.view.KeyEvent
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
+import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
@@ -25,7 +28,6 @@ import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Filter
-import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
@@ -55,20 +57,30 @@ import tachiyomi.i18n.kmk.KMR
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import javax.microedition.khronos.egl.EGLConfig
+import javax.microedition.khronos.opengles.GL10
 
 class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(godot) {
     private val graph = host.appGraph
     private val session = File(host.cacheDir, "vr/${UUID.randomUUID()}").apply { mkdirs() }
     private val pageJobs = ConcurrentHashMap<String, Job>()
     private val navigation = Mutex()
+    private val appUpdater by lazy { VrAppUpdater(host, ::send) }
     private var reader: ReaderViewModel? = null
     private val readers = ConcurrentHashMap<String, ReaderViewModel>()
     private var keyboardInput: EditText? = null
     private var keyboardDialog: Dialog? = null
 
+    @Volatile private var gpuTextureLimit = 4096
+
     @Volatile private var keyboardField: String? = null
 
     @Volatile private var keyboardText = ""
+
+    @Volatile private var keyboardRequest = ""
+
+    @Volatile private var keyboardState = "{}"
+    private var keyboardRevision = 0L
     private val settings by lazy { VrSettingsBridge(host, ::send) }
     private var lastRenderRevision = ""
 
@@ -78,7 +90,13 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         readers.entries.sortedBy { it.key }.joinToString {
             "${it.key}:${it.value.manga?.id?.let(graph.upscalePreferences::isMangaToggleEnabled)}"
         },
-    ).plus(graph.upscaleModelManager.status.value.readyModelIds.sorted()).hashCode().toString()
+    ).plus(graph.upscaleModelManager.status.value.readyModelIds.sorted()).plus(gpuTextureLimit).hashCode().toString()
+
+    override fun onGLSurfaceCreated(gl: GL10?, config: EGLConfig?) {
+        val limit = IntArray(1)
+        GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, limit, 0)
+        if (limit[0] > 0) gpuTextureLimit = limit[0]
+    }
 
     init {
         if (eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_upscale_probe", false)) {
@@ -113,13 +131,79 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
 
     @UsedByGodot
     fun showKeyboard(text: String, field: String) {
+        keyboardRequest = field
         host.runOnUiThread {
+            if (keyboardRequest != field || host.isFinishing || host.isDestroyed) return@runOnUiThread
             if (keyboardField == field && keyboardDialog?.isShowing == true) return@runOnUiThread
             keyboardDialog?.dismiss()
             // A focusable window owns the InputConnection. The Godot render
             // surface otherwise takes focus back from an editor in its decor.
             val dialog = Dialog(host)
+            var submitted = false
+            fun submitKeyboard() {
+                val editor = keyboardInput ?: return
+                if (keyboardField != field || keyboardRequest != field || submitted) return
+                submitted = true
+                keyboardText = editor.text.toString()
+                publishKeyboard(field, keyboardText, submitted = true, closed = true)
+                (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .hideSoftInputFromWindow(editor.windowToken, 0)
+                dialog.dismiss()
+            }
             val input = object : EditText(host) {
+                private var showAttempts = 0
+
+                private fun connectIme() {
+                    if (keyboardInput !== this || keyboardRequest != field || !dialog.isShowing || !hasWindowFocus()) return
+                    requestFocus()
+                    val imm = host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                    // Android requires attached editor + focused window before
+                    // restartInput/showSoftInput. A timer alone cannot guarantee
+                    // that on the Quest OpenXR activity.
+                    imm.restartInput(this)
+                    val accepted = imm.showSoftInput(this, InputMethodManager.SHOW_IMPLICIT)
+                    if (!accepted && ++showAttempts < 3) postDelayed({ connectIme() }, 100)
+                }
+
+                override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+                    super.onWindowFocusChanged(hasWindowFocus)
+                    if (hasWindowFocus) post { connectIme() }
+                }
+
+                override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+                    val connection = super.onCreateInputConnection(outAttrs) ?: return null
+                    // Quest IME versions send Enter as an editor action, a key
+                    // event, or a committed newline. All complete this editor.
+                    return object : InputConnectionWrapper(connection, false) {
+                        override fun performEditorAction(editorAction: Int): Boolean {
+                            submitKeyboard()
+                            return true
+                        }
+
+                        override fun sendKeyEvent(event: KeyEvent): Boolean {
+                            if (event.keyCode == KeyEvent.KEYCODE_ENTER || event.keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+                                if (event.action == KeyEvent.ACTION_DOWN) submitKeyboard()
+                                return true
+                            }
+                            return super.sendKeyEvent(event)
+                        }
+
+                        override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
+                            if (text != null && (text.contains('\n') || text.contains('\r'))) {
+                                val committed = text.toString().replace("\r", "").replace("\n", "")
+                                val accepted = if (committed.isEmpty()) {
+                                    super.finishComposingText()
+                                } else {
+                                    super.commitText(committed, newCursorPosition)
+                                }
+                                submitKeyboard()
+                                return accepted
+                            }
+                            return super.commitText(text, newCursorPosition)
+                        }
+                    }
+                }
+
                 override fun onKeyPreIme(keyCode: Int, event: KeyEvent): Boolean {
                     if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) dialog.dismiss()
                     return super.onKeyPreIme(keyCode, event)
@@ -144,6 +228,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             keyboardDialog = dialog
             keyboardField = field
             keyboardText = text
+            publishKeyboard(field, text)
             val root = FrameLayout(host).apply {
                 addView(input, FrameLayout.LayoutParams(240, 64))
             }
@@ -159,7 +244,9 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                         // short drain period so that closing never loses the
                         // last character (the field/session guard still
                         // rejects stale callbacks in the Godot scene).
-                        root.postDelayed({ if (dialog.isShowing) dialog.dismiss() }, 200)
+                        root.postDelayed({
+                            if (keyboardInput === input && dialog.isShowing && root.rootWindowInsets?.isVisible(WindowInsets.Type.ime()) == false) dialog.dismiss()
+                        }, 200)
                     }
                     insets
                 }
@@ -173,26 +260,27 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             input.addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                    if (keyboardInput === input) {
+                    if (keyboardInput === input && keyboardRequest == field && !submitted) {
                         keyboardText = s.toString()
-                        send(JSONObject().put("kind", "keyboard_text").put("text", s.toString()).put("field", field))
+                        publishKeyboard(field, keyboardText)
                     }
                 }
                 override fun afterTextChanged(s: Editable?) = Unit
             })
             input.setOnEditorActionListener { _, action, event ->
-                val submit = action in setOf(EditorInfo.IME_ACTION_SEARCH, EditorInfo.IME_ACTION_DONE, EditorInfo.IME_ACTION_GO, EditorInfo.IME_ACTION_SEND) ||
-                    (event?.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_UP)
+                val submit = action != EditorInfo.IME_NULL ||
+                    event?.keyCode in setOf(KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
                 if (!submit) return@setOnEditorActionListener false
-                send(JSONObject().put("kind", "keyboard_text").put("text", keyboardText).put("submitted", true).put("field", field))
-                (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
-                    .hideSoftInputFromWindow(input.windowToken, 0)
-                dialog.dismiss()
+                if (keyboardInput !== input || keyboardRequest != field) return@setOnEditorActionListener true
+                submitKeyboard()
                 true
             }
             dialog.setOnDismissListener {
                 if (keyboardInput === input) {
-                    send(JSONObject().put("kind", "keyboard_text").put("text", keyboardText).put("closed", true).put("field", field))
+                    keyboardText = input.text.toString()
+                    // Retain the terminal snapshot until the next session so
+                    // polling can recover a missed signal, including submission.
+                    publishKeyboard(field, keyboardText, submitted = submitted, closed = true)
                     keyboardInput = null
                     keyboardDialog = null
                     keyboardField = null
@@ -202,7 +290,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             dialog.window?.setLayout(240, 64)
             input.requestFocus()
             input.postDelayed({
-                if (keyboardInput !== input || !dialog.isShowing) return@postDelayed
+                if (keyboardInput !== input || keyboardRequest != field || !dialog.isShowing || !input.hasWindowFocus()) return@postDelayed
                 val imm = host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.restartInput(input)
                 imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
@@ -213,8 +301,37 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     /** Polled by the VR scene as a fallback for IME callbacks that arrive
      * while the Godot render thread is busy with a passthrough frame. */
     @UsedByGodot
-    fun keyboardSnapshot(): String = JSONObject().put("field", keyboardField ?: "")
-        .put("text", keyboardText).toString()
+    fun keyboardSnapshot(): String = keyboardState
+
+    private fun publishKeyboard(field: String, text: String, submitted: Boolean = false, closed: Boolean = false) {
+        val state = JSONObject().put("kind", "keyboard_text").put("field", field).put("text", text)
+            .put("submitted", submitted).put("closed", closed).put("revision", ++keyboardRevision)
+        keyboardState = state.toString()
+        send(state)
+    }
+
+    @UsedByGodot
+    fun keyboardProbeEnabled(): Boolean = eu.kanade.tachiyomi.BuildConfig.DEBUG && host.intent.getBooleanExtra("vr_keyboard_probe", false)
+
+    @UsedByGodot
+    fun keyboardProbeResult(text: String, submitted: Boolean) {
+        if (keyboardProbeEnabled()) android.util.Log.i("VRKeyboard", "Godot textbox text=$text submitted=$submitted")
+    }
+
+    @UsedByGodot
+    fun hideKeyboard(field: String) {
+        if (keyboardRequest != field) return
+        keyboardRequest = ""
+        host.runOnUiThread {
+            if (keyboardField == field) {
+                keyboardInput?.let {
+                    (host.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as InputMethodManager)
+                        .hideSoftInputFromWindow(it.windowToken, 0)
+                }
+                keyboardDialog?.dismiss()
+            }
+        }
+    }
 
     @UsedByGodot
     fun labels(): String = JSONObject(
@@ -313,6 +430,9 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             "Grip" to KMR.strings.vr_controls_grip,
             "Stick click" to KMR.strings.vr_controls_stick_click,
             "Menu" to KMR.strings.vr_controls_menu,
+            "Questium Update" to KMR.strings.questium_update_title,
+            "Yes, update now" to KMR.strings.questium_update_yes,
+            "No, continue" to KMR.strings.questium_update_no,
             "left" to KMR.strings.vr_controls_left,
             "right" to KMR.strings.vr_controls_right,
             "Meta button: system menu" to KMR.strings.vr_controls_meta_menu,
@@ -361,6 +481,9 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
 
     private suspend fun handleRequest(request: JSONObject) {
         when (request.getString("action")) {
+            "questium_sync" -> questiumSync(request)
+            "app_update_check" -> appUpdater.check()
+            "app_update_install" -> appUpdater.install { flushProgress() }
             "upscale_book" -> {
                 val mangaId = readers[request.getString("token")]?.manga?.id ?: return
                 graph.upscalePreferences.setMangaToggleEnabled(mangaId, request.getBoolean("enabled"))
@@ -390,6 +513,14 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 sources()
             }
             "source_search" -> sourceSearch(request)
+            "source_filters" -> {
+                val source = graph.sourceManager.get(request.getString("source").toLong()) as? CatalogueSource
+                    ?: error("Source is unavailable")
+                send(
+                    JSONObject().put("kind", "source_filters").put("source", source.id.toString())
+                        .put("request_id", request.optInt("request_id")).put("items", filterDefinitions(source.getFilterList())),
+                )
+            }
             "details" -> details(request.getString("manga").toLong())
             "favorite" -> {
                 val mangaId = request.getString("manga").toLong()
@@ -420,6 +551,40 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 host.exitVr()
             }
         }
+    }
+
+    private suspend fun questiumSync(request: JSONObject) {
+        val sync = eu.kanade.tachiyomi.data.questiumsync.QuestiumSync.get(host)
+        when (request.optString("operation")) {
+            "enabled" -> withContext(Dispatchers.Main) { sync.setEnabled(request.getBoolean("value")) }
+            "pair" -> sync.pair(request.getString("value"))
+            "selected" -> {
+                val values = request.getJSONArray("value")
+                sync.selected.set((0 until values.length()).map { values.getString(it) }.toSet())
+            }
+            "sync" -> sync.sync()
+        }
+        val peers = try {
+            sync.devices()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            sync.localState().peers
+        }
+        send(
+            JSONObject().put("kind", "questium_sync").put("enabled", sync.enabled.get())
+                .put("status", sync.status.value)
+                .put("links", JSONArray(sync.pairingLinks()))
+                .put(
+                    "devices",
+                    JSONArray(
+                        peers.map { peer ->
+                            JSONObject().put("id", peer.id).put("name", peer.name).put("main", peer.main)
+                                .put("selected", peer.id in sync.selected.get())
+                        },
+                    ),
+                ),
+        )
     }
 
     private fun send(data: JSONObject) {
@@ -493,66 +658,71 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     private suspend fun sourceSearch(request: JSONObject) {
         val source = graph.sourceManager.get(request.getString("source").toLong()) as? CatalogueSource
             ?: error("Source is unavailable")
-        val query = request.optString("query")
+        val query = request.optString("query").trim()
         val page = request.optInt("page", 1).coerceAtLeast(1)
         val category = request.optString("category", "latest")
         val filters = source.getFilterList()
         val filterJson = request.optJSONObject("filters")
-        applyFilterState(filters, filterJson)
         // Send the source's real filter model instead of making the VR UI guess
         // at a generic comma-separated tags field. This keeps extension-specific
         // Select/CheckBox/TriState/AutoComplete semantics intact.
         send(JSONObject().put("kind", "source_filters").put("source", source.id.toString()).put("items", filterDefinitions(filters)))
-        val result = when (category) {
-            "latest" -> source.getLatestUpdates(page)
-            "browse" -> source.getSearchManga(page, "", filters)
-            else -> source.getSearchManga(page, query, filters)
+        applyFilterState(filters, filterJson)
+        val result = if (category == "latest" && query.isBlank() && filterJson?.length().let { it == null || it == 0 }) {
+            source.getLatestUpdates(page)
+        } else {
+            source.getSearchManga(page, query, filters)
         }
+        // Extensions can populate their tag cache while loading the first page.
+        send(JSONObject().put("kind", "source_filters").put("source", source.id.toString()).put("items", filterDefinitions(source.getFilterList())))
         val items = JSONArray()
         graph.networkToLocalManga(result.mangas.map { it.toDomainManga(source.id) }).forEach {
             items.put(JSONObject().put("id", it.id.toString()).put("title", it.title))
         }
         send(
             JSONObject().put("kind", "source_results").put("source", source.id.toString()).put("page", page)
+                .put("request_id", request.optInt("request_id"))
                 .put("more", result.hasNextPage).put("items", items),
         )
     }
 
-    private fun applyFilterState(filters: FilterList, values: JSONObject?) {
+    private fun applyFilterState(filters: List<Filter<*>>, values: JSONObject?, prefix: String = "") {
         if (values == null) return
         filters.forEachIndexed { index, filter ->
-            val value = values.opt(index.toString())
+            val key = prefix + index
+            if (filter is Filter.Group<*>) {
+                applyFilterState(filter.state.filterIsInstance<Filter<*>>(), values, "$key.")
+                return@forEachIndexed
+            }
+            val value = values.opt(key)
             if (value == null || value == JSONObject.NULL) return@forEachIndexed
             when (filter) {
-                is Filter.Select<*> -> filter.state = values.optInt(index.toString(), filter.state)
-                is Filter.CheckBox -> filter.state = values.optBoolean(index.toString(), filter.state)
-                is Filter.TriState -> filter.state = values.optInt(index.toString(), filter.state)
-                is Filter.Text -> filter.state = values.optString(index.toString(), filter.state)
+                is Filter.Select<*> -> if (filter.values.isNotEmpty()) filter.state = values.optInt(key, filter.state).coerceIn(filter.values.indices)
+                is Filter.CheckBox -> filter.state = values.optBoolean(key, filter.state)
+                is Filter.TriState -> filter.state = values.optInt(key, filter.state).coerceIn(0, 2)
+                is Filter.Text -> filter.state = values.optString(key, filter.state)
                 is Filter.Sort -> {
-                    val sort = values.optJSONObject(index.toString()) ?: return@forEachIndexed
+                    val sort = values.optJSONObject(key) ?: return@forEachIndexed
+                    if (filter.values.isEmpty()) return@forEachIndexed
                     filter.state = Filter.Sort.Selection(
-                        sort.optInt("index", filter.state?.index ?: 0),
+                        sort.optInt("index", filter.state?.index ?: 0).coerceIn(filter.values.indices),
                         sort.optBoolean("ascending", filter.state?.ascending ?: false),
                     )
                 }
                 is Filter.AutoComplete -> {
-                    val selected = values.optJSONArray(index.toString()) ?: return@forEachIndexed
+                    val selected = values.optJSONArray(key) ?: return@forEachIndexed
                     filter.state = List(selected.length()) { selected.optString(it) }
-                }
-                is Filter.Group<*> -> {
-                    val selected = values.optJSONArray(index.toString()) ?: return@forEachIndexed
-                    @Suppress("UNCHECKED_CAST")
-                    (filter as Filter.Group<Any?>).state = List(selected.length()) { selected.optString(it) }
                 }
                 else -> Unit
             }
         }
     }
 
-    private fun filterDefinitions(filters: FilterList): JSONArray {
+    private fun filterDefinitions(filters: List<Filter<*>>, prefix: String = ""): JSONArray {
         val result = JSONArray()
         filters.forEachIndexed { index, filter ->
-            val item = JSONObject().put("index", index).put("name", filter.name)
+            val key = prefix + index
+            val item = JSONObject().put("index", index).put("key", key).put("name", filter.name)
             when (filter) {
                 is Filter.Header -> item.put("type", "header")
                 is Filter.Separator -> item.put("type", "separator")
@@ -566,8 +736,8 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                     filter.state?.let { JSONObject().put("index", it.index).put("ascending", it.ascending) } ?: JSONObject.NULL,
                 )
                 is Filter.AutoComplete -> item.put("type", "autocomplete").put("values", JSONArray(filter.values)).put("state", JSONArray(filter.state))
-                is Filter.Group<*> -> item.put("type", "group").put("state", JSONArray(filter.state.map { it.toString() }))
-                else -> item.put("type", "text").put("state", filter.state.toString())
+                is Filter.Group<*> -> item.put("type", "group").put("children", filterDefinitions(filter.state.filterIsInstance<Filter<*>>(), "$key."))
+                else -> item.put("type", "unsupported")
             }
             result.put(item)
         }
@@ -691,6 +861,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         val revision = renderRevision()
         val mangaId = model.manga?.id
         val upscale = UpscaleReaderHook.isUpscaleActive(mangaId)
+        val factor = if (upscale) graph.upscalePreferences.upscaleFactor().get().takeIf { it.isFinite() }?.coerceIn(1f, 4f) ?: 2f else 1f
         val key = "$requestToken-$index-$revision"
         if (pageJobs.containsKey(key)) return
         coroutineScope {
@@ -732,14 +903,14 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                                 val decoder = BitmapRegionDecoder.newInstance(input, false)
                                     ?: error("Unable to decode tall page")
                                 try {
-                                    var stripSample = 1
-                                    while (bounds.outWidth / stripSample > if (upscale) 1024 else 1440) stripSample *= 2
-                                    val stripHeight = (if (upscale) 960 else 3072) * stripSample
+                                    val decodedStripHeight = if (upscale) 960 else 2048
+                                    val stripSample = VrPageTextureSizing.sample(bounds.outWidth, decodedStripHeight + 64, gpuTextureLimit, factor)
+                                    val stripHeight = decodedStripHeight
                                     for (top in 0 until bounds.outHeight step stripHeight) {
                                         val bottom = (top + stripHeight).coerceAtMost(bounds.outHeight)
                                         // Overlap inference at strip boundaries, then discard the padding.
-                                        val regionTop = (top - 32 * stripSample).coerceAtLeast(0)
-                                        val regionBottom = (bottom + 32 * stripSample).coerceAtMost(bounds.outHeight)
+                                        val regionTop = (top - 32).coerceAtLeast(0)
+                                        val regionBottom = (bottom + 32).coerceAtMost(bounds.outHeight)
                                         val stripFile = File(session, "$key-strip-$top.png")
                                         val strip = decoder.decodeRegion(Rect(0, regionTop, bounds.outWidth, regionBottom), BitmapFactory.Options().apply { inSampleSize = stripSample })
                                             ?: error("Unable to decode page strip")
@@ -755,10 +926,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                                 }
                             }
                         }
-                        var sample = 1
-                        val factor = graph.upscalePreferences.upscaleFactor().get().takeIf { it.isFinite() }?.coerceIn(1f, 4f) ?: 2f
-                        val textureLimit = if (upscale) (4096 / factor).toInt() else 4096
-                        while (maxOf(bounds.outWidth, bounds.outHeight) / sample > textureLimit) sample *= 2
+                        val sample = VrPageTextureSizing.sample(bounds.outWidth, bounds.outHeight, gpuTextureLimit, factor)
                         val options = BitmapFactory.Options().apply { inSampleSize = sample }
                         val bitmap = stream().use { BitmapFactory.decodeStream(it, null, options) } ?: error("Unsupported page image")
                         try {

@@ -39,7 +39,7 @@ android {
         applicationId = "app.houri"
 
         // These need to be updated for every new release that should be automatically pushed
-        versionCode = 202
+        versionCode = 203
         versionName = providers.environmentVariable("VR_RELEASE_VERSION")
             .map { it.removePrefix("v") }.getOrElse("1.0.0")
 
@@ -47,7 +47,9 @@ android {
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
         buildConfigField("String", "BUILD_TIME", "\"${getBuildTime(useLastCommitTime = false)}\"")
         buildConfigField("boolean", "TELEMETRY_INCLUDED", "${Config.includeTelemetry}")
-        buildConfigField("boolean", "UPDATER_ENABLED", "${Config.enableUpdater}")
+        // KMK --> Update checks always target this fork.
+        buildConfigField("boolean", "UPDATER_ENABLED", "true")
+        // KMK <--
         buildConfigField("boolean", "IS_NOMTL", "false")
 
         testInstrumentationRunner = if (providers.gradleProperty("vrUpscaleInstrumentation").isPresent) {
@@ -463,6 +465,7 @@ val exportVrPack by tasks.registering(Exec::class) {
     commandLine(
         providers.environmentVariable("GODOT_BIN").getOrElse("godot"),
         "--headless", "--xr-mode", "off", "--path", readerProject.absolutePath,
+        "--log-file", layout.buildDirectory.file("vr-export.log").get().asFile.absolutePath,
         "--export-pack", "EmbeddedAndroid", pack.asFile.absolutePath,
     )
 }

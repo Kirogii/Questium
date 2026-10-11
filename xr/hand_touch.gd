@@ -124,20 +124,7 @@ func cancel() -> void:
     cancel_close()
     if not owner.is_empty():
         # Release outside controls so tracking loss cannot activate a button.
-        if not reader.ui_capture.is_empty():
-            var motion := InputEventMouseMotion.new()
-            motion.position = Vector2(-1000, -1000)
-            motion.global_position = motion.position
-            motion.button_mask = MOUSE_BUTTON_MASK_LEFT
-            reader.ui_capture.panel.viewport.push_input(motion, true)
-            var release := InputEventMouseButton.new()
-            release.position = Vector2(-1000, -1000)
-            release.global_position = release.position
-            release.button_index = MOUSE_BUTTON_LEFT
-            release.pressed = false
-            reader.ui_capture.panel.viewport.push_input(release, true)
-            reader.ui_capture.clear()
-        reader.ui_owner = ""
+        reader._cancel_ui_capture()
     owner = ""
     panel = {}
     samples.clear()

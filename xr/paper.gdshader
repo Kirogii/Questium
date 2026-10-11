@@ -2,8 +2,8 @@ shader_type spatial;
 #include "res://reader_filter.gdshaderinc"
 render_mode unshaded, cull_disabled;
 
-uniform sampler2D front_image : source_color, filter_linear_mipmap;
-uniform sampler2D back_image : source_color, filter_linear_mipmap;
+uniform sampler2D front_image : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
+uniform sampler2D back_image : source_color, filter_linear_mipmap_anisotropic, repeat_disable;
 uniform float progress : hint_range(0.0, 1.0) = 0.0;
 uniform float side = 1.0;
 uniform float width = 0.28;

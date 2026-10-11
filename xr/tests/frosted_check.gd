@@ -30,7 +30,7 @@ func check() -> void:
     ui.select_book({"id": "42", "title": "Book A"}, ui.cover_targets["42"])
     assert(reader.book.visible and ui.hud.node.visible, "Book emerges before HUD disappears")
     assert(reader.book.cover_texture == artwork and is_zero_approx(reader.book.openness))
-    await create_timer(0.65).timeout
+    await ui.opening.finished
     assert(not ui.hud.node.visible and ui.preview.node.visible, "Cover preview replaces HUD after emergence")
     reader._response(JSON.stringify({"kind": "chapters", "manga": "42", "resume": "12", "items": [{"id": "11", "title": "Chapter 1"}, {"id": "12", "title": "Chapter 2"}]}))
     assert(ui.read_button.tooltip_text == "Resume" and ui.read_button.text.is_empty(), "Resume uses an image action with its label on hover")

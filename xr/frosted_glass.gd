@@ -13,7 +13,7 @@ func update(reader: Node3D, delta: float) -> void:
     stale += delta
     if elapsed < 0.08: return
     elapsed = 0
-    if reader.bridge and reader.bridge.has_method("frostedRoomFrame"):
+    if reader.bridge:
         var data: PackedByteArray = reader.bridge.call("frostedRoomFrame")
         if data.size() == 96 * 72 * 3:
             var image := Image.create_from_data(96, 72, false, Image.FORMAT_RGB8, data)

@@ -8,8 +8,9 @@ func _initialize() -> void:
 
 func sample(point: Vector3, delta: float = 0.016, thumb_visible: bool = true) -> void:
     var world: Vector3 = reader.book.to_global(point)
-    var palm_basis: Basis = reader.origin.global_basis.inverse() * reader.book.global_basis * Basis(Vector3.FORWARD, PI / 2)
-    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
+    # Humanoid palm +Z faces across the book; +Y follows the upright fingers.
+    var palm_basis: Basis = reader.origin.global_basis.inverse() * reader.book.global_basis * Basis(Vector3.UP, PI / 2)
+    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_VALID | XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED | XRHandTracker.HAND_JOINT_FLAG_ORIENTATION_VALID
     hand.set_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM, flags)
     hand.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, Transform3D(palm_basis, reader.origin.to_local(world)))
     # Two reliably tracked fingers are enough; the others can be occluded

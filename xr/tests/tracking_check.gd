@@ -25,9 +25,11 @@ func _check() -> void:
     XRServer.add_tracker(right)
     right.set_pose("aim", Transform3D(Basis.IDENTITY, Vector3(0.2, 1.5, 1.5)), Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
     right.set_pose("grip", Transform3D.IDENTITY, Vector3.ZERO, Vector3.ZERO, XRPose.XR_TRACKING_CONFIDENCE_HIGH)
-    reader._process(0.01)
+    reader._process(1.01)
     assert(not reader.awaiting_head_pose)
-    assert(reader.library_panel.global_position.is_equal_approx(pose.origin - pose.basis.z * reader.workspace.gui_distance), "HUD uses the latest tracked headset pose at the closer distance")
+    var aligned: Transform3D = reader.origin.global_transform * pose
+    assert((-aligned.basis.z).dot(Vector3.BACK) > 0.99, "Tracked startup heading faces the counter")
+    assert(reader.library_panel.global_position.is_equal_approx(aligned.origin - aligned.basis.z * reader.workspace.gui_distance), "HUD uses the calibrated, forward-facing tracked headset pose")
     assert(not reader.book.visible, "Startup waits for a selected book")
     assert(reader.tracked.right.controller.get_has_tracking_data(), "Use Godot's right_hand tracker and aim pose")
     assert(reader.tracked.right.ray.visible, "Tracked controller must show its pointer")

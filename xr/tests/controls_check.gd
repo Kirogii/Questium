@@ -16,8 +16,8 @@ func _check() -> void:
     reader.book.set_chapter(8)
     for index in range(8):
         reader.book.supply_page(index, texture)
-    assert(reader.bindings["right:trigger_click"] == "Next page")
-    assert(reader.bindings["left:trigger_click"] == "Previous page")
+    assert(reader.bindings["right:trigger_click"] == "Interact")
+    assert(reader.bindings["left:trigger_click"] == "Interact")
     var tracker := XRControllerTracker.new()
     tracker.name = "/user/hand/right"
     XRServer.add_tracker(tracker)
@@ -26,11 +26,12 @@ func _check() -> void:
     reader.origin.add_child(controller)
     reader.tracked["right"] = {"controller": controller, "pressed": false}
     tracker.set_input("trigger_click", true)
-    assert(not reader.ui.controller_input("right", controller), "Page trigger must not also press the UI")
-    assert(reader.book.turn_direction == 1, "Right trigger turns forward")
+    assert(reader.ui.controller_input("right", controller), "Trigger captures the pointed UI or page rail")
+    assert(reader.tracked.right.can_ui and reader.tracked.right.can_grab)
+    assert(reader.book.turn_direction == 0, "Trigger alone must not turn pages before a hit")
     reader.book.cancel_turn()
     reader.ui.controller_input("right", controller)
-    assert(reader.book.turn_direction == 0, "Held trigger must not repeat")
+    assert(reader.book.turn_direction == 0, "Held trigger must not repeat or invent a hit")
     tracker.set_input("trigger_click", false)
     tracker.set_input("ax_button", true)
     assert(reader.ui.controller_input("right", controller), "A activates pointer interaction")

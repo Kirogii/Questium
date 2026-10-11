@@ -468,6 +468,9 @@ interface AppGraph : ViewModelGraph {
     val localSourceFileSystem: LocalSourceFileSystem
     val getExhFavoriteMangaWithMetadata: GetExhFavoriteMangaWithMetadata
     val chapterRepository: ChapterRepository
+    // KMK -->
+    val historyRepository: tachiyomi.domain.history.repository.HistoryRepository
+    // KMK <--
     val deleteCachedRecommendations: DeleteCachedRecommendations
     val eHentaiUpdateHelper: EHentaiUpdateHelper
     val extensionStoreRepository: ExtensionStoreRepository

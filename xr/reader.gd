@@ -31,6 +31,8 @@ var toolbar: Node3D
 var toolbar_forced := false
 var palm_dwell := 0.0
 var palm_hidden := 0.0
+var palm_revealed := false
+var palm_last_position := Vector3.ZERO
 const PALM_DWELL_REQUIRED := 0.10
 const PALM_HIDE_DELAY := 0.12
 var window_holder := ""
@@ -45,6 +47,16 @@ var scale_start_vector := Vector3.RIGHT
 var scale_start_basis := Basis.IDENTITY
 var scroll_drag_y := 0.0
 var snap_turn_ready := true
+var book_flight: Tween
+var locomotion_target: Node3D
+var locomotion_circle: MeshInstance3D
+var locomotion_target_kind := ""
+var locomotion_trigger_was_down := false
+var locomotion_hand := ""
+const PLAYER_HEIGHT_MULTIPLIER := 1.15
+var player_height_offset := 0.0
+var standing_eye_height := 1.5525
+var seated := false
 var chapter_requests: Dictionary = {}
 var native_controls: Node3D
 var library_list: VBoxContainer
@@ -77,24 +89,40 @@ var preferred_hand := "right"
 var haptics := true
 var ui_hand := ""
 var passthrough_enabled := false
+var passthrough_dimmer: MeshInstance3D
 var scenes_enabled := true
 var awaiting_head_pose := false
-var bindings := {"left:trigger_click": "Previous page", "right:trigger_click": "Next page", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
+var startup_height_samples: Array[float] = []
+var startup_height_time := 0.0
+var bindings := {"left:trigger_click": "Interact", "right:trigger_click": "Interact", "left:ax_button": "Interact", "right:ax_button": "Interact", "left:by_button": "Library", "right:by_button": "Book Options", "left:primary_click": "Switch hands", "right:primary_click": "Center", "left:menu_button": "Book Options", "left:grip_click": "Grab", "right:grip_click": "Grab"}
 
 
 func _ready() -> void:
     environment = WorldEnvironment.new()
     environment.environment = Environment.new()
     environment.environment.background_mode = Environment.BG_COLOR
-    environment.environment.background_color = Color.BLACK
+    environment.environment.background_color = Color("08090b")
     environment.environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-    environment.environment.ambient_light_color = Color(0.85, 0.88, 0.92)
-    environment.environment.ambient_light_energy = 0.65
+    environment.environment.ambient_light_color = Color("9eabc1")
+    # Keep warm local pools and smooth shadows without screen-door dithering.
+    environment.environment.ambient_light_energy = 0.045
+    environment.environment.glow_enabled = false
+    environment.environment.glow_intensity = 0.35
+    environment.environment.glow_bloom = 0.03
+    environment.environment.glow_hdr_threshold = 1.15
     add_child(environment)
     origin = XROrigin3D.new()
     add_child(origin)
     xr = XRServer.find_interface("OpenXR")
     if xr and xr.is_initialized():
+        # Godot 4.6 recreates the eye swapchains when this multiplier changes.
+        xr.set("render_target_size_multiplier", 1.5)
+        xr.set("foveation_level", 0)
+        xr.set("foveation_dynamic", false)
+        xr.call("set_gpu_level", OpenXRInterface.PERF_SETTINGS_LEVEL_SUSTAINED_HIGH)
+        if 72.0 in xr.call("get_available_display_refresh_rates"):
+            xr.set("display_refresh_rate", 72.0)
+        print("VR quality: eye target ", xr.get_render_target_size(), ", up to 8x MSAA (driver limit), 16x anisotropy, full-resolution periphery")
         get_viewport().use_xr = true
         awaiting_head_pose = true
         var xr_camera := XRCamera3D.new()
@@ -103,7 +131,8 @@ func _ready() -> void:
         _build_tracking()
     else:
         camera = Camera3D.new()
-        camera.position.y = 1.35
+        camera.position.y = 1.35 * PLAYER_HEIGHT_MULTIPLIER
+        camera.rotation.y = PI
         origin.add_child(camera)
     # Preserve depth precision for sub-millimeter paper above the page block.
     camera.near = 0.02
@@ -122,6 +151,8 @@ func _ready() -> void:
             labels = translated
     ui = preload("res://reader_ui.gd").new(self)
     ui.load_config()
+    book.set_hard_cover(ui.hard_cover)
+    book.sfx_enabled = ui.book_sfx
     room = RoomScript.new()
     room.visible = scenes_enabled
     add_child(room)
@@ -143,6 +174,7 @@ func _ready() -> void:
     dim_material.albedo_color = Color(0, 0, 0, 0.42)
     dimmer.material_override = dim_material
     camera.add_child(dimmer)
+    passthrough_dimmer = dimmer
     workspace = preload("res://frosted_workspace.gd").new(self)
     workspace.build()
     _protect_workspace_depth()
@@ -157,8 +189,9 @@ func _ready() -> void:
     else:
         _load_desktop_pages()
         book.visible = not local_pages.is_empty()
+    if bridge: _request("app_update_check")
     _set_passthrough(true)
-    if bridge and bridge.has_method("keyboardProbeEnabled") and bridge.call("keyboardProbeEnabled"):
+    if bridge and bridge.call("keyboardProbeEnabled"):
         _probe_keyboard.call_deferred()
     if xr and xr.has_signal("pose_recentered"):
         xr.connect("pose_recentered", func(): _cancel_interactions(); recenter.call_deferred())
@@ -240,6 +273,13 @@ func _head_is_tracked() -> bool:
     var tracker := XRServer.get_tracker("head") as XRPositionalTracker
     return tracker != null and tracker.has_pose("default") and tracker.get_pose("default").has_tracking_data
 
+func _align_startup_heading(head: Transform3D) -> void:
+    # Face the counter (+Z) regardless of the Guardian's saved forward direction.
+    var rotation := Basis(Vector3.UP, wrapf(PI - head.basis.get_euler().y, -PI, PI))
+    var offset := head.origin - origin.global_position
+    origin.global_basis = rotation * origin.global_basis
+    origin.global_position = head.origin - rotation * offset
+
 func toggle_library() -> void:
     ui.close_options()
     if workspace:
@@ -250,10 +290,12 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     parent.add_child(node)
     node.position = position
     var viewport := SubViewport.new()
-    viewport.size = pixels
+    viewport.size = Vector2i(Vector2(pixels) * 2.0)
+    viewport.size_2d_override = pixels
+    viewport.size_2d_override_stretch = true
     viewport.transparent_bg = true
     viewport.gui_embed_subwindows = true
-    viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+    viewport.render_target_update_mode = SubViewport.UPDATE_WHEN_VISIBLE
     node.add_child(viewport)
     var surface := MeshInstance3D.new()
     var quad := QuadMesh.new()
@@ -310,7 +352,7 @@ func _protect_workspace_depth() -> void:
                         material.render_priority = 120
                         material.no_depth_test = true
                     elif material is ShaderMaterial:
-                        material.render_priority = 120
+                        material.render_priority = 119
 
 func _button(row: Container, text: String, callback: Callable) -> Button:
     var button := Button.new()
@@ -481,7 +523,37 @@ func _activate_book(target: SpatialBook) -> void:
     ui.update_pages(target.first_page)
     ui.update_title()
 
+func summon_book() -> void:
+    if book.token.is_empty():
+        toggle_library()
+        return
+    _cancel_interactions()
+    ui.close_options()
+    if workspace.opening and workspace.opening.is_running(): workspace.opening.kill()
+    if book_flight and book_flight.is_running(): book_flight.kill()
+    book.visible = true
+    book.sfx_enabled = ui.book_sfx
+    book.play_sfx("summon")
+    var facing := Basis(Vector3.UP, camera.global_basis.get_euler().y)
+    var target := Transform3D(facing * Basis(Vector3.RIGHT, deg_to_rad(-12)), camera.global_position + facing * Vector3(0, -0.12, -0.65)).scaled_local(book.scale)
+    fly_book(target)
+    if not book.scroll_mode: book.settle_cover(true)
+
+func fly_book(target: Transform3D) -> Tween:
+    if book_flight and book_flight.is_running(): book_flight.kill()
+    var model := book
+    var start := model.global_transform
+    book_flight = create_tween()
+    book_flight.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+    book_flight.tween_method(func(t: float):
+        model.global_transform = start.interpolate_with(target, t)
+        model.global_position += Vector3.UP * sin(t * PI) * 0.12
+    , 0.0, 1.0, 0.65)
+    return book_flight
+
 func close_book(return_home: bool = true) -> void:
+    if book_flight and book_flight.is_running(): book_flight.kill()
+    book.play_sfx("close")
     ui.close_options()
     if book.token.is_empty():
         return
@@ -509,10 +581,17 @@ func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
     # Hand tracking can lose one frame when fingers cross or the hand leaves
     # the camera's best depth range.  Preserve most of the reveal dwell during
     # that brief gap, while still hiding promptly after an intentional turn.
-    palm_dwell = minf(0.5, palm_dwell + delta) if facing else maxf(0.0, palm_dwell - delta * 0.35)
+    if facing:
+        palm_last_position = at
+        palm_dwell = minf(0.5, palm_dwell + delta)
     palm_hidden = 0.0 if facing else palm_hidden + delta
+    if facing and palm_dwell > PALM_DWELL_REQUIRED:
+        palm_revealed = true
+    elif palm_hidden > PALM_HIDE_DELAY:
+        palm_revealed = false
+        palm_dwell = 0.0
     var natural_hands := tracked.values().any(func(value): return value.get("natural_hand", false))
-    var palm_active := palm_dwell > PALM_DWELL_REQUIRED and (facing or palm_hidden <= PALM_HIDE_DELAY)
+    var palm_active := palm_revealed
     var active := (toolbar_forced and not natural_hands) or palm_active
     toolbar.visible = active and not chapter_token.is_empty()
     if is_instance_valid(native_controls):
@@ -520,7 +599,7 @@ func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
     if active:
         # Palm attachment is the requested behavior; the reference alone
         # cannot establish its original attachment strategy.
-        var position := at + Vector3.UP * 0.06
+        var position := palm_last_position + Vector3.UP * 0.06
         if not natural_hands and not facing:
             position = camera.global_position - camera.global_basis.z * 0.55 - Vector3.UP * 0.28
         toolbar.global_position = position
@@ -528,13 +607,141 @@ func _palm_toolbar(facing: bool, at: Vector3, delta: float) -> void:
         if is_instance_valid(native_controls):
             native_controls.global_transform = toolbar.global_transform
             native_controls.global_position -= Vector3.UP * 0.16
-    ui.update_palm_options(active and natural_hands, at)
+    ui.update_palm_options(active and natural_hands, palm_last_position)
     if ui.options.visible and not workspace:
         ui.options.global_position = book.global_position + Vector3.UP * 0.50
         ui.options.look_at(camera.global_position, Vector3.UP, true)
 
 func _locomotion(_delta: float) -> void:
-    pass
+    var left := XRServer.get_tracker("left_hand") as XRControllerTracker
+    var turn_axis: Variant = left.get_input("primary") if left else null
+    if turn_axis is Vector2 and absf(turn_axis.x) > 0.35 and absf(turn_axis.x) > absf(turn_axis.y):
+        var head_position := camera.global_position
+        origin.rotate_y(-turn_axis.x * deg_to_rad(60.0) * _delta)
+        origin.global_position += head_position - camera.global_position
+        _set_locomotion_target(null)
+        locomotion_hand = "left"
+        locomotion_trigger_was_down = false
+        return
+    if not is_instance_valid(room) or not room.visible:
+        _set_locomotion_target(null)
+        locomotion_hand = ""
+        return
+    var best: Node3D
+    var best_distance := INF
+    var axis := Vector2.ZERO
+    var source: XRPositionalTracker
+    var ray_origin := camera.global_position
+    var ray_direction := -camera.global_basis.z
+    locomotion_hand = ""
+    for hand in ["left_hand", "right_hand"]:
+        var tracker := XRServer.get_tracker(hand) as XRControllerTracker
+        if tracker == null:
+            continue
+        var sample: Variant = tracker.get_input("primary")
+        var key := "left" if hand == "left_hand" else "right"
+        if sample is Vector2 and (sample as Vector2).length() > 0.35 and holder.is_empty() and ui_capture.is_empty() and ui_owner.is_empty():
+            var pose := tracker.get_pose("aim")
+            if not pose.has_tracking_data: continue
+            var adjusted := pose.get_adjusted_transform()
+            var start: Vector3 = origin.global_transform * adjusted.origin
+            var direction: Vector3 = (origin.global_basis * adjusted.basis * Vector3(0, 0, -1)).normalized()
+            if workspace and workspace.popup_ray(start, direction, false): continue
+            if not _book_ray_hit(start, direction).is_empty(): continue
+            axis = sample
+            source = tracker
+            ray_origin = start
+            ray_direction = direction
+            locomotion_hand = key
+            break
+    if source == null:
+        _set_locomotion_target(null)
+        locomotion_trigger_was_down = false
+        return
+    # Aim at the actual surface; the stick enables targeting and its horizontal
+    # axis steers the ray without turning the user's viewpoint.
+    ray_direction = Basis(Vector3.UP, -axis.x * 0.45) * ray_direction
+    if ray_direction.y > -0.08:
+        ray_direction.y = -0.35
+        ray_direction = ray_direction.normalized()
+    var hit := room.get_world_3d().direct_space_state.intersect_ray(PhysicsRayQueryParameters3D.create(ray_origin, ray_origin + ray_direction * 15.0, 1))
+    if hit.is_empty():
+        _set_locomotion_target(null)
+        return
+    var desired: Vector3 = hit.position
+    for candidate in room.get_locomotion_targets():
+        var distance := Vector2(candidate.global_position.x, candidate.global_position.z).distance_to(Vector2(desired.x, desired.z))
+        # A seat is selectable only when the joystick projection is actually
+        # near it; otherwise the user gets a floor target instead of snapping
+        # across the room to the nearest stool.
+        if distance < best_distance and distance <= 0.40:
+            best = candidate
+            best_distance = distance
+    # Floor targets remain available between seats and are clamped to the room.
+    if best == null:
+        if not hit.collider.get_meta("walkable", false) or hit.normal.y < 0.7:
+            _set_locomotion_target(null)
+            return
+        desired.x = clampf(desired.x, room.bounds.position.x + 0.28, room.bounds.end.x - 0.28)
+        desired.z = clampf(desired.z, room.bounds.position.y + 0.28, room.bounds.end.y - 0.28)
+        locomotion_target = null
+        _set_locomotion_target_position(desired, "floor", desired.y)
+    else:
+        _set_locomotion_target(best)
+    var trigger_down: bool = source.get_input("trigger_click") == true
+    if trigger_down and not locomotion_trigger_was_down and locomotion_circle and locomotion_circle.visible:
+        _commit_locomotion_target()
+    locomotion_trigger_was_down = trigger_down
+
+func _set_locomotion_target(target: Node3D) -> void:
+    locomotion_target = target
+    if target:
+        _set_locomotion_target_position(target.global_position, str(target.get_meta("target_kind", "seat")), float(target.get_meta("seat_height", room.floor_y)))
+    else:
+        locomotion_target_kind = ""
+        if locomotion_circle: locomotion_circle.visible = false
+
+func _set_locomotion_target_position(position: Vector3, kind: String, height: float) -> void:
+    locomotion_target_kind = kind
+    if not locomotion_circle:
+        locomotion_circle = MeshInstance3D.new()
+        var ring := TorusMesh.new()
+        ring.inner_radius = 0.14
+        ring.outer_radius = 0.19
+        ring.rings = 24
+        ring.ring_segments = 12
+        locomotion_circle.mesh = ring
+        var material := StandardMaterial3D.new()
+        material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+        material.emission_enabled = true
+        material.emission = Color("b8ff48")
+        material.albedo_color = Color(0.65, 1.0, 0.18, 0.92)
+        locomotion_circle.material_override = material
+        add_child(locomotion_circle)
+    locomotion_circle.global_position = Vector3(position.x, height + 0.012, position.z)
+    locomotion_circle.visible = true
+
+func _commit_locomotion_target() -> void:
+    if not locomotion_circle or not locomotion_circle.visible: return
+    var target := locomotion_circle.global_position
+    seated = locomotion_target_kind == "seat"
+    var eye_height := 0.80 if seated else standing_eye_height
+    var destination := Vector3(target.x, target.y - 0.012 + eye_height, target.z)
+    var delta := destination - camera.global_position
+    # Move only the origin; the XRCamera remains fully tracking-controlled.
+    _cancel_interactions()
+    origin.global_position += delta
+    if workspace: workspace.recenter(camera.global_transform)
+    _set_locomotion_target(null)
+
+func _calibrate_player_height(tracked_height: float) -> void:
+    # Offset the origin once; scaling tracked hands would distort reach and IPD.
+    var physical_height := clampf(tracked_height, 0.8, 2.2)
+    # shortcut: floor-relative height estimates posture; unusually short standing users may be classified as seated.
+    seated = physical_height < 1.35
+    standing_eye_height = (1.5 if seated else physical_height) * PLAYER_HEIGHT_MULTIPLIER
+    player_height_offset = standing_eye_height - tracked_height
+    origin.position.y = room.floor_y + player_height_offset
 
 func _reader_at(point: Vector3) -> SpatialBook:
     for candidate in books:
@@ -768,6 +975,7 @@ func _set_passthrough(enabled: bool) -> void:
     var supported := xr and xr.get_supported_environment_blend_modes().has(XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND)
     var active: bool = enabled and supported
     passthrough_enabled = active
+    if is_instance_valid(passthrough_dimmer): passthrough_dimmer.visible = active and not scenes_enabled
     if is_instance_valid(room):
         room.visible = scenes_enabled
     get_viewport().transparent_bg = active
@@ -779,13 +987,16 @@ func _set_passthrough(enabled: bool) -> void:
 
 func _set_scenes_enabled(enabled: bool) -> void:
     scenes_enabled = enabled
+    if is_instance_valid(passthrough_dimmer): passthrough_dimmer.visible = passthrough_enabled and not enabled
     if ui:
         ui.save()
     if is_instance_valid(room):
         room.visible = scenes_enabled
 
 func _process(_delta: float) -> void:
-    if is_instance_valid(room) and is_instance_valid(book) and not moving and holder.is_empty():
+    if workspace:
+        workspace._process(_delta)
+    if is_instance_valid(room) and is_instance_valid(book) and not moving and holder.is_empty() and not (book_flight and book_flight.is_running()):
         room.resolve_book_transform(book)
     frosted_glass.update(self, _delta)
     if android_app and not android_started:
@@ -796,9 +1007,20 @@ func _process(_delta: float) -> void:
     if android_app and android_started:
         android_status.text = str(android_app.call("error"))
     if awaiting_head_pose and _head_is_tracked():
-        awaiting_head_pose = false
-        recenter()
-        print("VR head pose ready; library centered")
+        var head_pose := (XRServer.get_tracker("head") as XRPositionalTracker).get_pose("default").get_adjusted_transform()
+        startup_height_samples.append(head_pose.origin.y)
+        startup_height_time += _delta
+        if startup_height_time >= 1.0:
+            awaiting_head_pose = false
+            startup_height_samples.sort()
+            _calibrate_player_height(startup_height_samples[startup_height_samples.size() / 2])
+            startup_height_samples.clear()
+            _align_startup_heading(origin.global_transform * head_pose)
+            recenter()
+            print("VR startup posture: ", "seated" if seated else "standing")
+    elif awaiting_head_pose:
+        startup_height_time = 0.0
+        startup_height_samples.clear()
     _locomotion(_delta)
     if workspace: workspace.sync_badge()
     var palm_visible := false
@@ -825,14 +1047,20 @@ func _process(_delta: float) -> void:
             natural_hand = true
             var required := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
             var palm := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
-            if hand != preferred_hand and hand_controls.seeker_facing(tracker):
+            if hand != preferred_hand and hand_controls.seeker_facing(tracker, palm_revealed):
                 palm_visible = true
                 palm_position = palm.origin
             chopping = hand_controls.edge_hand(tracker, tracked[hand].get("chopping", false))
-            var palm_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM) & required) != 0
+            # Quest can briefly report a valid palm without the TRACKED bit
+            # while the fingers are occluded.  Keep fist/body capture alive
+            # through that frame; the pose validity check still rejects stale
+            # transforms and the existing hand-control hysteresis owns release.
+            var palm_tracked: bool = hand_controls._position_available(tracker, XRHandTracker.HAND_JOINT_PALM)
             var pinch_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
             finger_tracked = (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0
-            valid = finger_tracked or (chopping and palm_tracked)
+            tracked[hand].was_fist = tracked[hand].get("fist", false)
+            tracked[hand].fist = palm_tracked and hand_controls.is_fist(tracker, tracked[hand].was_fist)
+            valid = finger_tracked or (palm_tracked and (chopping or tracked[hand].fist))
             chopping = chopping and palm_tracked
             if valid:
                 natural_hand = true
@@ -842,8 +1070,13 @@ func _process(_delta: float) -> void:
                 pointer_basis = origin.global_basis * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).basis
                 var thumb := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_THUMB_TIP).origin
                 pressed = pinch_tracked and tip.distance_to(thumb) < (PINCH_RELEASE_DISTANCE if tracked[hand].pressed else PINCH_START_DISTANCE)
-                tracked[hand].was_fist = tracked[hand].get("fist", false)
-                tracked[hand].fist = hand_controls.is_fist(tracker, tracked[hand].was_fist)
+                # A pinch is also a locomotion commit while the joystick has a
+                # room target. Keep this separate from `tracked[hand].pressed`:
+                # that state belongs to book/UI pointer capture.
+                var previous_locomotion_pinch := bool(tracked[hand].get("locomotion_pinch", false))
+                if pressed and not previous_locomotion_pinch and is_instance_valid(locomotion_target):
+                    _commit_locomotion_target()
+                tracked[hand].locomotion_pinch = pressed
                 tracked[hand].finger_extended = hand_controls.finger_extended(tracker)
                 var aim: XRController3D = tracked[hand].aim
                 direction = -aim.global_basis.z.normalized() if aim.get_has_tracking_data() else hand_controls.forward(tracker)
@@ -865,7 +1098,7 @@ func _process(_delta: float) -> void:
         tracked[hand].natural_hand = natural_hand
         tracked[hand].chopping = chopping
         if valid:
-            tracked[hand].ray.visible = library_panel.visible or hand == preferred_hand
+            tracked[hand].ray.visible = not natural_hand or library_panel.visible or hand == preferred_hand
             if not natural_hand: pointer_origin = tip
             tracked[hand].ray.global_position = pointer_origin
             tracked[hand].ray.look_at(pointer_origin + direction, Vector3.UP)
@@ -883,11 +1116,17 @@ func _process(_delta: float) -> void:
         if fist and not resizing:
             tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
         var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not closing and not touching_popup and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
-        var chopping_book: bool = not touching_popup and chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
+        var chopping_book: bool = not fist and not touching_popup and chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
         var touching: bool = hand_touch.update(hand, tip, valid and finger_tracked and natural_hand and not closing and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
-        if not closing and not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick:
+        # A body/window capture owns its release even when opening the hand
+        # looks like a chopping pose inside the screen's page-turn volume.
+        if (holder == hand and moving) or window_holder == hand or (not closing and not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick):
             _pointer(hand, tip if not natural_hand or fist or _reader_at(tip) != null else pointer_origin, direction, pressed or fist, valid, pointer_basis)
         tracked[hand].tip = tip
+        if valid and not natural_hand:
+            var hover := _book_ray_hit(pointer_origin, direction)
+            if not hover.is_empty() and (not workspace or not workspace.popup_ray(pointer_origin, direction)):
+                tracked[hand].tip = pointer_origin + direction * float(hover.distance)
         tracked[hand].valid = valid
         var interacting: bool = holder == hand or scale_hands.has(hand) or ui_owner == hand or window_holder == hand or sweeping
         if tracked[hand].get("material") != null:
@@ -910,6 +1149,9 @@ func _cancel_interactions() -> void:
     if hand_page_turn: hand_page_turn.cancel()
     if hand_touch: hand_touch.cancel()
     if hand_controls: hand_controls.cancel()
+    palm_revealed = false
+    palm_dwell = 0.0
+    palm_hidden = 0.0
     book.cancel_turn()
     holder = ""
     moving = false
@@ -921,12 +1163,30 @@ func _cancel_interactions() -> void:
         workspace.finish_drag(held_window)
     held_window = null
     window_holder = ""
-    _panel_input(camera.global_position, Vector3.UP, false, true)
-    ui_owner = ""
+    _cancel_ui_capture()
     for hand in tracked:
         tracked[hand].pressed = false
         tracked[hand].buttons = {}
         tracked[hand].stick_down = false
+
+func _cancel_ui_capture() -> void:
+    if not ui_capture.is_empty():
+        if ui_capture.panel.get("android", false):
+            android_app.call("touch", -1000.0, -1000.0, 3)
+        else:
+            var motion := InputEventMouseMotion.new()
+            motion.position = Vector2(-1000, -1000)
+            motion.global_position = motion.position
+            motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+            ui_capture.panel.viewport.push_input(motion, true)
+            var release := InputEventMouseButton.new()
+            release.position = motion.position
+            release.global_position = motion.position
+            release.button_index = MOUSE_BUTTON_LEFT
+            release.pressed = false
+            ui_capture.panel.viewport.push_input(release, true)
+        ui_capture.clear()
+    ui_owner = ""
 
 func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, valid: bool, pointer_basis: Basis = Basis.IDENTITY) -> void:
     if window_holder == hand and tracked[hand].get("natural_hand", false):
@@ -938,7 +1198,7 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
         return
     var previous: bool = tracked[hand].pressed
     var remote_distance := float(tracked[hand].get("remote_distance", 0.0))
-    if (holder == hand and moving) or window_holder == hand:
+    if holder == hand or window_holder == hand:
         tip += direction * remote_distance
     else:
         tracked[hand].remote_distance = 0.0
@@ -949,7 +1209,13 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
         if holder == hand:
             book.cancel_turn()
             _release_body(hand)
-        pressed = false
+        if ui_owner == hand: _cancel_ui_capture()
+        if window_holder == hand:
+            workspace.finish_drag(held_window)
+            held_window = null
+            window_holder = ""
+        tracked[hand].pressed = false
+        return
     if window_holder == hand:
         if pressed:
             held_window.global_position = tip + held_window_offset
@@ -961,7 +1227,7 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
             window_holder = ""
         tracked[hand].pressed = pressed
         return
-    if workspace and not tracked[hand].get("fist", false) and holder.is_empty() and (ui_owner.is_empty() or ui_owner == hand) and workspace.popup_ray(tip, direction):
+    if not tracked[hand].get("fist", false) and tracked[hand].get("can_ui", true) and holder.is_empty() and (ui_owner.is_empty() or ui_owner == hand):
         ui_hand = hand
         if _panel_input(tip, direction, pressed, previous):
             if pressed and not previous: ui_owner = hand
@@ -993,7 +1259,7 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
             tracked[hand].pressed = pressed
             return
         var nearby := _reader_at(tip)
-        if nearby == null and controller_grip:
+        if nearby == null and (controller_grip or (not tracked[hand].get("natural_hand", false) and tracked[hand].get("can_grab", false))):
             var hit := _book_ray_hit(tip, direction)
             if not hit.is_empty():
                 nearby = hit.book
@@ -1011,6 +1277,7 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
                 scale_start_vector = tip - Vector3(scale_hands.get(holder, tip))
                 scale_anchor = book.global_position - (tip + Vector3(scale_hands.get(holder, tip))) * 0.5
             if scale_start_distance > 0.03:
+                book.play_sfx("resize")
                 var distance := tip.distance_to(scale_hands.get(holder, tip))
                 var ratio := clampf(distance / scale_start_distance, 0.5 / maxf(scale_start.x, 0.001), 2.5 / maxf(scale_start.x, 0.001))
                 var current := tip - Vector3(scale_hands.get(holder, tip))
@@ -1038,7 +1305,8 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
                 _scroll_reader(local_y - scroll_drag_y)
                 scroll_drag_y = local_y
             else:
-                book.drag(book.to_local(tip))
+                if tracked[hand].get("natural_hand", false): book.drag(book.to_local(tip))
+                else: book.drag_controller(book.to_local(tip))
         else:
             if book.cover_dragged:
                 book.release_cover()
@@ -1056,20 +1324,24 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
             # Outer page corners acquire the leaf before the body. Otherwise
             # a lower-edge pinch incorrectly moves the entire book.
             var page_edge := not book.scroll_mode and absf(point.x) > SpatialBook.PAGE_WIDTH * 0.72 and absf(point.x) < SpatialBook.PAGE_WIDTH + CONTACT_HYSTERESIS
-            if not controller_grip and not fist_grip and (book.cover_handle_at(point) or (page_edge and book.openness < 0.8 and point.x > 0)):
+            var natural_hand := bool(tracked[hand].get("natural_hand", false))
+            if not controller_grip and not fist_grip and ((book.cover_handle_at(point) and (natural_hand or book.openness < 0.8)) or (page_edge and book.openness < 0.8 and point.x > 0)):
                 holder = hand
                 book.begin_cover(point)
             elif not controller_grip and not fist_grip and page_edge and book.openness >= 0.8:
                 if book.begin_turn(1 if point.x > 0.0 else -1, point):
                     holder = hand
-                    book.drag(point)
+                    if natural_hand: book.drag(point)
+                    else: book.drag_controller(point)
                     ui.haptic(hand)
                 else:
                     var direction_to_load := (1 if point.x > 0 else -1) * (-1 if book.rtl else 1)
                     _preload(book.first_page + direction_to_load * 2)
-            elif controller_grip or (fist_grip and not book.scroll_mode) or not tracked[hand].get("natural_hand", false):
+            elif controller_grip or fist_grip or (not natural_hand and not tracked[hand].get("buttons", {}).get("trigger_click", false)):
                 holder = hand
                 moving = true
+                if book_flight and book_flight.is_running(): book_flight.kill()
+                book.play_sfx("grab")
                 hold_offset = pointer_basis.inverse() * (book.global_position - tip)
                 hold_basis = pointer_basis.inverse() * book.global_basis
                 scale_hands[hand] = tip
@@ -1093,6 +1365,7 @@ func _rebase_hold(hand: String) -> void:
     hold_basis = basis.inverse() * book.global_basis
 
 func _release_body(hand: String) -> void:
+    if moving: book.play_sfx("release")
     scale_hands.erase(hand)
     scale_start_distance = 0.0
     if moving:

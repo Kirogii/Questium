@@ -38,6 +38,7 @@ object SettingsCatalog {
         SettingsLibraryScreen,
         SettingsReaderScreen,
         SettingsVrScreen,
+        SettingsQuestiumSyncScreen,
         SettingsDownloadScreen,
         SettingsTrackingScreen,
         // AM (CONNECTIONS) -->

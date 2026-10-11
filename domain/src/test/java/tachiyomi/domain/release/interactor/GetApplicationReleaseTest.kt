@@ -96,4 +96,19 @@ class GetApplicationReleaseTest {
 
         result shouldBe GetApplicationRelease.Result.NoNewUpdate
     }
+
+    @Test
+    fun `debug suffix and unequal version lengths compare safely`() = runTest {
+        for ((current, latest, expected) in listOf(
+            Triple("1.0.0-12345", "v1.0.1", true),
+            Triple("1.0.0-12345", "v1.0.0", false),
+            Triple("1.0.1", "v1.0", false),
+            Triple("1.0", "v1.0.1", true),
+            Triple("2.0.0", "v1.9.9", false),
+        )) {
+            coEvery { releaseService.latest(any()) } returns Release(latest, "", "", "")
+            val result = getApplicationRelease.await(GetApplicationRelease.Arguments(false, false, 0, current, "Kirogii/Questium"))
+            (result is GetApplicationRelease.Result.NewUpdate) shouldBe expected
+        }
+    }
 }

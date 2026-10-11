@@ -201,6 +201,14 @@ object SettingsMainScreen : Screen() {
     private val items = listOfNotNull(
         // KMK -->
         Item(
+            titleRes = KMR.strings.questium_sync,
+            subtitleRes = KMR.strings.questium_sync_priority,
+            icon = Icons.Outlined.Sync,
+            screen = SettingsQuestiumSyncScreen,
+        ),
+        // KMK <--
+        // KMK -->
+        Item(
             titleRes = KMR.strings.pref_vr_title,
             subtitleRes = KMR.strings.pref_vr_summary,
             icon = Icons.AutoMirrored.Outlined.ChromeReaderMode,

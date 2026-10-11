@@ -17,6 +17,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <!-- Storage -->
     <uses-permission
@@ -72,6 +74,11 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.Tachiyomi">
+
+        <service
+            android:name=".data.questiumsync.SyncEndpointService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <meta-data android:name="com.oculus.handtracking.version" android:value="V2.0" />
         <meta-data android:name="com.oculus.handtracking.frequency" android:value="HIGH" />

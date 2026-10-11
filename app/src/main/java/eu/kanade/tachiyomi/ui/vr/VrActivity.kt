@@ -21,6 +21,9 @@ class VrActivity : GodotActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (appGraph.preferenceStore.getBoolean(eu.kanade.tachiyomi.data.questiumsync.SyncSettingKeys.ENABLED, false).get()) {
+            eu.kanade.tachiyomi.data.questiumsync.QuestiumSync.get(this).setEnabled(true)
+        }
         appGraph.preferenceStore.getBoolean(VrSettingKeys.ENABLED.key).set(true)
         if (android.os.Build.MANUFACTURER.equals("Oculus", ignoreCase = true) ||
             android.os.Build.MANUFACTURER.equals("Meta", ignoreCase = true)

@@ -28,7 +28,7 @@ func check() -> void:
     var at: Vector3 = gui.hud.node.global_position
     assert(reader.hand_controls.resize_hud("left", top_left, true, true))
     assert(reader.hand_controls.resize_hud("right", top_right, true, true))
-    reader.hand_controls.resize_hud("right", top_right + Vector3.RIGHT * 0.2, true, true)
+    reader.hand_controls.resize_hud("right", top_right + gui.hud.node.global_basis.x.normalized() * 0.2, true, true)
     assert(gui.hud_scale > 0.5 and gui.hud.node.global_position.is_equal_approx(at), "HUD corners resize without moving the panel")
     reader.hand_controls.cancel()
     gui.set_hud_scale(0.5)
@@ -41,9 +41,10 @@ func check() -> void:
     reader.camera.rotation = Vector3.ZERO
     reader.recenter()
     var tracker := XRHandTracker.new()
-    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
+    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED | XRHandTracker.HAND_JOINT_FLAG_POSITION_VALID
     var palm := Vector3(-0.25, 1.2, -0.3)
     tracker.set_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM, Transform3D(Basis.IDENTITY, palm))
+    tracker.set_hand_joint_flags(XRHandTracker.HAND_JOINT_PALM, flags)
     for joint in [XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP, XRHandTracker.HAND_JOINT_MIDDLE_FINGER_TIP, XRHandTracker.HAND_JOINT_RING_FINGER_TIP, XRHandTracker.HAND_JOINT_PINKY_FINGER_TIP]:
         tracker.set_hand_joint_flags(joint, flags)
         tracker.set_hand_joint_transform(joint, Transform3D(Basis.IDENTITY, palm + Vector3(0.02, 0.025, 0)))

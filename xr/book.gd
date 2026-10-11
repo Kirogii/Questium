@@ -13,12 +13,28 @@ const COVER_OFFSET := 0.003
 const PAPER_SHADER = preload("res://paper.gdshader")
 const GEOMETRY = preload("res://book_geometry.gd")
 
-var hard_cover := false
+var hard_cover := true
+var sfx_enabled := true
+var sfx_players: Array[AudioStreamPlayer3D] = []
+var last_sfx_at := -1000
+const BOOK_SOUNDS = {
+    "open": preload("res://audio/bookOpen.ogg"),
+    "close": preload("res://audio/bookClose.ogg"),
+    "page": preload("res://audio/bookFlip1.ogg"),
+    "seek": preload("res://audio/bookFlip2.ogg"),
+    "scroll": preload("res://audio/bookFlip3.ogg"),
+    "grab": preload("res://audio/cloth1.ogg"),
+    "release": preload("res://audio/bookPlace1.ogg"),
+    "summon": preload("res://audio/cloth2.ogg"),
+    "resize": preload("res://audio/cloth3.ogg"),
+}
 var board_offset := COVER_OFFSET
 var page_count := 0
 var first_page := 0
 var requested_spread := -1
 var rtl := false
+var source_rtl := false
+var reading_direction := "auto"
 var textures: Dictionary = {}
 var blank: ImageTexture
 var left_leaf: MeshInstance3D
@@ -44,6 +60,7 @@ var cover_grab_angle := 0.0
 var cover_settling: Tween
 var grab_angle := 0.0
 var grab_progress := 0.0
+var controller_grab_x := PAGE_WIDTH
 var cover_texture: Texture2D
 var artwork: Texture2D
 var preview_only := false
@@ -126,7 +143,7 @@ func _ready() -> void:
         cover.position = Vector3(side * PAGE_WIDTH / 2.0 * cos(REST_ANGLE), 0.0, PAGE_WIDTH / 2.0 * sin(REST_ANGLE) - COVER_OFFSET)
         var material := StandardMaterial3D.new()
         material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-        material.albedo_color = Color(0.08, 0.07, 0.10)
+        material.albedo_color = Color(0.045, 0.048, 0.055)
         material.cull_mode = BaseMaterial3D.CULL_DISABLED
         cover.material_override = material
         add_child(cover)
@@ -143,7 +160,7 @@ func _ready() -> void:
     spine.position.z = -0.001
     var spine_material := StandardMaterial3D.new()
     spine_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-    spine_material.albedo_color = Color(0.08, 0.07, 0.10)
+    spine_material.albedo_color = Color(0.045, 0.048, 0.055)
     spine_material.cull_mode = BaseMaterial3D.CULL_DISABLED
     spine.material_override = spine_material
     add_child(spine)
@@ -214,28 +231,47 @@ func _ready() -> void:
     close_marker.outline_size = 12
     close_marker.no_depth_test = false
     add_child(close_marker)
-    _refresh()
+    set_hard_cover(hard_cover)
+    for index in 2:
+        var player := AudioStreamPlayer3D.new()
+        player.volume_db = -12
+        player.max_distance = 6
+        player.unit_size = 1.0
+        add_child(player)
+        sfx_players.append(player)
+
+func stop_sfx() -> void:
+    for player in sfx_players: player.stop()
+
+func play_sfx(action: String) -> void:
+    if not sfx_enabled or not BOOK_SOUNDS.has(action) or sfx_players.is_empty(): return
+    var now := Time.get_ticks_msec()
+    if now - last_sfx_at < (400 if action == "resize" or action == "scroll" else 100): return
+    last_sfx_at = now
+    var player := sfx_players[0] if not sfx_players[0].playing else sfx_players[1]
+    player.stream = BOOK_SOUNDS[action]
+    player.play()
 
 func set_hard_cover(enabled: bool) -> void:
     hard_cover = enabled
-    board_offset = 0.021 if enabled else COVER_OFFSET
-    var thickness := 0.006 if enabled else COVER_THICKNESS
-    var overhang := 0.012 if enabled else 0.002
+    board_offset = 0.011 if enabled else COVER_OFFSET
+    var thickness := 0.003 if enabled else COVER_THICKNESS
+    var overhang := 0.007 if enabled else 0.002
     for index in [0, 2]:
         body_parts[index].mesh = GEOMETRY.cover(Vector3(PAGE_WIDTH + overhang, PAGE_HEIGHT + overhang, thickness))
         body_parts[index].material_override.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL if enabled else BaseMaterial3D.SHADING_MODE_UNSHADED
         body_parts[index].material_override.roughness = 0.82
     body_parts[0].position.z = -board_offset
     for entry in [[1, -1], [3, 1]]:
-        body_parts[entry[0]].mesh = GEOMETRY.stack(entry[1], PAGE_WIDTH, PAGE_HEIGHT, REST_ANGLE, 0.017 if enabled else 0.0016)
+        body_parts[entry[0]].mesh = GEOMETRY.stack(entry[1], PAGE_WIDTH, PAGE_HEIGHT, REST_ANGLE, 0.008 if enabled else 0.0016)
     if enabled:
         var spine := CylinderMesh.new()
-        spine.top_radius = 0.010
-        spine.bottom_radius = 0.010
+        spine.top_radius = 0.006
+        spine.bottom_radius = 0.006
         spine.height = PAGE_HEIGHT + overhang
         spine.radial_segments = 24
         body_parts[4].mesh = spine
-        body_parts[4].position.z = -0.011
+        body_parts[4].position.z = -0.006
     else:
         body_parts[4].mesh = GEOMETRY.cover(Vector3(0.003, PAGE_HEIGHT + 0.002, 0.005))
         body_parts[4].position.z = -0.001
@@ -281,7 +317,8 @@ func set_chapter(count: int, start: int = 0, right_to_left: bool = false) -> voi
     cancel_turn()
     page_count = maxi(0, count)
     first_page = clampi(start - posmod(start, 2), 0, maxi(0, count - 1))
-    rtl = right_to_left
+    source_rtl = right_to_left
+    rtl = right_to_left if reading_direction == "auto" else reading_direction == "rtl"
     requested_spread = -1
     textures.clear()
     cover_texture = artwork
@@ -296,6 +333,12 @@ func set_chapter(count: int, start: int = 0, right_to_left: bool = false) -> voi
     scroll_mode = mode == "scroll" or (vertical_chapter and mode != "book")
     if scroll_mode:
         first_page = clampi(start, 0, maxi(0, count - 1))
+    _refresh()
+
+func set_reading_direction(value: String) -> void:
+    cancel_turn()
+    reading_direction = value if value in ["auto", "ltr", "rtl"] else "auto"
+    rtl = source_rtl if reading_direction == "auto" else reading_direction == "rtl"
     _refresh()
 
 func supply_page(index: int, texture: Texture2D, source_size: Vector2i = Vector2i.ZERO) -> void:
@@ -406,10 +449,12 @@ func begin_turn(side: int, contact: Vector3 = Vector3.INF) -> bool:
     grabbed = true
     grab_angle = 0.0 if contact == Vector3.INF else atan2(maxf(0.0, contact.z), side * contact.x)
     grab_progress = 0.0
+    controller_grab_x = PAGE_WIDTH if contact == Vector3.INF else maxf(absf(contact.x), PAGE_WIDTH * 0.5)
     turning_material.set_shader_parameter("side", float(side))
     turning_material.set_shader_parameter("progress", 0.0)
     turning_leaf.visible = true
     _refresh()
+    play_sfx("page")
     turn_started.emit()
     return true
 
@@ -421,6 +466,13 @@ func drag(local_finger: Vector3) -> void:
     # never jumps the page forward on the first frame.
     set_turn_progress(clampf(grab_progress + (angle - grab_angle) / (PI - 2.0 * REST_ANGLE), 0.0, 1.0))
     turning_material.set_shader_parameter("grab_y", clampf(local_finger.y / PAGE_HEIGHT + 0.5, 0, 1))
+
+func drag_controller(contact: Vector3) -> void:
+    if not grabbed:
+        return
+    # A ray stays on the page plane, where atan2 jumps at the spine.
+    set_turn_progress(clampf((controller_grab_x - turn_side * contact.x) / (2.0 * controller_grab_x), 0.0, 1.0))
+    turning_material.set_shader_parameter("grab_y", clampf(contact.y / PAGE_HEIGHT + 0.5, 0, 1))
 
 func set_turn_progress(value: float) -> void:
     turn_progress = value
@@ -477,6 +529,7 @@ func seek(index: int) -> bool:
         return false
     cancel_turn()
     scroll_offset = 0.0
+    if first_page != target: play_sfx("seek")
     first_page = target
     scroll_overshoot = 0.0
     requested_spread = -1
@@ -504,6 +557,7 @@ func _has_tall_pages() -> bool:
 func scroll_by(distance: float) -> int:
     if not scroll_mode:
         return 0
+    if absf(distance) > 0.001: play_sfx("scroll")
     var next := scroll_offset + distance + scroll_overshoot
     scroll_overshoot = 0.0
     if next < 0:
@@ -556,7 +610,7 @@ func cover_handle_at(point: Vector3) -> bool:
 func hover_edges(points: Array) -> void:
     for index in range(edge_bars.size()):
         var bar := edge_bars[index]
-        var near := cover_dragged and index == 0
+        var near := (cover_dragged and index == 0) or (grabbed and index == (0 if turn_side < 0 else 1))
         for point in points:
             near = near or _near_bar(point, bar)
         bar.material_override.albedo_color = Color(0.70, 0.35, 1.0) if near else Color.WHITE
@@ -631,6 +685,7 @@ func release_cover() -> void:
     settle_cover(openness >= 0.5)
 
 func settle_cover(open: bool) -> void:
+    if absf(openness - (1.0 if open else 0.0)) > 0.05: play_sfx("open" if open else "close")
     cover_dragged = false
     if cover_settling and cover_settling.is_valid():
         cover_settling.kill()
@@ -642,6 +697,7 @@ func settle_cover(open: bool) -> void:
 func begin_cover(contact: Vector3 = Vector3.ZERO) -> void:
     if cover_settling and cover_settling.is_valid():
         cover_settling.kill()
+    play_sfx("open" if openness < 0.5 else "close")
     cover_start = openness
     cover_grab_angle = atan2(maxf(0, contact.z), contact.x)
     cover_dragged = true

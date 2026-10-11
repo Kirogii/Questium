@@ -1,91 +1,217 @@
 extends Node3D
 
-## Scene/map host for the spatial reader.
-##
-## A map scene is optional.  The importer can load a packed scene placed in
-## res://scenes, but the fallback below is deliberately complete so a fresh
-## checkout still has a usable bar, floor, walls, seats, and fire.
-
-const MAP_DIRECTORY := "res://scenes"
-const MAP_NAMES := ["bar_end.tscn", "bar_end.glb", "bar_end.gltf"]
-const TOON_SHADER = preload("res://toon_environment.gdshader")
-const FIRE_SHADER = preload("res://fire_animated.gdshader")
-const POST_SHADER = preload("res://scene_post_process.gdshader")
+## The shipped bar is authoritative: its imported geometry determines the room.
+const MAP_PATH := "res://scenes/bar_end.fbx"
 const SHAFT_SHADER = preload("res://light_shaft.gdshader")
+const MAP_SHADER = preload("res://map_noir.gdshader")
+const FLAME_SHADER = preload("res://fire_animated.gdshader")
+const MAP_OFFSET := Vector3(1.5, 0.0, 24.0)
+const TABLE_MESHES := ["Cube_018", "Cube_028", "Cube_048", "Cube_049", "Cube_039", "Cube_044"]
+const STOOL_MESHES := ["Cube_014", "Cube_015", "Cube_016", "Cube_017", "Cube_019", "Cube_020", "Cube_021", "Cube_022", "Cube_038"]
+const BOOTH_MESHES := ["Cube_023", "Cube_024", "Cube_029", "Cube_030", "Cube_040", "Cube_041", "Cube_045", "Cube_046", "Cube_050", "Cube_051", "Cube_053", "Cube_054"]
 
-var map_source := "procedural-bar-fallback"
+var map_source := ""
 var imported_map: Node3D
 var collision_bodies: Array[StaticBody3D] = []
 var seat_points: Array[Node3D] = []
 var floor_y := 0.0
-var bounds := Rect2(-6.0, -5.0, 12.0, 10.0)
+var bounds := Rect2()
+var fixture_points: Array[Vector3] = []
+var textured_surfaces := 0
 
 func _ready() -> void:
     name = "BarScene"
-    if not _load_project_scene():
-        _build_bar_fallback()
-    else:
-        _build_imported_seat_points()
-    # Imported art is not trusted to contain usable physics. Keep the reader
-    # collision contract stable for both imported and procedural maps.
-    _build_collision_surfaces()
+    var resource := load(MAP_PATH) as PackedScene
+    if resource == null:
+        push_error("Required bar map could not be imported: " + MAP_PATH)
+        return
+    imported_map = resource.instantiate() as Node3D
+    if imported_map == null:
+        push_error("Required bar map has no 3D root: " + MAP_PATH)
+        return
+    imported_map.position = MAP_OFFSET
+    add_child(imported_map)
+    map_source = MAP_PATH
+    var floor_mesh := _find_mesh(imported_map, "Plane_009")
+    if floor_mesh == null:
+        push_error("Bar map floor Plane_009 is missing")
+        return
+    var floor_box := _world_box(floor_mesh)
+    floor_y = floor_box.position.y
+    bounds = Rect2(floor_box.position.x, floor_box.position.z, floor_box.size.x, floor_box.size.z)
+    _surface_collision(Vector3(floor_box.size.x, 0.12, floor_box.size.z), Vector3(floor_box.get_center().x, floor_y - 0.06, floor_box.get_center().z), "FloorSurface")
+    _build_furniture(imported_map)
+    _dress_map(imported_map)
+    _build_counter_lighting()
+    var reflections := ReflectionProbe.new()
+    reflections.name = "BarSurfaceReflections"
+    reflections.position = Vector3(bounds.get_center().x, 1.5, bounds.get_center().y)
+    reflections.size = Vector3(bounds.size.x, 6.0, bounds.size.y)
+    reflections.box_projection = true
+    reflections.interior = true
+    reflections.ambient_mode = ReflectionProbe.AMBIENT_COLOR
+    reflections.ambient_color = Color("9eabc1")
+    reflections.ambient_color_energy = 0.045
+    reflections.cull_mask = 2
+    reflections.intensity = 0.55
+    add_child(reflections)
+    # Furniture accents are bounded fills, separate from the real fixture shafts.
+    for seat in seat_points:
+        var fill := OmniLight3D.new()
+        fill.name = "ChairFill_" + String(seat.get_meta("seat_group"))
+        fill.position = seat.position + Vector3(0.0, 0.70, 0.0)
+        fill.light_color = Color("c9b7a4")
+        fill.light_energy = 1.1
+        fill.light_cull_mask = 2
+        fill.omni_range = 1.45
+        add_child(fill)
 
-func _load_project_scene() -> bool:
-    if not DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(MAP_DIRECTORY)):
-        return false
-    for filename in MAP_NAMES:
-        var path := MAP_DIRECTORY.path_join(filename)
-        if not ResourceLoader.exists(path):
-            continue
-        var resource := load(path)
-        if resource is PackedScene:
-            var instance := (resource as PackedScene).instantiate()
-            if not instance is Node3D:
-                instance.queue_free()
+func _dress_map(node: Node) -> void:
+    if node is MeshInstance3D:
+        var mesh_node := node as MeshInstance3D
+        mesh_node.layers = 2
+        for surface in mesh_node.mesh.get_surface_count():
+            var original := mesh_node.get_active_material(surface) as StandardMaterial3D
+            if original == null:
                 continue
-            imported_map = instance as Node3D
-            add_child(imported_map)
-            map_source = path
-            _apply_scene_materials(imported_map)
-            return true
-    return false
-
-func _apply_scene_materials(node: Node) -> void:
+            # Keep imported glass/foliage transparency and all atlas UVs intact.
+            if original.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+                continue
+            var material := ShaderMaterial.new()
+            material.shader = MAP_SHADER
+            material.set_shader_parameter("base_color", original.albedo_color)
+            if node.name == "Plane_009":
+                material.set_shader_parameter("surface_roughness", 0.24)
+                material.set_shader_parameter("surface_specular", 0.75)
+            elif node.name in TABLE_MESHES or node.name in ["Plane_023", "Cube_003"]:
+                material.set_shader_parameter("surface_roughness", 0.16)
+                material.set_shader_parameter("surface_specular", 0.9)
+            material.set_shader_parameter("has_texture", original.albedo_texture != null)
+            if original.albedo_texture:
+                material.set_shader_parameter("albedo_texture", original.albedo_texture)
+                textured_surfaces += 1
+            mesh_node.set_surface_override_material(surface, material)
+            # Circle_001..010 are the imported pendant bulbs. The EMIT surface
+            # vertices, rather than the cord/shade AABB, locate the actual bulb.
+            if String(node.name).begins_with("Circle_") and int(String(node.name).get_slice("_", 1)) <= 10 and original.resource_name.ends_with(".EMIT"):
+                material.set_shader_parameter("bulb_emission", 1.8)
+                var arrays := mesh_node.mesh.surface_get_arrays(surface)
+                var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+                var center := Vector3.ZERO
+                for vertex in vertices:
+                    center += vertex
+                center = mesh_node.global_transform * (center / maxf(vertices.size(), 1))
+                fixture_points.append(center)
+                _pool_light(center, "Bulb_" + String(node.name), 0.85, 3.5)
+                _fixture_flame(center)
     for child in node.get_children():
-        if child is MeshInstance3D:
-            var mesh_node := child as MeshInstance3D
-            # Preserve imported textures/materials. The toon shader is used
-            # by the procedural fallback; imported art remains artist-owned.
-            mesh_node.set_meta("scene_map_mesh", true)
-        _apply_scene_materials(child)
+        _dress_map(child)
 
-func _toon(color: Color, emission: Color = Color.BLACK) -> ShaderMaterial:
+func _fixture_flame(at: Vector3) -> void:
+    var flame := MeshInstance3D.new()
+    flame.name = "WhiteBulbFlame_%02d" % fixture_points.size()
+    var quad := QuadMesh.new()
+    quad.size = Vector2(0.075, 0.12)
+    flame.mesh = quad
+    # A slight downward lift clears the opaque bulb surface for the tiny lick.
+    flame.position = at + Vector3.DOWN * 0.09
     var material := ShaderMaterial.new()
-    material.shader = TOON_SHADER
-    material.set_shader_parameter("base_color", color)
-    material.set_shader_parameter("emission_color", emission)
-    material.set_shader_parameter("emission_strength", 0.0 if emission == Color.BLACK else 0.35)
-    return material
+    material.shader = FLAME_SHADER
+    flame.material_override = material
+    flame.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+    add_child(flame)
+    var sparks := CPUParticles3D.new()
+    sparks.name = "WhiteFireParticles_%02d" % fixture_points.size()
+    sparks.position = flame.position
+    sparks.amount = 5
+    sparks.lifetime = 0.55
+    sparks.preprocess = 0.55
+    sparks.gravity = Vector3(0.0, 0.045, 0.0)
+    sparks.direction = Vector3.UP
+    sparks.spread = 12.0
+    sparks.initial_velocity_min = 0.015
+    sparks.initial_velocity_max = 0.04
+    sparks.scale_amount_min = 0.18
+    sparks.scale_amount_max = 0.35
+    sparks.mesh = quad.duplicate()
+    sparks.mesh.material = material
+    add_child(sparks)
+    var dust := CPUParticles3D.new()
+    dust.name = "SparseDust_%02d" % fixture_points.size()
+    dust.position = at + Vector3.DOWN * 1.0
+    dust.amount = 8
+    dust.lifetime = 12.0
+    dust.preprocess = 12.0
+    dust.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+    dust.emission_box_extents = Vector3(0.5, 0.85, 0.5)
+    dust.gravity = Vector3(0.0, 0.006, 0.0)
+    dust.initial_velocity_min = 0.008
+    dust.initial_velocity_max = 0.018
+    dust.scale_amount_min = 0.003
+    dust.scale_amount_max = 0.007
+    var mote := SphereMesh.new()
+    mote.radius = 0.5
+    mote.height = 1.0
+    mote.radial_segments = 4
+    mote.rings = 2
+    var dust_material := StandardMaterial3D.new()
+    dust_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+    dust_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+    dust_material.albedo_color = Color(0.65, 0.65, 0.65, 0.045)
+    mote.material = dust_material
+    dust.mesh = mote
+    add_child(dust)
 
-func _box(size: Vector3, at: Vector3, color: Color, collision := false) -> MeshInstance3D:
-    var node := MeshInstance3D.new()
-    var mesh := BoxMesh.new()
-    mesh.size = size
-    node.mesh = mesh
-    node.position = at
-    node.material_override = _toon(color)
-    add_child(node)
-    if collision:
-        _surface_collision(size, at, node.name + "Surface")
-    return node
+func _find_mesh(node: Node, mesh_name: String) -> MeshInstance3D:
+    if node is MeshInstance3D and node.name == mesh_name:
+        return node as MeshInstance3D
+    for child in node.get_children():
+        var found := _find_mesh(child, mesh_name)
+        if found:
+            return found
+    return null
 
-func _surface_collision(size: Vector3, at: Vector3, surface_name: String) -> StaticBody3D:
+func _world_box(mesh_node: MeshInstance3D) -> AABB:
+    var local := mesh_node.mesh.get_aabb()
+    var box := AABB(mesh_node.global_transform * local.position, Vector3.ZERO)
+    for x in [local.position.x, local.end.x]:
+        for y in [local.position.y, local.end.y]:
+            for z in [local.position.z, local.end.z]:
+                box = box.expand(mesh_node.global_transform * Vector3(x, y, z))
+    return box
+
+func _build_furniture(node: Node) -> void:
+    if node is MeshInstance3D:
+        var mesh_node := node as MeshInstance3D
+        var box := _world_box(mesh_node)
+        # Imported booths, counter and tables: collide with the actual occupied footprint.
+        if node.name in TABLE_MESHES or node.name == "Cube_003":
+            _surface_collision(Vector3(box.size.x, maxf(box.size.y, 0.08), box.size.z), box.get_center(), node.name + "Surface")
+        if node.name in STOOL_MESHES or node.name in BOOTH_MESHES:
+            var seat_height := box.end.y if node.name in STOOL_MESHES else box.position.y + 0.47
+            _surface_collision(Vector3(box.size.x, seat_height - floor_y, box.size.z), Vector3(box.get_center().x, (floor_y + seat_height) * 0.5, box.get_center().z), node.name + "SeatSurface")
+            var point := Marker3D.new()
+            point.name = "SeatPoint_%02d" % seat_points.size()
+            point.position = Vector3(box.get_center().x, seat_height, box.get_center().z)
+            point.set_meta("seat_group", String(node.name))
+            point.set_meta("seat_index", seat_points.size())
+            point.set_meta("interactable", true)
+            point.set_meta("movable", true)
+            point.set_meta("target_kind", "seat")
+            point.set_meta("seat_height", point.position.y)
+            point.set_meta("reach_radius", 0.72)
+            add_child(point)
+            seat_points.append(point)
+    for child in node.get_children():
+        _build_furniture(child)
+
+func _surface_collision(size: Vector3, at: Vector3, surface_name: String) -> void:
     var body := StaticBody3D.new()
     body.name = surface_name
     body.collision_layer = 1
-    body.collision_mask = 1
     body.position = at
     body.set_meta("room_surface", true)
+    body.set_meta("walkable", surface_name == "FloorSurface")
     var shape := CollisionShape3D.new()
     var box := BoxShape3D.new()
     box.size = size
@@ -93,200 +219,98 @@ func _surface_collision(size: Vector3, at: Vector3, surface_name: String) -> Sta
     body.add_child(shape)
     add_child(body)
     collision_bodies.append(body)
-    return body
 
-func _build_collision_surfaces() -> void:
-    # A low, explicit collision shell works with imported scenes and prevents
-    # a book from falling through maps whose FBX importer has no colliders.
-    _surface_collision(Vector3(12.0, 0.12, 10.0), Vector3(0, -0.06, 0), "FloorSurface")
-    _surface_collision(Vector3(12.0, 3.6, 0.12), Vector3(0, 1.8, 5.0), "BackWallSurface")
-    _surface_collision(Vector3(0.12, 3.6, 10.0), Vector3(-6.0, 1.8, 0), "LeftWallSurface")
-    _surface_collision(Vector3(0.12, 3.6, 10.0), Vector3(6.0, 1.8, 0), "RightWallSurface")
-    _surface_collision(Vector3(12.0, 0.12, 10.0), Vector3(0, 3.7, 0), "CeilingSurface")
-
-func _build_bar_fallback() -> void:
-    # The fallback is intentionally low-poly and instancing-friendly for Quest.
-    _box(Vector3(12, 0.08, 10), Vector3(0, -0.045, 0), Color("21171a"))
-    _box(Vector3(12, 3.6, 0.12), Vector3(0, 1.8, 5), Color("151116"))
-    _box(Vector3(0.12, 3.6, 10), Vector3(-6, 1.8, 0), Color("1b161b"))
-    _box(Vector3(0.12, 3.6, 10), Vector3(6, 1.8, 0), Color("1b161b"))
-    var backer := _box(Vector3(8.8, 2.5, 0.08), Vector3(0, 1.55, 4.91), Color("24161b"))
-    backer.material_override = _post_material(Color("24161b"))
-
-    # Back bar and shelves.
-    _box(Vector3(5.8, 1.0, 0.72), Vector3(0, 0.55, 3.65), Color("39211b"), true)
-    _box(Vector3(5.8, 0.10, 0.88), Vector3(0, 1.10, 3.65), Color("6c3f29"), true)
-    for shelf_y in [1.65, 2.25, 2.85]:
-        _box(Vector3(5.4, 0.07, 0.42), Vector3(0, shelf_y, 4.20), Color("47261e"), true)
-    for x in [-2.1, -1.4, -0.7, 0.0, 0.7, 1.4, 2.1]:
-        _bottle(Vector3(x, 1.38 + fmod(absf(x), 0.3), 4.02))
-
-    # A single soft bar pool keeps the shelves readable without flooding the room.
-    _pool_light(Vector3(0, 3.15, 3.15), "BarPoolLight", 1.75, 4.1, 76.0)
-    _light_shaft(Vector3(0, 3.52, 3.15), 2.25, 0.58, Color("e39a5f"), 0.055)
-    _fixture(Vector3(0, 3.46, 3.15), Vector3(0.34, 0.07, 0.34))
-
-    # Reader-friendly tables and two-person seating groups.
-    _table(Vector3(-3.4, 0, -1.15), 2)
-    _table(Vector3(0.0, 0, -1.15), 2)
-    _table(Vector3(3.4, 0, -1.15), 2)
-    _table(Vector3(-2.0, 0, -3.65), 2)
-    _table(Vector3(2.0, 0, -3.65), 2)
-
-    # A small fireplace gives the fallback the supplied bar-map focal point.
-    _box(Vector3(1.65, 1.2, 0.30), Vector3(-4.6, 0.62, 3.92), Color("241217"), true)
-    _box(Vector3(1.15, 0.72, 0.08), Vector3(-4.6, 1.34, 3.74), Color("65351f"))
-    var flame := MeshInstance3D.new()
-    var flame_mesh := SphereMesh.new()
-    flame_mesh.radius = 0.35
-    flame_mesh.height = 0.86
-    flame.mesh = flame_mesh
-    flame.position = Vector3(-4.6, 0.92, 3.70)
-    var fire_material := ShaderMaterial.new()
-    fire_material.shader = FIRE_SHADER
-    fire_material.set_shader_parameter("fire_color", Color("ff7a24"))
-    fire_material.set_shader_parameter("glow_color", Color("ffd36a"))
-    flame.material_override = fire_material
-    add_child(flame)
-
-    var ceiling := _box(Vector3(12, 0.08, 10), Vector3(0, 3.65, 0), Color("0b090c"))
-    ceiling.material_override = _toon(Color("0b090c"), Color("030204"))
-    var light := OmniLight3D.new()
-    light.position = Vector3(-4.6, 1.3, 3.0)
-    light.light_color = Color("ff9b55")
-    light.light_energy = 1.35
-    light.omni_range = 4.2
-    light.shadow_enabled = false
-    add_child(light)
-    var sun := DirectionalLight3D.new()
-    sun.rotation_degrees = Vector3(-52, -25, 0)
-    sun.light_energy = 0.14
-    sun.light_color = Color("817781")
-    sun.shadow_enabled = false
-    add_child(sun)
-
-func _build_imported_seat_points() -> void:
-    # The asset is allowed to provide its own art, but interaction points stay
-    # deterministic so the reader can offer seating even when FBX metadata is
-    # incomplete. These points match the fallback bar's table layout.
-    for at in [Vector3(-3.4, 0, -1.15), Vector3(0.0, 0, -1.15), Vector3(3.4, 0, -1.15), Vector3(-2.0, 0, -3.65), Vector3(2.0, 0, -3.65)]:
-        var group := "ImportedSeatGroup_%s" % str(seat_points.size())
-        _seat_point(group, at + Vector3(-0.58, 0.46, -0.95), Vector3(0, 0, 1))
-        _seat_point(group, at + Vector3(0.58, 0.46, -0.95), Vector3(0, 0, 1))
-
-func _post_material(color: Color) -> ShaderMaterial:
-    var material := ShaderMaterial.new()
-    material.shader = POST_SHADER
-    material.set_shader_parameter("tint", color)
-    material.set_shader_parameter("grain_strength", 0.035)
-    return material
-
-func _bottle(at: Vector3) -> void:
-    var bottle := MeshInstance3D.new()
-    var mesh := CylinderMesh.new()
-    mesh.top_radius = 0.055
-    mesh.bottom_radius = 0.09
-    mesh.height = 0.36
-    bottle.mesh = mesh
-    bottle.position = at
-    bottle.material_override = _toon(Color(0.10 + fmod(absf(at.x), 0.16), 0.18, 0.14))
-    add_child(bottle)
-
-func _table(at: Vector3, people: int) -> void:
-    _box(Vector3(1.55, 0.10, 0.90), at + Vector3.UP * 0.86, Color("3b211b"), true)
-    for offset in [Vector3(-0.58, 0.42, -0.28), Vector3(0.58, 0.42, -0.28), Vector3(0, 0.42, 0.28)]:
-        _box(Vector3(0.10, 0.82, 0.10), at + offset, Color("1a1114"), true)
-    var group := "SeatGroup_%s" % str(seat_points.size())
-    _seat_point(group, at + Vector3(-0.58, 0.46, -0.95), Vector3(0, 0, 1))
-    _seat_point(group, at + Vector3(0.58, 0.46, -0.95), Vector3(0, 0, 1))
-    if people > 2:
-        _seat_point(group, at + Vector3(0, 0.46, 0.78), Vector3(0, 0, -1))
-    _pool_light(at + Vector3(0, 2.82, 0), "TablePoolLight_%02d" % seat_points.size(), 1.15, 3.25, 58.0)
-    _light_shaft(at + Vector3(0, 3.50, 0), 2.30, 0.52, Color("d68d58"), 0.040)
-    _fixture(at + Vector3(0, 3.45, 0), Vector3(0.26, 0.06, 0.26))
-
-func _pool_light(at: Vector3, light_name: String, energy: float, light_range: float, angle: float) -> void:
+func _pool_light(at: Vector3, light_name: String, energy: float, light_range: float) -> void:
     var light := SpotLight3D.new()
     light.name = light_name
     light.position = at
-    light.rotation_degrees = Vector3(-90, 0, 0)
-    light.light_color = Color("f0a66a")
+    light.rotation_degrees.x = -90
+    light.light_color = Color("d7c7b5")
     light.light_energy = energy
+    light.light_cull_mask = 2
     light.spot_range = light_range
-    light.spot_angle = angle
-    light.spot_angle_attenuation = 1.4
+    light.spot_angle = 62.0
     light.shadow_enabled = false
     add_child(light)
-
-func _light_shaft(at: Vector3, height: float, radius: float, color: Color, opacity: float) -> void:
     var shaft := MeshInstance3D.new()
+    shaft.name = light_name + "Godrays"
     var mesh := CylinderMesh.new()
-    mesh.top_radius = radius * 0.22
-    mesh.bottom_radius = radius
-    mesh.height = height
-    mesh.radial_segments = 8
+    mesh.top_radius = 0.12
+    mesh.bottom_radius = 0.65
+    mesh.height = 2.7
     shaft.mesh = mesh
-    shaft.position = at + Vector3.DOWN * height * 0.5
+    shaft.position = at + Vector3.DOWN * 1.35
     var material := ShaderMaterial.new()
     material.shader = SHAFT_SHADER
-    material.set_shader_parameter("tint", color)
-    material.set_shader_parameter("opacity", opacity)
-    material.set_shader_parameter("emission_strength", 0.7)
+    material.set_shader_parameter("tint", Color("d7c7b5"))
+    material.set_shader_parameter("opacity", 0.48)
     shaft.material_override = material
     shaft.set_meta("volumetric_light_shaft", true)
+    shaft.set_meta("bulb_position", at)
+    shaft.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
     add_child(shaft)
+    _fit_light_shaft.call_deferred(shaft)
 
-func _fixture(at: Vector3, size: Vector3) -> void:
-    var fixture := _box(size, at, Color("241713"))
-    fixture.material_override = _toon(Color("241713"), Color("d77b3f"))
+func _fit_light_shaft(shaft: MeshInstance3D) -> void:
+    await get_tree().physics_frame
+    if not is_instance_valid(shaft): return
+    var at: Vector3 = shaft.get_meta("bulb_position")
+    var query := PhysicsRayQueryParameters3D.create(at + Vector3.DOWN * 0.02, Vector3(at.x, floor_y - 0.1, at.z))
+    query.collision_mask = 1
+    var hit := get_world_3d().direct_space_state.intersect_ray(query)
+    var end_y := float(hit.position.y) if not hit.is_empty() else floor_y
+    var beam_height := maxf(0.05, at.y - end_y - 0.015)
+    (shaft.mesh as CylinderMesh).height = beam_height
+    shaft.position = at + Vector3.DOWN * beam_height * 0.5
+    shaft.material_override.set_shader_parameter("height", beam_height)
 
-func _seat_point(group: String, at: Vector3, facing: Vector3) -> void:
-    _box(Vector3(0.68, 0.12, 0.60), at + Vector3.DOWN * 0.16, Color("2b181b"), true)
-    var point := Marker3D.new()
-    point.name = "SeatPoint_%02d" % seat_points.size()
-    point.position = at
-    point.rotation.y = atan2(facing.x, facing.z)
-    point.set_meta("seat_group", group)
-    point.set_meta("seat_index", seat_points.size())
-    point.set_meta("interactable", true)
-    point.set_meta("movable", true)
-    add_child(point)
-    seat_points.append(point)
-    # A small interaction volume makes seat points discoverable by future
-    # locomotion/comfort flows without making them physical obstacles.
-    var area := Area3D.new()
-    area.name = point.name + "Interaction"
-    area.collision_layer = 2
-    area.collision_mask = 2
-    area.position = at
-    area.set_meta("seat_point", point)
-    var shape := CollisionShape3D.new()
-    var sphere := SphereShape3D.new()
-    sphere.radius = 0.28
-    shape.shape = sphere
-    area.add_child(shape)
-    add_child(area)
+func _build_counter_lighting() -> void:
+    # The supplied model's long glass/counter run is around x=2.7, z=4 after
+    # the model offset. Give it a broad, shadow-casting wash so the worktop and
+    # bottles read as the visual focal point instead of disappearing into the
+    # global noir exposure.
+    for index in range(3):
+        var light := SpotLight3D.new()
+        light.name = "CounterWash_%02d" % index
+        light.position = Vector3(2.55 + float(index) * 0.42, 3.15, 3.8)
+        light.rotation_degrees = Vector3(-90, 0, 0)
+        light.light_color = Color("ffd7ae")
+        light.light_energy = 2.15
+        light.light_cull_mask = 2
+        light.spot_range = 5.5
+        light.spot_angle = 54.0
+        light.spot_angle_attenuation = 1.0
+        light.shadow_enabled = index == 1
+        add_child(light)
+    var counter_glow := OmniLight3D.new()
+    counter_glow.name = "CounterBounce"
+    counter_glow.position = Vector3(2.8, 1.55, 3.15)
+    counter_glow.light_color = Color("d9986d")
+    counter_glow.light_energy = 0.78
+    counter_glow.light_cull_mask = 2
+    counter_glow.omni_range = 3.8
+    add_child(counter_glow)
 
 func resolve_book_transform(book: Node3D) -> void:
-    if not is_instance_valid(book) or not book.visible:
+    if not is_instance_valid(book) or not book.visible or map_source.is_empty():
         return
     var position := book.global_position
-    # Prefer the real room physics shell so a released book can rest on the
-    # floor, a table, or a seat. The bounds fallback also works in headless
-    # tests and before the physics world has completed its first frame.
     var world := get_world_3d()
     if world:
-        var space := world.direct_space_state
         var query := PhysicsRayQueryParameters3D.create(position + Vector3.UP * 0.25, position - Vector3.UP * 2.0)
         query.collision_mask = 1
-        var hit := space.intersect_ray(query)
+        var hit := world.direct_space_state.intersect_ray(query)
         if not hit.is_empty():
             position.y = maxf(position.y, float(hit.position.y) + 0.075)
-    # SpatialBook is a thin object; keep its center just above the floor.
     position.y = maxf(position.y, floor_y + 0.075)
     position.x = clampf(position.x, bounds.position.x + 0.18, bounds.end.x - 0.18)
     position.z = clampf(position.z, bounds.position.y + 0.18, bounds.end.y - 0.18)
     book.global_position = position
 
 func get_seat_points() -> Array[Node3D]:
+    return seat_points
+
+func get_locomotion_targets() -> Array[Node3D]:
+    # Keep target discovery owned by the imported room. This avoids guessing
+    # furniture positions in the reader and makes the circles follow the real map.
     return seat_points
