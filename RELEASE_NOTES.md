@@ -1,4 +1,6 @@
-# Questium v1.0.0
+# Questium v1.0.1 — Slight minor update
+
+- Remove the 32 MiB hard limit from Questium Sync payloads; larger libraries can sync within the wire protocol's framing limits.
 
 - Merge Houri v1.23.13–v1.23.14: source-grid placeholders, retained cover fixes, reader preload/cache bounds, and WebGPU reader maintenance.
 
