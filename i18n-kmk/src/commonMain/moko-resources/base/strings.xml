@@ -842,4 +842,5 @@
     <string name="questium_update_wrong_package">This APK does not match the installed Questium variant.</string>
     <string name="questium_update_wrong_signature">This build uses a different signing key. Install an update signed for your current build.</string>
     <string name="questium_update_failed">Update failed: %1$s. You can retry or continue reading.</string>
+    <string name="questium_sync_to_main_device">Sync to main device</string>
 </resources>
