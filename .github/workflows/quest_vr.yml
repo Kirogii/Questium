@@ -176,8 +176,8 @@ jobs:
           printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
           "$SIGNER" sign --v4-signing-enabled false --ks "$KEYSTORE" --ks-key-alias "$SIGNING_KEY_ALIAS" --ks-pass env:SIGNING_STORE_PASSWORD --key-pass env:SIGNING_KEY_PASSWORD --out "signed/$FINAL" "input/$INPUT"
           "$SIGNER" verify --verbose --print-certs "signed/$FINAL"
-          OLD_CERT=$("$SIGNER" verify --print-certs 'previous/VR-Tachiyomi-alpha.apk' | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-          NEW_CERT=$("$SIGNER" verify --print-certs "signed/$FINAL" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          OLD_CERT=$("$SIGNER" verify --print-certs 'previous/VR-Tachiyomi-alpha.apk' | awk '/certificate SHA-256 digest:/ && !found {print $NF; found=1}')
+          NEW_CERT=$("$SIGNER" verify --print-certs "signed/$FINAL" | awk '/certificate SHA-256 digest:/ && !found {print $NF; found=1}')
           test -n "$OLD_CERT"
           test "$OLD_CERT" = "$NEW_CERT"
           echo "Signing certificate matches the published release: $NEW_CERT"
