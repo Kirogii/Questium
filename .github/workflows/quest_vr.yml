@@ -181,6 +181,8 @@ jobs:
           test -n "$OLD_CERT"
           test "$OLD_CERT" = "$NEW_CERT"
           echo "Signing certificate matches the published release: $NEW_CERT"
-          (cd signed && sha256sum "$FINAL" > SHA256SUMS.txt)
-          gh release upload "$TAG" "signed/$FINAL" signed/SHA256SUMS.txt --clobber
+          # Existing no-MTL installations select this legacy asset name.
+          cp "signed/$FINAL" signed/VR-Tachiyomi-alpha.apk
+          (cd signed && sha256sum "$FINAL" VR-Tachiyomi-alpha.apk > SHA256SUMS.txt)
+          gh release upload "$TAG" "signed/$FINAL" signed/VR-Tachiyomi-alpha.apk signed/SHA256SUMS.txt --clobber
           gh release delete-asset "$TAG" "$INPUT" --yes
