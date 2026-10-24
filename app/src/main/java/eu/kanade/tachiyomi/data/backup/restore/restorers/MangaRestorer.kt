@@ -122,6 +122,30 @@ class MangaRestorer(
         }
     }
 
+    // KMK -->
+    /** Apply only library membership and reading history; all other device data stays local. */
+    suspend fun restoreReadingSync(entry: BackupManga, preserveFavorite: Boolean) {
+        handler.await(inTransaction = true) {
+            val existing = findExistingManga(entry)
+            val manga = existing ?: restoreNewManga(entry.getMangaImpl())
+            if (!preserveFavorite && manga.favorite != entry.favorite) {
+                updateManga(manga.copy(favorite = entry.favorite))
+            }
+            val chapters = getChaptersByMangaId.await(manga.id).associateBy { it.url }
+            val updates = entry.chapters.map { incoming ->
+                val old = chapters[incoming.url]
+                old?.copy(read = incoming.read, lastPageRead = incoming.lastPageRead)
+                    ?: incoming.toChapterImpl().copy(mangaId = manga.id)
+            }
+            insertNewChapters(updates.filter { it.id <= 0 })
+            updateExistingChapters(updates.filter { it.id > 0 })
+            restoreHistory(manga, entry.history)
+            mangasQueries.resetIsSyncing()
+            chaptersQueries.resetIsSyncing()
+        }
+    }
+    // KMK <--
+
     private suspend fun findExistingManga(backupManga: BackupManga): Manga? {
         return getMangaByUrlAndSourceId.await(backupManga.url, backupManga.source)
     }

@@ -1,9 +1,11 @@
+val hostIsWindows: Boolean = System.getProperty("os.name").contains("Windows", ignoreCase = true)
+
 /**
  * Whether to compile the ggml Vulkan backend into `libllama_jni.so`.
  *
- * Defaults to **on**: MTL ships full AI, not a CPU-only subset, so the GPU path is part of
- * the normal build. It needs Vulkan-Hpp + SPIRV-Headers (which no Android SDK ships) and
- * compiles against API 29+, so the build host must provide them — run
+ * Defaults to CPU-only on Windows, using the Windows NDK without WSL. Other hosts default
+ * to Vulkan. GPU builds need Vulkan-Hpp + SPIRV-Headers (which no Android SDK ships) and
+ * compile against API 29+, so the build host must provide them — run
  * `llamatik-native/wsl-setup.sh` inside WSL once, or see
  * `llamatik-native/BUILD.md`.
  *
@@ -15,7 +17,9 @@ val gpuOffload: Boolean = (
         ?: providers.environmentVariable("MTL_GPU_OFFLOAD").orNull
     )
     ?.toBooleanStrictOrNull()
-    ?: true
+    ?: !hostIsWindows
+
+val useWsl: Boolean = hostIsWindows && gpuOffload
 
 /**
  * Optional Vulkan SDK root, e.g. `/opt/VulkanSDK/1.4.313`. Only needed with [gpuOffload]:
@@ -50,8 +54,7 @@ val spirvHeadersDir: String? = providers.gradleProperty("mtl.spirvHeadersDir").o
 /**
  * Which glslc to use *inside WSL*: `auto` (default), `wsl`, or `native`.
  *
- * Only consulted on the WSL build path. A Windows host never configures CMake itself any
- * more (see [hostIsWindows]), so the old cross-boundary glslc proxy is not used there.
+ * Windows Vulkan builds run CMake inside WSL; native CPU builds do not use glslc.
  */
 val vulkanToolchain: String = providers.gradleProperty("mtl.vulkanToolchain").orNull
     ?.takeIf { it.isNotBlank() }
@@ -71,21 +74,7 @@ val wslVulkanHeaders: String = providers.gradleProperty("mtl.wslVulkanHeaders").
     ?.takeIf { it.isNotBlank() }
     ?: "/opt/vulkan-headers"
 
-/**
- * WSL is the single path for Windows native builds — no MSYS2/Git Bash fallback, matching
- * `external/imagedecoder-houri`. Proxying individual tool invocations across the
- * Windows/WSL boundary is not viable here: ggml-vulkan shells out to glslc ~40 times per
- * ABI, and every one of those would pay a fresh VM round-trip. Worse, the Vulkan *headers*
- * cannot be proxied at all — a Windows `clang++.exe` cannot `#include` anything inside the
- * WSL root filesystem, so a partially-proxied build fails deep into compilation with
- * `'vulkan/vulkan.hpp' file not found`.
- *
- * So on Windows the whole configure+build runs inside WSL (see the `wslNativeBuild` task)
- * and AGP only packages the resulting `libllama_jni.so` from `jniLibs`. The Linux/WSL/CI
- * path is untouched and still uses AGP's own `externalNativeBuild`.
- */
-val hostIsWindows: Boolean = System.getProperty("os.name").contains("Windows", ignoreCase = true)
-
+// Windows Vulkan builds run entirely inside WSL; CPU builds use AGP's native NDK path.
 val nativeAbis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
 
 /**
@@ -97,9 +86,9 @@ val wslExe: File? = listOf(
     File("C:/Windows/Sysnative/wsl.exe"),
 ).firstOrNull { it.isFile }
 
-if (hostIsWindows && wslExe == null) {
+if (useWsl && wslExe == null) {
     throw GradleException(
-        "llamatik-native: WSL is required to build the native LLM runtime on Windows, and " +
+        "llamatik-native: WSL is required for the Vulkan LLM runtime on Windows, and " +
             "wsl.exe was not found in C:/Windows/System32 or C:/Windows/Sysnative.\n" +
             "WSL is the single supported path — there is deliberately no MSYS2/Git Bash " +
             "fallback, because the Vulkan headers live inside the WSL root filesystem and " +
@@ -115,21 +104,17 @@ plugins {
     id("mihon.library")
 }
 
-/**
- * Where the WSL build drops each `libllama_jni.so`.
- *
- * Deliberately the conventional `src/main/jniLibs/<abi>/` rather than a `build/` dir wired in
- * through `android.sourceSets`. AGP picks up `src/main/jniLibs` with no DSL at all, and the
- * `sourceSets` accessors throw
- * "DefaultAndroidLibrarySourceSet_Decorated cannot be cast to AndroidLibrarySourceSet"
- * (a classloader/decorator mismatch from a stale AGP jar in the Gradle cache) — there is no
- * reason to depend on that code path just to name a directory. It is gitignored.
- */
-val wslJniLibsDir = file("src/main/jniLibs")
+// Keep WSL staging separate from AGP outputs and legacy src/main/jniLibs files.
+val wslJniLibsDir = layout.buildDirectory.dir("generated/wslJniLibs").get().asFile
 
 android {
     namespace = "com.llamatik.library.platform"
     ndkVersion = "28.2.13676358"
+
+    // Never package old src/main/jniLibs outputs from a previous WSL build.
+    (sourceSets as org.gradle.api.NamedDomainObjectContainer<com.android.build.gradle.api.AndroidSourceSet>).named("main") {
+        jniLibs.setSrcDirs(if (useWsl) listOf(wslJniLibsDir) else emptyList<File>())
+    }
 
     buildFeatures {
         buildConfig = true
@@ -146,8 +131,8 @@ android {
         buildConfigField("boolean", "GPU_OFFLOAD_COMPILED_IN", gpuOffload.toString())
         consumerProguardFiles("consumer-rules.pro")
 
-        // Only the Linux-side path configures CMake through AGP.
-        if (!hostIsWindows) {
+        // Native CPU builds on Windows and all builds on other hosts use AGP CMake.
+        if (!useWsl) {
             externalNativeBuild {
                 cmake {
                     arguments += "-DHOURI_GPU_OFFLOAD=${if (gpuOffload) "ON" else "OFF"}"
@@ -169,7 +154,7 @@ android {
         }
     }
 
-    if (!hostIsWindows) {
+    if (!useWsl) {
         externalNativeBuild {
             cmake {
                 path = file("src/main/cpp/CMakeLists.txt")
@@ -179,7 +164,7 @@ android {
     }
 }
 
-// Runs the entire native build inside WSL, then leaves `src/main/jniLibs/<abi>/libllama_jni.so`
+// Runs explicit Windows Vulkan builds inside WSL, staging generated JNI libraries
 // for AGP to package. Only registered on a Windows host — on Linux/WSL/CI AGP's own
 // `externalNativeBuild` is used instead and this task does not exist.
 //
@@ -187,7 +172,7 @@ android {
 // but a no-change rebuild is just ninja's own up-to-date check (seconds) rather than the
 // ~20 minutes a from-scratch four-ABI Vulkan build costs. Gradle cannot track ninja's
 // in-place object updates, so trusting its own snapshot here would skip real work.
-if (hostIsWindows) {
+if (useWsl) {
     val wslNativeBuild = tasks.register("wslNativeBuild") {
         group = "build"
         description = "Builds libllama_jni.so for every ABI inside WSL (Windows host path)."

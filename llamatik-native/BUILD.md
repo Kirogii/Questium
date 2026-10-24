@@ -24,9 +24,19 @@ These are needed regardless of GPU offload.
 | JDK | 21 (CI), targeting JVM 17 |
 | Submodules | `git submodule update --init --recursive external/llamatik` |
 
-On top of that, GPU offload is on by default (§2), so a build host also needs
-`glslc`, Vulkan-Hpp and SPIRV-Headers — see §3 for the three apt packages, or
-`-Pmtl.gpuOffload=false` to build CPU-only without them.
+Windows defaults to a CPU-only runtime built by the Windows NDK and CMake without WSL.
+Other hosts default to Vulkan (§2), which additionally needs `glslc`, Vulkan-Hpp and
+SPIRV-Headers. `-Pmtl.gpuOffload=false` selects CPU-only on any host;
+`-Pmtl.gpuOffload=true` explicitly enables Vulkan (using WSL on Windows).
+
+```powershell
+.\gradlew.bat :llamatik-native:assembleDebug                     # Windows CPU default
+.\gradlew.bat :llamatik-native:assembleDebug -Pmtl.gpuOffload=false
+.\gradlew.bat :llamatik-native:assembleDebug -Pmtl.gpuOffload=true # WSL Vulkan opt-in
+```
+
+`MTL_GPU_OFFLOAD` provides the same override when the Gradle property is absent.
+This controls the GGUF LLM backend; MTL remains available with CPU inference.
 
 **Verified:** CPU-only configures, compiles and links with zero failures for all four ABIs
 at API 26; the Vulkan variant does so for the 64-bit ABIs at API 29. The linked
@@ -42,11 +52,10 @@ cross-compiling autotools/meson/pkg-config dependencies and is not needed here.
 
 ---
 
-## 2. GPU offload (Vulkan) — **on by default**
+## 2. GPU offload (Vulkan) — default on non-Windows hosts
 
-Houri ships full AI, not a CPU-only subset, so the Vulkan backend is compiled unless you
-opt out. On a machine with no Vulkan toolchain either install the packages in §3 or build
-with `-Pmtl.gpuOffload=false`.
+Vulkan is enabled by default on non-Windows hosts. Windows builds opt in with
+`-Pmtl.gpuOffload=true`. Without a Vulkan toolchain, use `-Pmtl.gpuOffload=false`.
 
 ### 2.1 What the Vulkan build needs that a plain NDK does not have
 
@@ -129,11 +138,11 @@ Resolution order — all native, no boundary crossing:
 bf16 shader features; a distro glslc avoids that, which is why `wsl-setup.sh`
 requires one.
 
-### 2.5 Windows hosts build the whole thing in WSL
+### 2.5 Windows Vulkan builds use WSL; CPU builds use the Windows NDK
 
-There is **no `wsl.exe` proxy** for glslc or anything else. A Windows Gradle build never runs
+There is **no `wsl.exe` proxy** for glslc or anything else. An explicitly enabled Windows Vulkan build never runs
 CMake: `llamatik-native/build.gradle.kts` registers a `wslNativeBuild` task that configures and
-compiles every ABI inside WSL, stages each `libllama_jni.so` into `src/main/jniLibs/<abi>/`,
+compiles every ABI inside WSL, stages each `libllama_jni.so` into `build/generated/wslJniLibs/<abi>/`,
 and lets AGP package them from `jniLibs`. On Linux/WSL/CI, AGP's normal `externalNativeBuild`
 is used instead and that task does not exist.
 
@@ -214,7 +223,7 @@ found on `PATH`.
 **Verified end to end** on Debian 13 / WSL2 / NDK r28c: configure clean, all 593 build steps
 succeed, `libllama_jni.so` links with 150 `ggml_vk`/`ggml_backend_vulkan` symbols.
 
-Because GPU offload is on by default, this is the setup the normal build needs.
+This setup is needed for Vulkan builds, including explicit Windows Vulkan builds.
 `wsl-setup.sh` automates exactly this: it checks the tools, clones the three
 repos and stages them into `/opt/vulkan-headers` (no `sudo` needed when that path is
 writable, and `MTL_VULKAN_HEADERS=~/vulkan-headers` avoids it entirely).
@@ -237,7 +246,7 @@ glslc, and the rest is auto-detected:
 
 | Property | Env fallback | Default | Meaning |
 |---|---|---|---|
-| `mtl.gpuOffload` | `MTL_GPU_OFFLOAD` | `true` | Compile the ggml Vulkan backend |
+| `mtl.gpuOffload` | `MTL_GPU_OFFLOAD` | `false` on Windows, `true` elsewhere | Compile the ggml Vulkan backend |
 | `mtl.vulkanToolchain` | — | `auto` | Which glslc to use *inside WSL*: `auto`, `wsl` or `native` |
 | `mtl.wslNdkDir` | — | `/usr/lib/android-sdk/ndk/28.2.13676358` | NDK used by the WSL build (must be the **Linux** NDK) |
 | `mtl.wslVulkanHeaders` | — | `/opt/vulkan-headers` | Staging root the WSL build passes as `MTL_VULKAN_INCLUDE_DIRS` when non-default |
@@ -252,7 +261,7 @@ When nothing is configured, CMake probes `/opt/vulkan-headers` (the location §3
 `wsl-setup.sh` create) for a directory containing both `vulkan/` and `vk_video/`, and requires
 one of them to actually provide `vulkan/vulkan.hpp`.
 
-The `mtl.wsl*` properties only matter on a **Windows** host, where the build is delegated to
+The `mtl.wsl*` properties only matter on a **Windows** host, when Vulkan is enabled and the build is delegated to
 WSL; on Linux/WSL/CI they are ignored.
 
 ---
@@ -311,7 +320,7 @@ ABIs is ~26 MB. The unstripped figures are dominated by debug info; AGP strips r
 ## 7. Verifying a build
 
 ```bash
-# default: Vulkan on the 64-bit ABIs, CPU-only on the 32-bit ones
+# non-Windows default / explicit Windows Vulkan: Vulkan on 64-bit ABIs, CPU on 32-bit
 ./gradlew :llamatik-native:assembleRelease
 
 # confirm the JNI surface
@@ -344,3 +353,7 @@ configured *and fully built* for `arm64-v8a`; CPU-only was fully built for `arme
 `x86_64`; all four ABIs were configured for the per-ABI gate in §2.6. A Windows host was
 confirmed to drive the whole build through WSL, but the Windows-side Gradle task itself was
 exercised by the project owner rather than in the environment above.
+
+Windows CPU builds ignore legacy `src/main/jniLibs` files. WSL Vulkan outputs are staged
+under `build/generated/wslJniLibs` and packaged only in WSL mode, preventing stale GPU
+libraries from colliding with native CPU outputs.

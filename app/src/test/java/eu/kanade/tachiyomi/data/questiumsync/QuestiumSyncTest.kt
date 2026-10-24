@@ -29,6 +29,80 @@ class QuestiumSyncTest {
     }
 
     @Test
+    fun `only main library and explicit additions share secondary membership`() {
+        val key = "1|/book"
+        SyncState().sharesLibrary(key, false) shouldBe false
+        SyncState().sharesLibrary(key, true) shouldBe true
+        SyncState(knownBooks = setOf(key)).sharesLibrary(key, false) shouldBe true
+        SyncState(libraryAdditions = setOf(key)).sharesLibrary(key, false) shouldBe true
+        SyncState(knownBooks = setOf(key), localOnlyBooks = setOf(key)).sharesLibrary(key, false) shouldBe false
+        SyncState(libraryAdditions = setOf(key), localOnlyBooks = setOf(key)).sharesLibrary(key, false) shouldBe false
+    }
+
+    @Test
+    fun `history at page zero is retained without library membership`() {
+        val manga = library(0).backup.backupManga.single().apply {
+            favorite = false
+            history = listOf(eu.kanade.tachiyomi.data.backup.models.BackupHistory("/chapter/20", 1000))
+        }
+        val compact = SyncMerge.compact(manga)
+        compact.favorite shouldBe false
+        compact.chapters.single().url shouldBe "/chapter/20"
+        SyncMerge.resume(compact) shouldBe 20f
+    }
+
+    @Test
+    fun `sync payload contains only identity membership and reading progress`() {
+        val original = library(10).backup.backupManga.single().apply {
+            notes = "private note"
+            viewer_flags = 123
+            description = "description"
+            chapters[0].bookmark = true
+        }
+        val compact = SyncMerge.compact(original, favorite = false)
+        compact.favorite shouldBe false
+        compact.notes shouldBe ""
+        compact.viewer_flags shouldBe null
+        compact.description shouldBe null
+        compact.chapters.size shouldBe 10
+        compact.chapters.any { it.bookmark } shouldBe false
+        SyncMerge.highest(compact) shouldBe 10f
+    }
+
+    @Test
+    fun `local only library addition shares history without adding to main library`() {
+        val remote = library(20)
+        remote.backup.backupManga.single().favorite = false
+        val result = SyncMerge.merge(SyncLibrary(Backup(emptyList())), listOf(remote)).backup.backupManga.single()
+        result.favorite shouldBe false
+        SyncMerge.highest(result) shouldBe 20f
+    }
+
+    @Test
+    fun `opted in library addition promotes existing history on main`() {
+        val main = library(10)
+        main.backup.backupManga.single().favorite = false
+        SyncMerge.merge(main, listOf(library(20))).backup.backupManga.single().favorite shouldBe true
+    }
+
+    @Test
+    fun `compressed protocol accepts transfers larger than five megabytes`() {
+        val random = ByteArray(6 * 1024 * 1024).also(java.util.Random(123)::nextBytes)
+        val title = java.util.Base64.getEncoder().encodeToString(random)
+        ServerSocket(0).use { server ->
+            val key = SyncWire.secret()
+            val reply = CompletableFuture.runAsync {
+                server.accept().use { socket ->
+                    SyncWire.serve(socket, { key }) { SyncMessage(library = library(20, title)) }
+                }
+            }
+            val response = SyncWire.call(SyncPeer("server", "Main", "127.0.0.1", server.localPort, key), SyncMessage("snapshot", id = "device"))
+            response.library!!.backup.backupManga.single().title shouldBe title
+            reply.get(30, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
     fun `main metadata wins while Quest chapter 20 advances phone chapter 10 without changing inputs`() {
         val main = library(10)
         val quest = library(20, "Different title")
@@ -107,7 +181,9 @@ class QuestiumSyncTest {
         val remote = library(20)
         val key = SyncMerge.key(remote.backup.backupManga.single())
         val main = SyncLibrary(Backup(emptyList()), removed = setOf(key))
-        SyncMerge.merge(main, listOf(remote)).backup.backupManga.isEmpty() shouldBe true
+        val merged = SyncMerge.merge(main, listOf(remote)).backup.backupManga.single()
+        merged.favorite shouldBe false
+        SyncMerge.highest(merged) shouldBe 20f
     }
 
     @Test

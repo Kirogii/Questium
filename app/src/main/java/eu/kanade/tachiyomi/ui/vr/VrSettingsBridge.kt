@@ -6,6 +6,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.inspector.WindowInspector
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.requiredSize
@@ -16,6 +17,7 @@ import androidx.compose.runtime.Recomposer
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.Modifier
@@ -25,10 +27,13 @@ import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsOwner
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
+import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.Navigator
+import cafe.adriel.voyager.navigator.tab.TabNavigator
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.filterVisible
 import eu.kanade.presentation.more.settings.isInteractive
@@ -53,8 +58,9 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
     private var view: ComposeView? = null
     private var navigator: Navigator? = null
     private var revision by mutableIntStateOf(0)
+    private var backendScreen by mutableStateOf("")
+    private var pendingFilter = false
     private val controls = mutableMapOf<String, Preference.PreferenceItem<*, *>>()
-    private val androidOnlyControls = mutableSetOf<String>()
     private var lastSnapshot = ""
     private var detailSnapshot = ""
     private var inspector: Job? = null
@@ -68,8 +74,42 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
         attach()
         when (request.getString("action")) {
             "settings" -> {
+                backendScreen = ""
                 val selected = request.optInt("category", 0).coerceIn(screens.indices)
                 navigator?.replaceAll(screens[selected])
+                revision++
+            }
+            "backend_screen" -> {
+                val destination = request.optString("screen", "more")
+                val screen = VrBackendScreen.create(
+                    destination,
+                    host,
+                    request.optString("source").toLongOrNull(),
+                    request.optString("query", ""),
+                    request.optString("filters_json").takeIf { it.isNotEmpty() },
+                )
+                pendingFilter = request.optBoolean("open_filter", false)
+                if (screen == null) {
+                    send(
+                        JSONObject().put("kind", "settings_detail").put("scope", "backend")
+                            .put("screen", destination).put("title", destination).put("items", JSONArray())
+                            .put("error", "Unknown backend screen"),
+                    )
+                    return@withContext
+                }
+                backendScreen = destination
+                controls.clear()
+                semanticControls.clear()
+                detailSnapshot = ""
+                navigator?.replaceAll(screen)
+                revision++
+            }
+            "backend_close" -> {
+                pendingFilter = false
+                backendScreen = ""
+                navigator?.replaceAll(screens.first())
+                semanticControls.clear()
+                detailSnapshot = ""
                 revision++
             }
             "setting" -> {
@@ -79,7 +119,6 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                     return@withContext
                 }
                 val item = controls[request.getString("id")] ?: return@withContext
-                if (request.getString("id") in androidOnlyControls) return@withContext
                 if (!item.enabled) return@withContext
                 change(item, request)
                 // Keep the Godot scene toggle (and other shared reader
@@ -88,14 +127,12 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                 revision++
             }
             "settings_back" -> {
-                navigator?.pop()
+                if (dialogRoot != null) dismissDialog() else host.onBackPressedDispatcher.onBackPressed()
                 revision++
             }
             "settings_detail" -> publishDetails()
             "settings_dismiss" -> {
-                dialogRoot?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK))
-                dialogRoot?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
-                if (navigator?.lastItem !is SearchableSettings) navigator?.pop()
+                if (dialogRoot != null) dismissDialog() else host.onBackPressedDispatcher.onBackPressed()
                 revision++
             }
             "settings_semantic" -> {
@@ -109,10 +146,14 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                     return@withContext
                 }
                 val node = semanticControls[request.getString("id")] ?: return@withContext
+                if (node.config.getOrNull(SemanticsProperties.Disabled) != null) return@withContext
                 when (request.optString("type")) {
                     "text" -> node.config.getOrNull(SemanticsActions.SetText)?.action?.invoke(AnnotatedString(request.getString("value")))
                     "slider" -> node.config.getOrNull(SemanticsActions.SetProgress)?.action?.invoke(request.getDouble("value").toFloat())
-                    "scroll" -> node.config.getOrNull(SemanticsActions.ScrollBy)?.action?.invoke(0f, request.getDouble("value").toFloat())
+                    "scroll" -> node.config.getOrNull(SemanticsActions.ScrollBy)?.action?.invoke(request.optDouble("x", 0.0).toFloat(), request.optDouble("value", 0.0).toFloat())
+                    "long_click" -> node.config.getOrNull(SemanticsActions.OnLongClick)?.action?.invoke()
+                    "custom_action" -> node.config.getOrNull(SemanticsActions.CustomActions)?.getOrNull(request.optInt("index"))?.action?.invoke()
+                    "ime" -> node.config.getOrNull(SemanticsActions.OnImeAction)?.action?.invoke()
                     else -> node.config.getOrNull(SemanticsActions.OnClick)?.action?.invoke()
                 }
                 revision++
@@ -136,6 +177,12 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                 TachiyomiTheme {
                     Navigator(screens.first()) { nav ->
                         navigator = nav
+                        // Nested navigators and selection-mode BackHandlers get first
+                        // refusal. At a bridge root, Back must never finish VR.
+                        BackHandler {
+                            nav.pop()
+                            revision++
+                        }
                         CompositionLocalProvider(
                             LocalBackPress provides {
                                 nav.pop()
@@ -144,7 +191,7 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                         ) {
                             val version = revision
                             val screen = nav.lastItem
-                            if (screen is SearchableSettings) {
+                            if (screen is SearchableSettings && backendScreen.isEmpty()) {
                                 with(screen) { Row { AppBarAction() } }
                                 val categories = JSONArray()
                                 screens.forEachIndexed { index, category ->
@@ -179,7 +226,13 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                             } else if (screen !is eu.kanade.presentation.more.settings.screen.appearance.AppCustomThemeColorPickerScreen) {
                                 // Nested specialized screens retain their own state and actions.
                                 // The semantics adapter exports their controls into frosted VR cards.
-                                Column(Modifier.requiredSize(720.dp, 1000.dp)) { screen.Content() }
+                                Column(Modifier.requiredSize(720.dp, 1000.dp)) {
+                                    TabNavigator(tab = eu.kanade.tachiyomi.ui.library.LibraryTab) {
+                                        CompositionLocalProvider(LocalNavigator provides nav) {
+                                            nav.saveableState("vr-backend-${screen.key}", screen) { screen.Content() }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -235,35 +288,85 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                     )
                 }
         }
-        fun visit(node: SemanticsNode, prefix: String) {
+        fun visit(node: SemanticsNode, prefix: String, parent: String = "", depth: Int = 0) {
             val config = node.config
             val id = "$prefix/${node.id}"
             val text = config.getOrNull(SemanticsProperties.Text)?.joinToString(" ") { it.text }
                 ?: config.getOrNull(SemanticsProperties.ContentDescription)?.joinToString(" ").orEmpty()
             val click = config.getOrNull(SemanticsActions.OnClick)
+            val longClick = config.getOrNull(SemanticsActions.OnLongClick)
+            val custom = config.getOrNull(SemanticsActions.CustomActions).orEmpty()
             val edit = config.getOrNull(SemanticsActions.SetText)
             val progress = config.getOrNull(SemanticsProperties.ProgressBarRangeInfo)
             val scroll = config.getOrNull(SemanticsActions.ScrollBy)
-            if (click != null || edit != null || progress != null || scroll != null) {
+            val toggle = config.getOrNull(SemanticsProperties.ToggleableState)
+            val selected = config.getOrNull(SemanticsProperties.Selected)
+            val children = node.children
+            // The cog owns settings; More contains only the remaining actions.
+            val settingsTitle = tachiyomi.i18n.MR.strings.label_settings.getString(host)
+            if (backendScreen == "more" && click != null &&
+                (
+                    text.equals(settingsTitle, true) || children.any { child ->
+                        child.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text.equals(settingsTitle, true) }
+                    }
+                    )
+            ) {
+                return
+            }
+            val interactive = click != null || longClick != null || custom.isNotEmpty() || edit != null || scroll != null || config.getOrNull(SemanticsActions.SetProgress) != null
+            val structural = children.isNotEmpty() && !interactive && text.isBlank()
+            val emitted = interactive || progress != null || text.isNotBlank() || structural
+            if (emitted) {
                 val row = JSONObject().put("id", id).put("title", text.ifBlank { click?.label.orEmpty() })
                     .put("enabled", config.getOrNull(SemanticsProperties.Disabled) == null)
+                    .put("parent", parent).put("depth", depth).put("long_click", longClick != null)
+                    .put("heading", config.getOrNull(SemanticsProperties.Heading) != null)
+                val actions = JSONArray()
+                if (click != null) actions.put("action")
+                if (longClick != null) actions.put("long_click")
+                if (edit != null) actions.put("text")
+                if (config.getOrNull(SemanticsActions.SetProgress) != null) actions.put("slider")
+                if (scroll != null) actions.put("scroll")
+                if (config.getOrNull(SemanticsActions.OnImeAction) != null) actions.put("ime")
+                if (custom.isNotEmpty()) actions.put("custom_action")
+                row.put("actions", actions)
+                row.put(
+                    "custom_actions",
+                    JSONArray(
+                        custom.mapIndexed { index, action ->
+                            JSONObject().put("index", index).put("title", action.label)
+                        },
+                    ),
+                )
+                toggle?.let { row.put("checked", it == ToggleableState.On).put("toggle_state", it.name.lowercase()) }
+                selected?.let { row.put("selected", it) }
+                config.getOrNull(SemanticsProperties.StateDescription)?.let { row.put("state_description", it) }
+                config.getOrNull(SemanticsProperties.Role)?.let { row.put("role", it.toString()) }
+                config.getOrNull(SemanticsProperties.EditableText)?.let { row.put("editable_text", it.text) }
+                val bounds = node.boundsInRoot
+                row.put("x", bounds.left).put("y", bounds.top).put("width", bounds.width).put("height", bounds.height)
                 when {
                     edit != null -> row.put("type", "text").put("value", config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty())
                     progress != null -> row.put("type", "slider").put("value", progress.current)
-                        .put("min", progress.range.start).put("max", progress.range.endInclusive).put("step", 0.01)
+                        .put("min", progress.range.start).put("max", progress.range.endInclusive)
+                        .put("step", if (progress.steps > 0) (progress.range.endInclusive - progress.range.start) / (progress.steps + 1) else 0.01f)
+                        .put("enabled", config.getOrNull(SemanticsProperties.Disabled) == null && config.getOrNull(SemanticsActions.SetProgress) != null)
+                    toggle != null && click != null -> row.put("type", "switch").put("value", toggle == ToggleableState.On)
                     scroll != null && click == null -> row.put("type", "scroll")
-                    else -> row.put("type", "action")
+                    interactive -> row.put("type", "action")
+                    structural -> row.put("type", "group")
+                    else -> row.put("type", "info")
                 }
                 rows.put(row)
-                bindings[id] = node
-            } else if (text.isNotBlank()) {
-                rows.put(JSONObject().put("type", "info").put("title", text))
+                if (interactive) bindings[id] = node
             }
-            node.children.forEach { visit(it, prefix) }
+            children.forEach { visit(it, prefix, if (emitted) id else parent, if (emitted) depth + 1 else depth) }
         }
         view?.let { owners(it).forEachIndexed { index, owner -> visit(owner.rootSemanticsNode, "custom$index") } }
         if (android.os.Build.VERSION.SDK_INT >= 29) {
-            WindowInspector.getGlobalWindowViews().filter { it !== host.window.decorView && it.context is android.content.ContextWrapper }
+            WindowInspector.getGlobalWindowViews().filter {
+                it !== host.window.decorView && it.applicationWindowToken == host.window.decorView.applicationWindowToken
+            }
                 .forEachIndexed { index, root ->
                     val found = owners(root)
                     if (found.isNotEmpty()) {
@@ -277,14 +380,37 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                     }
                 }
         }
+        if (pendingFilter && !dialog) {
+            val label = tachiyomi.i18n.MR.strings.action_filter.getString(host)
+            val target = bindings.values.firstOrNull { node ->
+                val description = node.config.getOrNull(SemanticsProperties.ContentDescription).orEmpty().joinToString(" ")
+                val text = node.config.getOrNull(SemanticsProperties.Text).orEmpty().joinToString(" ") { it.text }
+                description.equals(label, true) || text.equals(label, true)
+            }
+            if (target != null) {
+                pendingFilter = false
+                target.config.getOrNull(SemanticsActions.OnClick)?.action?.invoke()
+                return
+            }
+        }
+        val current = navigator?.lastItem
         val snapshot = JSONObject().put("kind", "settings_detail").put("dialog", dialog)
-            .put("nested", navigator?.lastItem !is SearchableSettings).put("items", rows)
+            .put("scope", if (backendScreen.isEmpty()) "settings" else "backend")
+            .put("screen", backendScreen).put("title", (current as? VrBackendScreen)?.title ?: current?.javaClass?.simpleName.orEmpty())
+            .put("can_back", dialog || navigator?.canPop == true)
+            .put("nested", backendScreen.isNotEmpty() || current !is SearchableSettings).put("items", rows)
+            .put("limitations", JSONArray(listOf("Only controls exposed by Android accessibility semantics are available; custom Canvas gestures and external activities require their native interfaces.")))
         semanticControls.clear()
         semanticControls.putAll(bindings)
         if (snapshot.toString() != detailSnapshot) {
             detailSnapshot = snapshot.toString()
             send(snapshot)
         }
+    }
+
+    private fun dismissDialog() {
+        dialogRoot?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK))
+        dialogRoot?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_BACK))
     }
 
     @Composable
@@ -315,10 +441,10 @@ class VrSettingsBridge(private val host: VrActivity, private val send: (JSONObje
                 KMR.strings.pref_webgpu_contrast.getString(host),
             )
             if (item !is Preference.PreferenceItem.InfoPreference && key !in spatialKeys && !spatialSlider) {
-                row.put("enabled", false).put("subtitle", KMR.strings.vr_android_reader_only.getString(host))
-                androidOnlyControls.add(id)
-            } else {
-                androidOnlyControls.remove(id)
+                // Backend reader preferences remain editable even when the spatial
+                // reader does not consume them. Keep that limitation visible.
+                row.put("subtitle", listOfNotNull(item.subtitle?.toString(), KMR.strings.vr_android_reader_only.getString(host)).joinToString("\n"))
+                    .put("applies_to", "android_reader")
             }
         }
         when (item) {

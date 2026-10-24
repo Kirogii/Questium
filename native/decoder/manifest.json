@@ -1,0 +1,18 @@
+{
+  "file": "arm64-v8a/libimagedecoder2.so",
+  "sha256": "ff5eb9760fbd9c349875768ff7c610fd691d1d55f63f005b8b5e9b6f212db632",
+  "abi": "arm64-v8a",
+  "format": "ELF64 little-endian AArch64",
+  "origin": "Existing Questium workspace decoder build output dated 2026-10-09; JNI entry points verified against the current wrapper.",
+  "source_build_attestation": null,
+  "source_reference": "external/imagedecoder-houri (source recipes and dependency pins retained; not an attestation of these legacy bytes)",
+  "supported_jni": [
+    "new",
+    "getInfo",
+    "decode",
+    "encode",
+    "nativeFree",
+    "free",
+    "EncodeResult.free"
+  ]
+}

@@ -1,6 +1,10 @@
 name: Quest VR APK
 on:
   workflow_dispatch:
+    inputs:
+      staged_tag:
+        description: Sign a locally built APK in this draft release (leave empty to build from source)
+        required: false
   pull_request:
   push:
     branches: [master, main, 'feature/**', 'release/**']
@@ -12,6 +16,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.staged_tag == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -128,3 +133,54 @@ jobs:
           else
             gh release create "$RELEASE_TAG" quest-apk/* --verify-tag --title "$RELEASE_TITLE" --notes-file RELEASE_NOTES.md --latest
           fi
+  sign_staged:
+    permissions:
+      contents: write
+    if: github.event_name == 'workflow_dispatch' && inputs.staged_tag != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Verify and sign staged APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.staged_tag }}
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.VR_SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.VR_SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.VR_SIGNING_KEY_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.VR_SIGNING_KEY_ALIAS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = true
+          INPUT="Questium-VR-arm64-v8a-${TAG}-input.apk"
+          FINAL="Questium-VR-arm64-v8a-${TAG}.apk"
+          mkdir -p input signed previous
+          gh release download "$TAG" --pattern "$INPUT" --dir input
+          timeout 240 gh release download v1.0.1 --pattern 'VR-Tachiyomi-alpha.apk' --dir previous
+          SIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
+          AAPT="$(dirname "$SIGNER")/aapt"
+          BADGING=$("$AAPT" dump badging "input/$INPUT" | sed -n '1p')
+          printf '%s\n' "$BADGING"
+          [[ "$BADGING" == *"name='app.houri.nomtl.dev'"* ]]
+          [[ "$BADGING" == *"versionCode='204'"* ]]
+          [[ "$BADGING" == *"versionName='${TAG#v}'"* ]]
+          KEYSTORE="$RUNNER_TEMP/questium-release.jks"
+          trap 'rm -f "$KEYSTORE"' EXIT
+          umask 077
+          printf '%s' "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE"
+          "$SIGNER" sign --v4-signing-enabled false --ks "$KEYSTORE" --ks-key-alias "$SIGNING_KEY_ALIAS" --ks-pass env:SIGNING_STORE_PASSWORD --key-pass env:SIGNING_KEY_PASSWORD --out "signed/$FINAL" "input/$INPUT"
+          "$SIGNER" verify --verbose --print-certs "signed/$FINAL"
+          OLD_CERT=$("$SIGNER" verify --print-certs 'previous/VR-Tachiyomi-alpha.apk' | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          NEW_CERT=$("$SIGNER" verify --print-certs "signed/$FINAL" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+          test -n "$OLD_CERT"
+          test "$OLD_CERT" = "$NEW_CERT"
+          echo "Signing certificate matches the published release: $NEW_CERT"
+          (cd signed && sha256sum "$FINAL" > SHA256SUMS.txt)
+          gh release upload "$TAG" "signed/$FINAL" signed/SHA256SUMS.txt --clobber
+          gh release delete-asset "$TAG" "$INPUT" --yes

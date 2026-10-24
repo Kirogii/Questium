@@ -404,16 +404,27 @@ data class BrowseSourceScreen(
                     onDismissRequest = onDismissRequest,
                     filters = state.filters,
                     onReset = screenModel::resetFilters,
-                    onFilter = { screenModel.search(filters = state.filters) },
+                    onFilter = {
+                        screenModel.search(filters = state.filters)
+                        // KMK --> Apply the same filter tree to the spatial reader's results.
+                        (context as? eu.kanade.tachiyomi.ui.vr.VrActivity)?.applySourceFilters(sourceId, state.filters, state.toolbarQuery)
+                        // KMK <--
+                    },
                     onUpdate = screenModel::setFilters,
                     // SY -->
                     startExpanded = screenModel.startExpanded,
                     onSave = screenModel::onSaveSearch,
                     savedSearches = state.savedSearches,
                     onSavedSearch = { search ->
-                        screenModel.onSavedSearch(search) {
-                            context.toast(it)
-                        }
+                        screenModel.onSavedSearch(
+                            search,
+                            // KMK -->
+                            onApplied = { query, filters ->
+                                (context as? eu.kanade.tachiyomi.ui.vr.VrActivity)?.applySourceFilters(sourceId, filters, query)
+                            },
+                            // KMK <--
+                            onToast = { context.toast(it) },
+                        )
                     },
                     onSavedSearchPress = screenModel::onSavedSearchPress,
                     // KMK -->
@@ -479,7 +490,12 @@ data class BrowseSourceScreen(
             }
             is BrowseSourceScreenModel.Dialog.ChangeMangaCategory -> {
                 ChangeCategoryDialog(
-                    initialSelection = dialog.initialSelection,
+                    initialSelection = dialog.initialSelection, // KMK -->
+                    onSyncToMain = { syncToMain ->
+                        eu.kanade.tachiyomi.data.questiumsync.QuestiumSync.get(context)
+                            .setLibrarySync(dialog.manga.source, dialog.manga.url, syncToMain)
+                    },
+                    // KMK <--
                     onDismissRequest = onDismissRequest,
                     onEditCategories = { navigator.push(CategoryScreen()) },
                     onConfirm = { include, _ ->

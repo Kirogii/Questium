@@ -8,7 +8,15 @@ import eu.kanade.tachiyomi.data.backup.models.BackupManga
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class SyncLibrary(val backup: Backup, val epochs: Map<String, Long> = emptyMap(), val removed: Set<String> = emptySet())
+data class SyncLibrary(
+    val backup: Backup,
+    val epochs: Map<String, Long> = emptyMap(),
+    val removed: Set<String> = emptySet(),
+    val extensions: List<SyncExtension> = emptyList(),
+)
+
+@Serializable
+data class SyncExtension(val packageName: String, val signature: String, val store: String)
 
 @Serializable
 data class ChapterProgress(val url: String, val read: Boolean, val page: Long)
@@ -57,15 +65,11 @@ object SyncMerge {
         others.forEach { other ->
             other.backup.backupManga.forEach { incoming ->
                 val key = key(incoming)
-                if (key in main.removed) return@forEach
                 val existing = mangaByKey[key]
                 if (existing == null) {
-                    // Category IDs belong to a database, so never import another device's IDs.
-                    mangaByKey[key] = clone(incoming).apply {
-                        categoryIds = emptyList()
-                        categories = emptyList()
-                    }
+                    mangaByKey[key] = compact(incoming, incoming.favorite && key !in main.removed)
                 } else if ((other.epochs[key] ?: 0L) == (main.epochs[key] ?: 0L)) {
+                    existing.favorite = existing.favorite || (incoming.favorite && key !in main.removed)
                     existing.chapters = mergeChapters(existing.chapters, incoming.chapters)
                     existing.history = (existing.history + incoming.history).groupBy { it.url }
                         .values.map { versions -> versions.maxBy { it.lastRead } }
@@ -86,13 +90,27 @@ object SyncMerge {
             }
         }
         return SyncLibrary(
-            main.backup.copy(
-                backupManga = mangaByKey.values.toList(),
-                backupSources = (main.backup.backupSources + others.flatMap { it.backup.backupSources }).distinctBy { it.sourceId },
+            Backup(
+                mangaByKey.values.toList(),
                 backupExtensionStores = (main.backup.backupExtensionStores + others.flatMap { it.backup.backupExtensionStores }).distinctBy { it.indexUrl },
             ),
             main.epochs,
             main.removed,
+            (main.extensions + others.flatMap { it.extensions }).distinctBy { it.packageName to it.signature },
+        )
+    }
+
+    fun compact(manga: BackupManga, favorite: Boolean = manga.favorite): BackupManga {
+        val visited = manga.history.map { it.url }.toHashSet()
+        return BackupManga(
+            source = manga.source,
+            url = manga.url,
+            title = manga.title,
+            favorite = favorite,
+            chapters = manga.chapters.filter { it.read || it.lastPageRead > 0 || it.url in visited }.map {
+                BackupChapter(it.url, it.name, read = it.read, lastPageRead = it.lastPageRead, chapterNumber = it.chapterNumber)
+            },
+            history = manga.history,
         )
     }
 

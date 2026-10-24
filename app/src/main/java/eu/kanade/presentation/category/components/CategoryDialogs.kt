@@ -450,8 +450,12 @@ fun ChangeCategoryDialog(
     onDismissRequest: () -> Unit,
     onEditCategories: () -> Unit,
     onConfirm: (List<Long>, List<Long>) -> Unit,
+    // KMK -->
+    onSyncToMain: ((Boolean) -> Unit)? = null,
+    // KMK <--
 ) {
-    if (initialSelection.isEmpty()) {
+    var syncToMain by remember { mutableStateOf(true) }
+    if (initialSelection.isEmpty() && onSyncToMain == null) {
         AlertDialog(
             onDismissRequest = onDismissRequest,
             confirmButton = {
@@ -490,6 +494,7 @@ fun ChangeCategoryDialog(
                 }
                 tachiyomi.presentation.core.components.material.TextButton(
                     onClick = {
+                        onSyncToMain?.invoke(syncToMain)
                         onDismissRequest()
                         val parentIdById = selection.associate { it.value.id to it.value.parentId }
                         val included = selection
@@ -515,6 +520,14 @@ fun ChangeCategoryDialog(
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
             ) {
+                // KMK -->
+                if (onSyncToMain != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = syncToMain, onCheckedChange = { syncToMain = it })
+                        Text(text = stringResource(KMR.strings.questium_sync_to_main_device))
+                    }
+                }
+                // KMK <--
                 // KMK -->
                 // Stable display order: each root category followed by its subcategories
                 val displayOrder = remember(initialSelection) {

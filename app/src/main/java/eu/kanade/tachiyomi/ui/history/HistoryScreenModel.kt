@@ -241,32 +241,9 @@ class HistoryScreenModel(
 
     fun addFavorite(manga: Manga) {
         screenModelScope.launchIO {
-            // Move to default category if applicable
-            val categories = getCategories()
-            val defaultCategoryId = libraryPreferences.defaultCategory().get().toLong()
-            val defaultCategory = categories.find { it.id == defaultCategoryId }
-
-            when {
-                // Default category set
-                defaultCategory != null -> {
-                    val result = updateManga.awaitUpdateFavorite(manga.id, true)
-                    if (!result) return@launchIO
-                    moveMangaToCategory(
-                        manga.id,
-                        defaultCategory.id.withAncestorChain(categories).filter { it != 0L }.toList(),
-                    )
-                }
-
-                // Automatic 'Default' or no categories
-                defaultCategoryId == 0L || categories.isEmpty() -> {
-                    val result = updateManga.awaitUpdateFavorite(manga.id, true)
-                    if (!result) return@launchIO
-                    moveMangaToCategory(manga.id, null)
-                }
-
-                // Choose a category
-                else -> showChangeCategoryDialog(manga)
-            }
+            // KMK --> Offer the sync choice for every new library entry.
+            showChangeCategoryDialog(manga)
+            // KMK <--
 
             // Sync with tracking services if applicable
             addTracks.bindEnhancedTrackers(manga, sourceManager.getOrStub(manga.source))
@@ -282,7 +259,7 @@ class HistoryScreenModel(
     private fun showChangeCategoryDialog(manga: Manga) {
         screenModelScope.launch {
             val categories = getCategories()
-            val selection = getMangaCategoryIds(manga)
+            val selection = if (manga.favorite) getMangaCategoryIds(manga) else listOf(libraryPreferences.defaultCategory().get().toLong())
             mutableState.update { currentState ->
                 currentState.copy(
                     dialog = Dialog.ChangeCategory(

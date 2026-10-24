@@ -21,6 +21,8 @@ func check() -> void:
         entries.append({"id": id, "title": titles[index], "history_chapter": "Chapter " + str(index + 1) + (" - an extremely long chapter name".repeat(12) if index % 2 else ""), "last_page": index, "last_read": 1000})
     ui.consume({"kind": "history", "items": entries})
     for frame in 12: await process_frame
+    ui.refresh_visible_covers()
+    for frame in 4: await process_frame
     var expected: Vector2 = ui.grid.get_child(0).size
     assert(expected.x == ui.COVER_BOX.x + 32 and expected.y <= 417, "History stays at the intended compact card size")
     for card in ui.grid.get_children():
@@ -39,7 +41,7 @@ func check() -> void:
         assert(chapter.size.x <= ui.COVER_BOX.x and chapter.clip_text and chapter.tooltip_text == chapter.text)
     if DisplayServer.get_name() != "headless":
         await RenderingServer.frame_post_draw
-        ui.hud.viewport.get_texture().get_image().save_png("D:/VR Kommiku/artifacts/history-uniform-cards.png")
+        ui.hud.viewport.get_texture().get_image().save_png("E:/Questium-Build/logs/history-uniform-cards.png")
     var caption: Button = ui.grid.get_child(1).get_child(0).get_child(1)
     caption.pressed.emit()
     assert(ui.selected_manga == "901", "The two-line title retains book selection")

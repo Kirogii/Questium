@@ -41,6 +41,14 @@ func check() -> void:
     assert(multi.has_theme_icon_override("checked") and slider.has_theme_stylebox_override("slider"))
     var bridge := SettingsBridge.new()
     reader.bridge = bridge
+    assert(ui.sync_to_main.button_pressed, "New library additions sync to main by default")
+    ui.selected_manga = "123"
+    ui.sync_to_main.button_pressed = false
+    ui.save_to_library()
+    assert(bridge.requests[-1].action == "favorite" and bridge.requests[-1].sync_to_main == false, "Unchecked choice adds the book locally")
+    ui.sync_to_main.button_pressed = true
+    ui.save_to_library()
+    assert(bridge.requests[-1].sync_to_main == true, "Checked choice forwards the addition to main")
     toggle.button_pressed = false
     assert(bridge.requests[-1].id == "a" and bridge.requests[-1].value == false)
     slider.value = 80

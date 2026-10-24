@@ -28,9 +28,8 @@ func _position_available(tracker: XRHandTracker, joint: int) -> bool:
     return (flags & XRHandTracker.HAND_JOINT_FLAG_POSITION_VALID) != 0
 
 func finger_extended(tracker: XRHandTracker) -> bool:
-    var flags := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
     for joint in [XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP]:
-        if (tracker.get_hand_joint_flags(joint) & flags) == 0: return false
+        if not _position_available(tracker, joint): return false
     var base := tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_INDEX_FINGER_METACARPAL).origin
     var tip := tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP).origin
     return base.distance_to(tip) > 0.055
@@ -199,19 +198,24 @@ func resize(hand: String, tip: Vector3, valid: bool, pinched: bool) -> bool:
 
 func swipe(hand: String, tip: Vector3, valid: bool, pinched: bool, delta: float) -> bool:
     var book: SpatialBook = reader.book
-    if not valid or pinched or not book.visible or not book.scroll_mode or book.preview_only or not reader.holder.is_empty() or reader.tracked.get(hand, {}).get("fist", false) or not reader.tracked.get(hand, {}).get("finger_extended", true):
+    if not valid or pinched or not book.visible or not book.scroll_mode or book.preview_only or not reader.holder.is_empty() or not reader.ui_owner.is_empty() or not reader.window_holder.is_empty() or reader.tracked.get(hand, {}).get("fist", false) or (scroll_owner != hand and not reader.tracked.get(hand, {}).get("finger_extended", true)):
         swipes.erase(hand)
         if scroll_owner == hand: scroll_owner = ""
         return false
     if not scroll_owner.is_empty() and scroll_owner != hand: return false
     var point := book.to_local(tip)
-    if absf(point.x) > 0.35 or absf(point.y) > 0.52 or point.z < -0.04 or point.z > (0.16 if scroll_owner == hand else 0.10):
+    if absf(point.x) > 0.35 or absf(point.y) > 0.52 or point.z < (-0.065 if scroll_owner == hand else -0.04) or point.z > (0.16 if scroll_owner == hand else 0.10):
         swipes.erase(hand)
         if scroll_owner == hand: scroll_owner = ""
         return false
     var previous: Dictionary = swipes.get(hand, {})
     swipes[hand] = {"point": point, "active": previous.get("active", false), "start": previous.get("start", point)}
-    if previous.is_empty() or delta > 0.12 or point.distance_to(previous.point) > 0.12: return false
+    if previous.is_empty(): return false
+    # A normal fast swipe can travel over 12 cm between slow frames. Only
+    # reject tracking jumps; rebase after stalls instead of scrolling stale travel.
+    if delta > 0.20 or point.distance_to(previous.point) > 0.30:
+        swipes[hand].start = point
+        return scroll_owner == hand
     var travel: float = point.y - previous.point.y
     var displacement: Vector3 = point - swipes[hand].start
     if (absf(displacement.y) > 0.002 and absf(displacement.y) > absf(displacement.x) * 0.75) or previous.get("active", false):

@@ -38,36 +38,15 @@ CMake downgrades 32-bit ABIs to CPU-only (see `BUILD.md` §2.6) rather than fork
 upstream per breakage. `LlamatikBuildInfo` reports GPU offload as unavailable on a 32-bit
 device, otherwise the UI would offer a `gpuLayers` slider that silently does nothing.
 
-## Windows: WSL is the only path
+## Windows: native CPU build by default
 
-Matches `external/imagedecoder-houri` — deliberately **no** MSYS2/Git Bash fallback. On a
-Windows host `build.gradle.kts`:
+Windows defaults to CPU inference, built from the fork sources using Windows NDK/CMake.
+No WSL check or WSL build task runs for this default. Explicit `-Pmtl.gpuOffload=true`
+selects the optional Vulkan build inside WSL. Other hosts retain Vulkan defaults.
 
-1. hard-fails at configuration time if neither `C:/Windows/System32/wsl.exe` nor
-   `C:/Windows/Sysnative/wsl.exe` exists (`Sysnative` matters: a 32-bit Gradle daemon has
-   `System32` redirected to `SysWOW64`);
-2. skips AGP's `externalNativeBuild` entirely and instead runs the `wslNativeBuild` task,
-   which configures and builds all four ABIs inside WSL with the **Linux** NDK
-   (`-Pmtl.wslNdkDir`, default `/usr/lib/android-sdk/ndk/<version>`) and stages each
-   `libllama_jni.so` into `src/main/jniLibs/<abi>/`;
-3. feeds that dir to `jniLibs`, and hard-fails if any ABI's `.so` is missing so a split APK
-   can never ship without the runtime.
-
-The WSL task is never up-to-date (Gradle cannot see ninja's in-place object updates), but
-incrementality is delegated to ninja, so a no-change rebuild costs a ninja no-op rather than
-a full four-ABI Vulkan rebuild.
-
-One-time setup inside WSL: **`llamatik-native/wsl-setup.sh`** (`wsl -e bash <repo>/llamatik-native/wsl-setup.sh`).
-It verifies glslc/cmake/ninja plus the Linux NDK, then stages a *matched* Vulkan-Headers +
-Vulkan-Hpp + SPIRV-Headers set under one root (`/opt/vulkan-headers`, which CMake
-auto-detects) and asserts the version pair actually matches. It works unprivileged when the
-destination is writable; pass `MTL_VULKAN_HEADERS=~/vulkan-headers` to avoid `sudo`, and
-build with `-Pmtl.wslVulkanHeaders=~/vulkan-headers`.
-
-> Vulkan-Hpp at v1.4.309 has **no `include/` directory** — `vulkan.hpp` moved to the repo root
-> and its own CMake uses the source dir as the include path. The setup script copies
-> per-repo rather than looping over `include/`.
-
+The Vulkan WSL task stages JNI outputs under `build/generated/wslJniLibs/<abi>/`.
+CPU builds exclude legacy `src/main/jniLibs` outputs and package their own AGP native output.
+See `BUILD.md` for Vulkan setup and explicit toolchain properties.
 ## Stale-cache recovery
 
 AGP keeps `llamatik-native/.cxx/<Variant>/<hash>/<abi>/CMakeCache.txt` between runs. That

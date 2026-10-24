@@ -14,6 +14,7 @@ var environment: WorldEnvironment
 var bridge: Object
 var labels: Dictionary = {}
 var panels: Array[Dictionary] = []
+var window_drag = preload("res://window_drag.gd").new(self)
 var library_panel: Node3D
 var android_app: Object
 var android_layer: OpenXRCompositionLayerQuad
@@ -33,6 +34,7 @@ var palm_dwell := 0.0
 var palm_hidden := 0.0
 var palm_revealed := false
 var palm_last_position := Vector3.ZERO
+var palm_hand := ""
 const PALM_DWELL_REQUIRED := 0.10
 const PALM_HIDE_DELAY := 0.12
 var window_holder := ""
@@ -250,6 +252,10 @@ func _build_tracking() -> void:
 func _label(text: String) -> String:
     return str(labels.get(text, text))
 
+func request_recenter() -> void:
+    if workspace: workspace.request_recenter()
+    else: recenter()
+
 func recenter() -> void:
     if workspace:
         _cancel_interactions()
@@ -285,7 +291,7 @@ func toggle_library() -> void:
     if workspace:
         workspace.show_section("Home")
 
-func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) -> Dictionary:
+func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3, draggable: bool = true) -> Dictionary:
     var node := Node3D.new()
     parent.add_child(node)
     node.position = position
@@ -332,6 +338,7 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3) 
     node.set_meta("raycast_priority", 0)
     var data := {"node": node, "viewport": viewport, "size": size, "pixels": pixels, "content": content, "background": background}
     panels.append(data)
+    if draggable: window_drag.register(data)
     return data
 
 func _protect_workspace_depth() -> void:
@@ -415,7 +422,9 @@ func _build_library() -> void:
         android_app = JavaClassWrapper.wrap("eu.kanade.tachiyomi.ui.vr.VrAndroidPanel")
         if android_app:
             _create_android_layer()
-            panels.append({"node": library_panel, "size": Vector2(1.2, 1.0), "pixels": Vector2i(1440, 1200), "android": true})
+            var android_panel := {"node": library_panel, "size": Vector2(1.2, 1.0), "pixels": Vector2i(1440, 1200), "android": true}
+            panels.append(android_panel)
+            window_drag.register(android_panel)
             _build_android_controls()
             return
     var panel := _panel(self, Vector2(1.0, 0.70), Vector2i(1200, 840), Vector3(0.0, 1.45, -1.4))
@@ -462,14 +471,16 @@ func _build_library() -> void:
     scroll.add_child(library_list)
 
 func _build_android_controls() -> void:
-    var panel := _panel(library_panel, Vector2(1.2, 0.10), Vector2i(1440, 120), Vector3(0, -0.57, 0.02))
+    var panel := _panel(library_panel, Vector2(1.2, 0.10), Vector2i(1440, 120), Vector3(0, -0.57, 0.02), false)
+    panel["hand_attached"] = true
+    panel["popup"] = true
     var row := HBoxContainer.new()
     native_controls = panel.node
     native_controls.reparent(self)
     native_controls.visible = false
     panel.content.add_child(row)
     _button(row, "Back", func(): android_app.call("back"))
-    _button(row, "Center", recenter)
+    _button(row, "Center", request_recenter)
     _button(row, "Exit VR", func(): _request("exit"))
     android_status = Label.new()
     android_status.add_theme_font_size_override("font_size", 20)
@@ -898,6 +909,7 @@ func _response(json: String) -> void:
             book.pending_page = pending_seek
             _preload(book.first_page)
             if workspace:
+                if data.has("manga"): workspace.active_manga = str(data.manga)
                 workspace.chapter_opened()
             # Resumed chapters still need the first image for their cover.
             _request("page", {"token": chapter_token, "index": 0})
@@ -1025,6 +1037,15 @@ func _process(_delta: float) -> void:
     if workspace: workspace.sync_badge()
     var palm_visible := false
     var palm_position := Vector3.ZERO
+    # Position attached menus before either hand is tested against their surface.
+    for hand in ["left", "right"]:
+        if hand == preferred_hand or not tracked.has(hand): continue
+        var menu_tracker := XRServer.get_tracker("/user/hand_tracker/" + hand) as XRHandTracker
+        if HandVisual.natural_tracking(menu_tracker) and hand_controls.seeker_facing(menu_tracker, palm_revealed):
+            palm_visible = true
+            palm_hand = hand
+            palm_position = origin.global_transform * menu_tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
+    _palm_toolbar(palm_visible, palm_position, _delta)
     for hand in ["left", "right"]:
         if not tracked.has(hand):
             continue
@@ -1047,9 +1068,6 @@ func _process(_delta: float) -> void:
             natural_hand = true
             var required := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
             var palm := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
-            if hand != preferred_hand and hand_controls.seeker_facing(tracker, palm_revealed):
-                palm_visible = true
-                palm_position = palm.origin
             chopping = hand_controls.edge_hand(tracker, tracked[hand].get("chopping", false))
             # Quest can briefly report a valid palm without the TRACKED bit
             # while the fingers are occluded.  Keep fist/body capture alive
@@ -1057,7 +1075,7 @@ func _process(_delta: float) -> void:
             # transforms and the existing hand-control hysteresis owns release.
             var palm_tracked: bool = hand_controls._position_available(tracker, XRHandTracker.HAND_JOINT_PALM)
             var pinch_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
-            finger_tracked = (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0
+            finger_tracked = hand_controls._position_available(tracker, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP)
             tracked[hand].was_fist = tracked[hand].get("fist", false)
             tracked[hand].fist = palm_tracked and hand_controls.is_fist(tracker, tracked[hand].was_fist)
             valid = finger_tracked or (palm_tracked and (chopping or tracked[hand].fist))
@@ -1108,7 +1126,9 @@ func _process(_delta: float) -> void:
         var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand and not closing, _delta)
         var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
         var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
-        var scrolling: bool = hand_controls.swipe(hand, tip, valid and natural_hand and not touching_popup and not resizing and not joystick and not chopping, pressed, _delta)
+        # Vertical page contact takes priority over the broad edge-hand pose;
+        # a phone-style swipe often also looks like a chopping hand.
+        var scrolling: bool = hand_controls.swipe(hand, tip, valid and finger_tracked and natural_hand and not closing and not touching_popup and not resizing and not joystick, pressed, _delta)
         var fist: bool = natural_hand and tracked[hand].get("fist", false)
         var sweep_tip := tip
         if valid and natural_hand and not fist and chopping:
@@ -1139,7 +1159,6 @@ func _process(_delta: float) -> void:
             if tracked[hand].get("valid", false):
                 contacts.append(candidate.to_local(tracked[hand].tip))
         candidate.hover_edges(contacts)
-    _palm_toolbar(palm_visible, palm_position, _delta)
 
 func _notification(what: int) -> void:
     if what in [NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT] and is_instance_valid(book):
@@ -1227,6 +1246,18 @@ func _pointer(hand: String, tip: Vector3, direction: Vector3, pressed: bool, val
             window_holder = ""
         tracked[hand].pressed = pressed
         return
+    # Controller rails own the press before normal viewport UI can capture it.
+    if pressed and not previous and not tracked[hand].get("natural_hand", false) and holder.is_empty() and window_holder.is_empty() and ui_owner.is_empty() and ui_capture.is_empty():
+        var window_hit: Dictionary = window_drag.handle_ray(tip, direction)
+        if not window_hit.is_empty():
+            window_holder = hand
+            held_window = window_hit.node
+            tracked[hand].remote_distance = window_hit.distance
+            held_window_offset = held_window.global_position - Vector3(window_hit.point)
+            held_window_basis = pointer_basis.inverse() * held_window.global_basis
+            workspace.begin_drag(held_window)
+            tracked[hand].pressed = pressed
+            return
     if not tracked[hand].get("fist", false) and tracked[hand].get("can_ui", true) and holder.is_empty() and (ui_owner.is_empty() or ui_owner == hand):
         ui_hand = hand
         if _panel_input(tip, direction, pressed, previous):
@@ -1431,6 +1462,7 @@ func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: b
     var candidates: Array[Dictionary] = []
     var book_hit := _book_ray_hit(start, direction)
     for candidate in panels:
+        if candidate.get("hand_attached", false) and not palm_hand.is_empty() and ui_hand == palm_hand: continue
         if not touched.is_empty() and candidate != touched:
             continue
         var node: Node3D = candidate.node

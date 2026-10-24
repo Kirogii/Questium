@@ -480,32 +480,17 @@ open class BrowseSourceScreenModel(
             val defaultCategoryId = libraryPreferences.defaultCategory().get()
             val defaultCategory = categories.find { it.id == defaultCategoryId.toLong() }
 
-            when {
-                // Default category set
-                defaultCategory != null -> {
-                    moveMangaToCategories(manga, defaultCategory)
-
-                    changeMangaFavorite(manga)
-                }
-
-                // Automatic 'Default' or no categories
-                defaultCategoryId == 0 || categories.isEmpty() -> {
-                    moveMangaToCategories(manga)
-
-                    changeMangaFavorite(manga)
-                }
-
-                // Choose a category
-                else -> {
-                    val preselectedIds = getCategories.await(manga.id).map { it.id }
-                    setDialog(
-                        Dialog.ChangeMangaCategory(
-                            manga,
-                            categories.mapAsCheckboxState { it.id in preselectedIds }.toImmutableList(),
-                        ),
-                    )
-                }
-            }
+            // KMK --> Always show the library sync choice, including the default category.
+            val preselectedIds = getCategories.await(manga.id).map { it.id }
+            setDialog(
+                Dialog.ChangeMangaCategory(
+                    manga,
+                    categories.mapAsCheckboxState {
+                        if (defaultCategory != null) it.id == defaultCategory.id else it.id in preselectedIds
+                    }.toImmutableList(),
+                ),
+            )
+            // KMK <--
         }
     }
 
@@ -633,6 +618,7 @@ open class BrowseSourceScreenModel(
     fun onSavedSearch(
         // KMK -->
         loadedSearch: EXHSavedSearch,
+        onApplied: ((String?, FilterList) -> Unit)? = null,
         // KMK <--
         onToast: (StringResource) -> Unit,
     ) {
@@ -671,6 +657,9 @@ open class BrowseSourceScreenModel(
                     toolbarQuery = search.query,
                 )
             }
+            // KMK --> Keep the spatial results aligned with the original saved search.
+            onApplied?.invoke(search.query, filters)
+            // KMK <--
         }
     }
 

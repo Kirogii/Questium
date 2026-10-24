@@ -117,7 +117,7 @@ private fun BaseTachiyomiTheme(
     )
 }
 
-private fun getThemeColorScheme(
+internal fun getThemeColorScheme(
     context: Context,
     appTheme: AppTheme,
     isDark: Boolean,

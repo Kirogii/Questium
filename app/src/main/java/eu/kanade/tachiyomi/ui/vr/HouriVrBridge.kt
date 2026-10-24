@@ -20,12 +20,16 @@ import android.view.inputmethod.InputConnectionWrapper
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.FrameLayout
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.graphics.drawable.toBitmap
 import androidx.lifecycle.lifecycleScope
 import coil3.asDrawable
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
+import eu.kanade.domain.ui.model.AppTheme
+import eu.kanade.presentation.theme.getThemeColorScheme
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.CatalogueSource
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.Page
@@ -44,6 +48,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import mihon.app.di.appGraph
 import mihon.domain.manga.model.toDomainManga
 import org.godotengine.godot.Godot
@@ -52,9 +58,16 @@ import org.godotengine.godot.plugin.SignalInfo
 import org.godotengine.godot.plugin.UsedByGodot
 import org.json.JSONArray
 import org.json.JSONObject
+import tachiyomi.core.common.i18n.stringResource
+import tachiyomi.core.common.preference.TriState
+import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.manga.model.asMangaCover
 import tachiyomi.i18n.kmk.KMR
+import xyz.nulldev.ts.api.http.serializer.FilterSerializer
 import java.io.File
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZonedDateTime
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.microedition.khronos.egl.EGLConfig
@@ -482,6 +495,18 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
     private suspend fun handleRequest(request: JSONObject) {
         when (request.getString("action")) {
             "questium_sync" -> questiumSync(request)
+            "theme_palettes" -> themePalettes()
+            "backend_screen" -> {
+                if (request.optString("screen") == "source") {
+                    val source = graph.sourceManager.get(request.getString("source").toLong()) as? CatalogueSource
+                        ?: error("Source is unavailable")
+                    val filters = source.getFilterList()
+                    applyFilterState(filters, request.optJSONObject("filters"))
+                    request.put("filters_json", Json.encodeToString(FilterSerializer().serialize(filters)))
+                }
+                settings.request(request)
+            }
+            "backend_close" -> settings.request(request)
             "app_update_check" -> appUpdater.check()
             "app_update_install" -> appUpdater.install { flushProgress() }
             "upscale_book" -> {
@@ -524,6 +549,10 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             "details" -> details(request.getString("manga").toLong())
             "favorite" -> {
                 val mangaId = request.getString("manga").toLong()
+                if (request.getBoolean("enabled")) {
+                    val manga = graph.mangaRepository.getMangaById(mangaId)
+                    eu.kanade.tachiyomi.data.questiumsync.QuestiumSync.get(host).setLibrarySync(manga.source, manga.url, request.optBoolean("sync_to_main", true))
+                }
                 graph.updateManga.awaitUpdateFavorite(mangaId, request.getBoolean("enabled"))
                 details(mangaId)
             }
@@ -535,6 +564,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
             }
             "library" -> library()
             "history" -> history()
+            "updates" -> updates()
             "chapters" -> chapters(request.getString("manga").toLong())
             "cover" -> cover(request.getString("manga").toLong())
             "open" -> open(request.getString("manga").toLong(), request.getString("chapter").toLong())
@@ -736,6 +766,8 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                     filter.state?.let { JSONObject().put("index", it.index).put("ascending", it.ascending) } ?: JSONObject.NULL,
                 )
                 is Filter.AutoComplete -> item.put("type", "autocomplete").put("values", JSONArray(filter.values)).put("state", JSONArray(filter.state))
+                    .put("hint", filter.hint).put("skip_auto_fill_tags", JSONArray(filter.skipAutoFillTags))
+                    .put("valid_prefixes", JSONArray(filter.validPrefixes))
                 is Filter.Group<*> -> item.put("type", "group").put("children", filterDefinitions(filter.state.filterIsInstance<Filter<*>>(), "$key."))
                 else -> item.put("type", "unsupported")
             }
@@ -754,6 +786,26 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         )
         chapters(mangaId)
         cover(mangaId)
+    }
+
+    private fun themePalettes() {
+        val entries = JSONArray()
+        AppTheme.entries.filter { it.titleRes != null }.forEach { theme ->
+            val entry = JSONObject().put("id", theme.name).put("title", host.stringResource(requireNotNull(theme.titleRes)))
+            listOf(false, true).forEach { dark ->
+                val colors = getThemeColorScheme(host, theme, dark, false)
+                entry.put(
+                    if (dark) "dark" else "light",
+                    JSONObject()
+                        .put("primary", colors.primary.toArgb()).put("on_primary", colors.onPrimary.toArgb())
+                        .put("secondary", colors.secondary.toArgb()).put("tertiary", colors.tertiary.toArgb())
+                        .put("surface", colors.surface.toArgb()).put("on_surface", colors.onSurface.toArgb())
+                        .put("outline", colors.outline.toArgb()).put("background", colors.background.toArgb()),
+                )
+            }
+            entries.put(entry)
+        }
+        send(JSONObject().put("kind", "theme_palettes").put("items", entries))
     }
 
     private suspend fun library() {
@@ -791,16 +843,65 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         send(JSONObject().put("kind", "history").put("items", items))
     }
 
+    private suspend fun updates() {
+        val preferences = graph.updatesPreferences
+        fun TriState.asFilter(): Boolean? = when (this) {
+            TriState.DISABLED -> null
+            TriState.ENABLED_IS -> true
+            TriState.ENABLED_NOT -> false
+        }
+        // Use the same recent-update query and preferences as the Android Updates tab.
+        val entries = graph.getUpdates.subscribe(
+            ZonedDateTime.now().minusMonths(3).toInstant(),
+            unread = preferences.filterUnread().get().asFilter(),
+            started = preferences.filterStarted().get().asFilter(),
+            bookmarked = preferences.filterBookmarked().get().asFilter(),
+            hideExcludedScanlators = preferences.filterExcludedScanlators().get(),
+        ).first().filter { update ->
+            applyFilter(preferences.filterDownloaded().get()) {
+                val queued = graph.downloadManager.getQueuedDownloadOrNull(update.chapterId)
+                val downloaded = graph.downloadManager.isChapterDownloaded(
+                    update.chapterName,
+                    update.scanlator,
+                    update.chapterUrl,
+                    update.ogMangaTitle,
+                    update.sourceId,
+                )
+                (queued?.status ?: if (downloaded) Download.State.DOWNLOADED else Download.State.NOT_DOWNLOADED) ==
+                    Download.State.DOWNLOADED
+            }
+        }.sortedByDescending { it.dateFetch }
+        val zone = ZoneId.systemDefault()
+        val items = JSONArray()
+        entries.groupBy { Instant.ofEpochMilli(it.dateFetch).atZone(zone).toLocalDate() to it.mangaId }
+            .forEach { (key, chapters) ->
+                val chapter = chapters.filter { !it.read }.minByOrNull { it.dateFetch } ?: chapters.first()
+                items.put(
+                    JSONObject().put("id", chapter.mangaId.toString()).put("title", chapter.mangaTitle)
+                        .put("updated_at", chapters.maxOf { it.dateFetch }).put("day", key.first.toString())
+                        .put("update_chapter", chapter.chapterName).put("update_count", chapters.size)
+                        .put("resume", chapter.chapterId.toString()).put("last_page", chapter.lastPageRead),
+                )
+            }
+        send(JSONObject().put("kind", "updates").put("items", items))
+    }
+
     private suspend fun cover(mangaId: Long) {
-        val manga = graph.getManga.await(mangaId) ?: return
-        val request = ImageRequest.Builder(host).data(manga.asMangaCover()).size(384, 512).allowHardware(false).build()
-        val drawable = host.imageLoader.execute(request).image?.asDrawable(host.resources) ?: return
-        val bitmap = drawable.toBitmap()
-        val file = File(session, "cover-$mangaId.png")
-        file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        send(JSONObject().put("kind", "cover").put("manga", mangaId.toString()).put("path", file.absolutePath))
-        session.listFiles()?.filter { it.name.startsWith("cover-") }?.sortedByDescending { it.lastModified() }
-            ?.drop(24)?.forEach { it.delete() }
+        var path = ""
+        try {
+            val manga = graph.getManga.await(mangaId) ?: return
+            val request = ImageRequest.Builder(host).data(manga.asMangaCover()).size(384, 512).allowHardware(false).build()
+            val drawable = host.imageLoader.execute(request).image?.asDrawable(host.resources) ?: return
+            val bitmap = drawable.toBitmap()
+            val file = File(session, "cover-$mangaId.png")
+            file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            path = file.absolutePath
+            session.listFiles()?.filter { it.name.startsWith("cover-") }?.sortedByDescending { it.lastModified() }
+                ?.drop(24)?.forEach { it.delete() }
+        } finally {
+            // Release the VR viewport's bounded request slot even on a missing or failed cover.
+            send(JSONObject().put("kind", "cover").put("manga", mangaId.toString()).put("path", path))
+        }
     }
 
     private suspend fun chapters(mangaId: Long) {
@@ -819,14 +920,29 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         )
     }
 
-    private suspend fun open(mangaId: Long, chapterId: Long) {
+    fun applyNativeSourceFilters(sourceId: Long, filters: List<Filter<*>>, query: String?) {
+        send(
+            JSONObject().put("kind", "native_source_filters").put("source", sourceId.toString())
+                .put("query", query.orEmpty()).put("items", filterDefinitions(filters)),
+        )
+    }
+
+    fun openNativeReader(mangaId: Long, chapterId: Long, page: Int?) {
+        host.lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { open(mangaId, chapterId, page) }.onFailure {
+                send(JSONObject().put("kind", "error").put("message", it.message.orEmpty()))
+            }
+        }
+    }
+
+    private suspend fun open(mangaId: Long, chapterId: Long, requestedPage: Int? = null) {
         val manga = graph.getManga.await(mangaId) ?: error("Manga no longer exists")
         val chapter = graph.getChapter.await(chapterId) ?: error("Chapter no longer exists")
         require(chapter.mangaId == manga.id) { "Chapter does not belong to this manga" }
         reader?.awaitPendingPageSaves()
         val model = withContext(Dispatchers.Main) { host.reader(mangaId, chapterId) }
         if (model.manga == null) {
-            model.init(mangaId, chapterId, null).getOrThrow()
+            model.init(mangaId, chapterId, requestedPage).getOrThrow()
         } else if (model.currentChapter?.id != chapterId) {
             model.loadNewChapterFromDialog(chapter)
             withTimeout(60_000) { model.state.first { it.currentChapter?.chapter?.id == chapterId } }
@@ -842,7 +958,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         readers[token] = model
         if (replaces.isNotEmpty()) readers.remove(replaces)
         send(
-            JSONObject().put("kind", "chapter").put("token", token).put("count", pages.size)
+            JSONObject().put("kind", "chapter").put("token", token).put("manga", model.manga?.id?.toString().orEmpty()).put("count", pages.size)
                 .put("start", chapter.requestedPage.coerceIn(0, pages.lastIndex))
                 .put("rtl", ReadingMode.fromPreference(model.getMangaReadingMode()) == ReadingMode.RIGHT_TO_LEFT)
                 .put("vertical", ReadingMode.fromPreference(model.getMangaReadingMode()) in listOf(ReadingMode.WEBTOON, ReadingMode.CONTINUOUS_VERTICAL))

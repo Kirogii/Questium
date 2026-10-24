@@ -36,12 +36,14 @@ android {
     namespace = "eu.kanade.tachiyomi"
 
     defaultConfig {
-        applicationId = "app.houri"
+        // KMK --> Keep the published package when staging a signed MTL upgrade.
+        applicationId = providers.gradleProperty("questium.applicationId").getOrElse("app.houri")
+        // KMK <--
 
         // These need to be updated for every new release that should be automatically pushed
-        versionCode = 203
+        versionCode = 204
         versionName = providers.environmentVariable("VR_RELEASE_VERSION")
-            .map { it.removePrefix("v") }.getOrElse("1.0.0")
+            .map { it.removePrefix("v") }.getOrElse("1.1.0")
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")
@@ -154,7 +156,11 @@ android {
             // install uses per-ABI splits; release universal is produced via bundle if needed.
             isUniversalApk = false
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            // KMK --> The bundled Windows Quest decoder supplies ARM64 only.
+            val windowsBundle = System.getProperty("os.name").contains("Windows", ignoreCase = true) &&
+                !providers.gradleProperty("questium.decoder.fromSource").map(String::toBoolean).getOrElse(false)
+            if (windowsBundle) include("arm64-v8a") else include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            // KMK <--
         }
     }
 

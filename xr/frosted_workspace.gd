@@ -2,7 +2,7 @@ extends RefCounted
 
 const COVER_BOX := Vector2(180.0, 255.0)
 const TITLE_BOX := Vector2(COVER_BOX.x, 72.0)
-const SOURCE_FILTER_SHEET_SIZE := Vector2(0.88, 0.42)
+const SOURCE_FILTER_SHEET_SIZE := Vector2(0.68, 0.64)
 
 var reader: Node3D
 var windows: Array[Dictionary] = []
@@ -37,8 +37,18 @@ var save_button: Button
 var read_button: Button
 var cover_targets: Dictionary = {}
 var cover_cache: Dictionary = {}
+const COVER_REQUEST_LIMIT := 4
+const COVER_CACHE_LIMIT := 40
+var cover_pending: Dictionary = {}
+var cover_failed: Dictionary = {}
+var virtual_cards: Array = []
+var gallery_scroll: ScrollContainer
+var cover_tick := 0.0
 var library_items: Array = []
 var history_items: Array = []
+var update_items: Array = []
+var recenter_remaining := 0.0
+var recenter_label: Label3D
 var source_items: Array = []
 var chapters: Array = []
 var selected_source := ""
@@ -47,6 +57,7 @@ var search_revision := 0
 var source_tag_query := ""
 var source_filters: Dictionary = {}
 var source_filter_defs: Array = []
+var native_source_filters := false
 var filter_revision := 0
 var filter_refresh_remaining := 0.0
 var filter_poll_elapsed := 0.0
@@ -61,6 +72,7 @@ var section := "Home"
 var filter := "All Books"
 var page := 1
 var favorite := false
+var sync_to_main: CheckBox
 var previewing := false
 var reading := false
 var opening: Tween
@@ -90,9 +102,11 @@ var repository_pending := false
 var hud_scale := 0.5
 var gui_distance := 0.62
 var popup_order := 121
+var themes: RefCounted
 var settings: RefCounted
 var sidebar_spacer: Control
 var hud_back: Button
+var library_actions: HBoxContainer
 var app_updater: RefCounted
 
 func raise_popup(node: Node3D, center: bool = true) -> void:
@@ -214,6 +228,7 @@ func build() -> void:
     layout.add_child(inset)
     var sidebar := VBoxContainer.new()
     sidebar.add_theme_constant_override("separation", 12)
+    sidebar.size_flags_vertical = Control.SIZE_EXPAND_FILL
     inset.add_child(sidebar)
     var hud_header := HBoxContainer.new()
     sidebar.add_child(hud_header)
@@ -227,6 +242,8 @@ func build() -> void:
     sidebar.add_child(gap)
     settings = preload("res://vr_settings.gd").new(self)
     settings.build(sidebar)
+    themes = preload("res://vr_themes.gd").new(self)
+    reader._request("theme_palettes")
     for name in ["All Books", "Recents", "History", "Favorites", "Recently Deleted"]:
         var choice: String = name
         var nav := navigation(sidebar, name, func():
@@ -242,8 +259,9 @@ func build() -> void:
     sidebar_spacer = spacer
     spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
     sidebar.add_child(spacer)
-    button(sidebar, "Recenter", reader.recenter)
+    nav_buttons["Recenter"] = button(sidebar, "Recenter", request_recenter)
     var settings_button := button(sidebar, "Settings", func(): show_settings())
+    nav_buttons["Settings"] = settings_button
     settings_button.text = ""
     settings_button.tooltip_text = reader._label("Settings")
     var settings_center := CenterContainer.new()
@@ -268,7 +286,17 @@ func build() -> void:
     body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     body.add_theme_constant_override("separation", 24)
     layout.add_child(body)
-    heading = label(body, "All Books", 34)
+    var library_header := HBoxContainer.new()
+    body.add_child(library_header)
+    heading = label(library_header, "All Books", 34)
+    heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    library_actions = HBoxContainer.new()
+    library_header.add_child(library_actions)
+    button(library_actions, "Updates", func():
+        filter = "Updates"
+        show_section("Home")
+    )
+    button(library_actions, "More", func(): settings.open_backend("more"))
     subtitle = label(body, "Your manga library", 20)
     source_row = HBoxContainer.new()
     body.add_child(source_row)
@@ -296,13 +324,12 @@ func build() -> void:
     source_category_row = HBoxContainer.new()
     source_category_row.add_theme_constant_override("separation", 10)
     body.add_child(source_category_row)
-    for mode in [{"id":"latest", "title":"Latest"}, {"id":"browse", "title":"Browse"}, {"id":"tags", "title":"Search by tags"}]:
+    for mode in [{"id":"latest", "title":"Latest"}, {"id":"browse", "title":"Browse"}]:
         var category: Dictionary = mode
         var category_button := button(source_category_row, category.title, func():
             source_category = category.id
             search.placeholder_text = "Search this source"
-            if source_category == "tags": show_source_filters()
-            else: run_search(1)
+            run_search(1)
         )
         category_button.custom_minimum_size.x = 150
     var filters_button := button(source_category_row, "Filters", func(): show_source_filters())
@@ -327,6 +354,7 @@ func build() -> void:
     scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
     scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
     body.add_child(scroll)
+    gallery_scroll = scroll
     gallery = VBoxContainer.new()
     gallery.add_theme_constant_override("separation", 28)
     gallery.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -338,11 +366,15 @@ func build() -> void:
     badge_title = label(badge.content, "Questium", 36)
     badge_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     badge_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-    preview = panel(Vector2(0.55, 0.12), Vector2i(660, 160))
+    preview = panel(Vector2(0.55, 0.17), Vector2i(660, 230))
     detail_title = label(preview.content, "", 22)
     detail_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     detail_title.visible = false
     detail_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    sync_to_main = CheckBox.new()
+    sync_to_main.text = "Sync to main device"
+    sync_to_main.button_pressed = true
+    preview.content.add_child(sync_to_main)
     var actions := HBoxContainer.new()
     actions.alignment = BoxContainer.ALIGNMENT_CENTER
     preview.content.add_child(actions)
@@ -486,6 +518,7 @@ func update_navigation() -> void:
         var selected: bool = (section == "Home" and name == filter) or section == name
         nav_buttons[name].add_theme_stylebox_override("normal", reader.ui.style(Color(0.86, 0.84, 0.79, 0.30 if selected else 0.0), 14))
         var count: Label = nav_buttons[name].find_child("Count", true, false)
+        if not is_instance_valid(count): continue
         if name == "All Books": count.text = str(library_items.size())
         elif name == "History": count.text = str(history_items.size())
         elif name == "Recents": count.text = str(library_items.filter(func(item): return int(item.get("last_read", 0)) > 0).size())
@@ -575,6 +608,11 @@ func close_keyboard() -> void:
         DisplayServer.virtual_keyboard_hide()
 
 func _process(delta: float) -> void:
+    tick_recenter(delta)
+    cover_tick += delta
+    if cover_tick >= 0.08:
+        cover_tick = 0.0
+        refresh_visible_covers()
     if source_filter_panel and source_filter_panel.node.visible:
         source_filter_panel.node.global_transform = source_filter_pose(source_filter_offset)
         if filter_refresh_remaining > 0:
@@ -713,6 +751,7 @@ func show_section(name: String) -> void:
     if settings: settings.leave()
     if opening and opening.is_running(): opening.kill()
     section = name
+    library_actions.visible = name == "Home"
     previewing = false
     info.node.visible = false
     picker.node.visible = false
@@ -741,13 +780,17 @@ func show_section(name: String) -> void:
     heading.text = reader._label("Books") if source_row.visible else filter
     search.placeholder_text = reader._label("Search books in this source") if source_row.visible else "Search your books"
     search.text = ""
-    if name == "Home": reader._request("history" if filter == "History" else "library")
+    if name == "Home": reader._request("updates" if filter == "Updates" else ("history" if filter == "History" else "library"))
     update_navigation()
     render_grid()
 
 func render_grid() -> void:
     clear(gallery)
+    virtual_cards.clear()
     cover_targets.clear()
+    if section == "Home" and filter == "Updates":
+        render_updates()
+        return
     var entries: Array = source_items if section == "Source Search" else (history_items if filter == "History" else (deleted_items if filter == "Recently Deleted" else library_items))
     var shown := 0
     var groups: Dictionary = {}
@@ -794,6 +837,9 @@ func add_card(item: Dictionary) -> void:
     card.custom_minimum_size = Vector2(COVER_BOX.x + 32.0, 417 if item.has("history_chapter") else 390)
     card.add_theme_stylebox_override("panel", reader.ui.style(Color(0, 0, 0, 0), 24))
     grid.add_child(card)
+    virtual_cards.append({"node": card, "item": item, "updates": false, "loaded": false})
+
+func fill_card(item: Dictionary, card: PanelContainer) -> void:
     var column := VBoxContainer.new()
     column.custom_minimum_size.x = COVER_BOX.x
     column.add_theme_constant_override("separation", 8)
@@ -862,9 +908,7 @@ func add_card(item: Dictionary) -> void:
         var date := Time.get_datetime_dict_from_unix_time(stamp + int(Time.get_time_zone_from_system().bias) * 60)
         label(column, "%s, %02d:%02d" % [reader._label(date_group(item)), date.hour, date.minute], 16)
     var id := str(item.id)
-    cover_targets[id] = cover
-    if cover_cache.has(id): cover.texture_normal = cover_cache[id]
-    else: reader._request("cover", {"manga": id})
+    register_cover(id, cover)
 
 func select_book(item: Dictionary, cover: Control = null) -> void:
     reader._cancel_interactions()
@@ -888,6 +932,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
     description.text = reader._label("Loading book details…")
     reader.ui.set_icon_label(read_button, "Read")
     read_button.disabled = true
+    sync_to_main.button_pressed = true
     favorite = section == "Home" and filter != "Recently Deleted" and filter != "History"
     update_save()
     resume_chapter = ""
@@ -921,6 +966,7 @@ func select_book(item: Dictionary, cover: Control = null) -> void:
 func update_save() -> void:
     reader.ui.set_icon_label(save_button, "Saved to Library" if favorite else "Save to Library")
     save_button.disabled = favorite
+    sync_to_main.visible = not favorite
 
 func save_to_library() -> void:
     if not selected_manga.is_empty():
@@ -928,7 +974,7 @@ func save_to_library() -> void:
         preferences.set_value("library", "deleted", deleted_items)
         preferences.save("user://library.cfg")
         save_button.disabled = true
-        reader._request("favorite", {"manga": selected_manga, "enabled": true})
+        reader._request("favorite", {"manga": selected_manga, "enabled": true, "sync_to_main": sync_to_main.button_pressed})
 
 func remove_from_library() -> void:
     if not favorite or selected_manga.is_empty(): return
@@ -953,6 +999,7 @@ func open_chapter(id: String) -> void:
     reader.ui.set_icon_label(read_button, "Loading…")
 
 func chapter_opened() -> void:
+    settings.close_backend()
     active_book = reader.book
     reading = true
     previewing = false
@@ -1003,12 +1050,12 @@ func show_source_filters() -> void:
         # This is deliberately attached as a sheet-sized world panel rather
         # than a centered popup. Its pose is tied to the frosted search HUD so
         # it rises from that window's lower edge in VR.
-        source_filter_panel = panel(SOURCE_FILTER_SHEET_SIZE, Vector2i(1320, 630))
+        source_filter_panel = panel(SOURCE_FILTER_SHEET_SIZE, Vector2i(900, 850))
         source_filter_panel.background.add_theme_stylebox_override("panel", reader.ui.settings_surface())
         var content: VBoxContainer = source_filter_panel.content
         var header := HBoxContainer.new()
         content.add_child(header)
-        label(header, "Source Filters", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+        label(header, "Filters", 28).size_flags_horizontal = Control.SIZE_EXPAND_FILL
         reader.ui.icon_button(header, "close", func(): hide_source_filters(), Vector2(48, 48))
         var hint := label(content, "Choose the options provided by this source.", 16)
         hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1025,12 +1072,12 @@ func show_source_filters() -> void:
         var actions := HBoxContainer.new()
         actions.add_theme_constant_override("separation", 12)
         content.add_child(actions)
-        button(actions, "Apply Filters", func():
+        button(actions, "Filter", func():
             hide_source_filters()
             if source_category == "latest": source_category = "browse"
             run_search(1)
         )
-        button(actions, "Clear Filters", func():
+        button(actions, "Reset", func():
             source_filters.clear()
             render_source_filters()
         )
@@ -1069,6 +1116,11 @@ func hide_source_filters(animated: bool = true) -> void:
     source_filter_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
     source_filter_tween.tween_property(self, "source_filter_offset", -source_filter_panel.size.y - 0.05, 0.16)
     source_filter_tween.tween_callback(func(): source_filter_panel.node.visible = false)
+
+func collect_filter_state(definitions: Array) -> void:
+    for definition in definitions:
+        if str(definition.get("type", "")) == "group": collect_filter_state(definition.get("children", []))
+        elif definition.has("state"): source_filters[str(definition.key)] = definition.state
 
 func render_source_filters() -> void:
     if not source_filter_body: return
@@ -1182,6 +1234,20 @@ func consume(data: Dictionary) -> bool:
     if app_updater and app_updater.consume(data): return true
     if settings and settings.consume(data): return true
     match str(data.get("kind", "")):
+        "theme_palettes":
+            themes.consume(data)
+            if section == "Settings" and heading.text == "Themes": settings.open_themes(false)
+        "native_source_filters":
+            if str(data.get("source", "")) != selected_source: return true
+            source_filters.clear()
+            collect_filter_state(data.get("items", []))
+            search.text = str(data.get("query", search.text))
+            settings.close_backend()
+            source_category = "browse"
+            run_search(1)
+        "updates":
+            update_items = data.get("items", [])
+            if section == "Home" and filter == "Updates" and not previewing: render_grid()
         "history":
             history_items = data.get("items", [])
             if section == "Home" and filter == "History" and not previewing: render_grid()
@@ -1242,15 +1308,23 @@ func consume(data: Dictionary) -> bool:
             read_button.disabled = chapters.is_empty()
             render_chapters()
         "cover":
+            var id := str(data.manga)
+            cover_pending.erase(id)
+            # Ignore stale responses before decoding or allocating a GPU texture.
+            if not cover_targets.has(id) and not (id == selected_manga and previewing): return true
             var image := Image.new()
-            if image.load(str(data.path)) == OK:
+            var path := str(data.get("path", ""))
+            if not path.is_empty() and image.load(path) == OK:
                 image.generate_mipmaps()
                 var texture := ImageTexture.create_from_image(image)
-                var id := str(data.manga)
+                cover_cache.erase(id)
                 cover_cache[id] = texture
-                var target = cover_targets.get(id)
-                if is_instance_valid(target): target.texture_normal = texture
+                for control in cover_targets.get(id, []):
+                    if is_instance_valid(control): control.texture_normal = texture
                 if id == selected_manga and previewing: reader.book.set_cover(texture)
+                trim_cover_cache()
+            else:
+                cover_failed[id] = Time.get_ticks_msec() + 30000
         "error":
             if repository_pending:
                 repository_pending = false
@@ -1340,7 +1414,9 @@ func recenter(head_pose: Variant = null) -> void:
     badge.node.global_transform = Transform3D(facing, head + facing * Vector3(0, 0.54 * hud_scale + 0.035, -gui_distance))
     preview.node.global_transform = Transform3D(facing, head + facing * Vector3(0, -0.30, -0.94))
     keyboard.node.global_transform = Transform3D(facing, head + facing * Vector3(0, -0.65, -1.15))
-    for node in [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]:
+    var popups := [info.node, picker.node, language_panel.node, repository_panel.node, reader.ui.options]
+    if settings: popups.append(settings.details.node)
+    for node in popups:
         if node.visible: place_popup(node)
     if source_filter_panel and source_filter_panel.node.visible:
         place_source_filter_panel()
@@ -1369,8 +1445,8 @@ func handle_at(point: Vector3) -> Node3D:
     hits.sort_custom(func(a, b): return a.priority > b.priority if a.priority != b.priority else a.depth < b.depth)
     return hits[0].node if not hits.is_empty() else null
 
-func handle_ray(_start: Vector3, _direction: Vector3) -> Dictionary:
-    return {}
+func handle_ray(start: Vector3, direction: Vector3) -> Dictionary:
+    return reader.window_drag.handle_ray(start, direction)
 
 func preview_snap(_node: Node3D) -> int:
     return -1
@@ -1383,3 +1459,153 @@ func begin_drag(node: Node3D) -> void:
 
 func finish_drag(_node: Node3D) -> void:
     pass
+
+
+func request_recenter() -> void:
+    if recenter_remaining > 0: return
+    if not is_instance_valid(recenter_label):
+        recenter_label = Label3D.new()
+        recenter_label.font_size = 128
+        recenter_label.pixel_size = 0.0008
+        recenter_label.outline_size = 16
+        recenter_label.no_depth_test = true
+        reader.add_child(recenter_label)
+    recenter_remaining = 3.0
+    recenter_label.text = "3"
+    recenter_label.visible = true
+    place_recenter_countdown()
+
+func place_recenter_countdown() -> void:
+    recenter_label.global_transform = reader.camera.global_transform
+    recenter_label.global_position = reader.camera.to_global(Vector3(0, 0.12, -0.5))
+
+func tick_recenter(delta: float) -> void:
+    if recenter_remaining <= 0: return
+    recenter_remaining = maxf(0.0, recenter_remaining - delta)
+    if recenter_remaining <= 0:
+        recenter_label.visible = false
+        reader.recenter()
+    else:
+        recenter_label.text = str(ceili(recenter_remaining))
+        place_recenter_countdown()
+
+func render_updates() -> void:
+    var days: Dictionary = {}
+    for item in update_items:
+        if not search.text.is_empty() and not str(item.title).to_lower().contains(search.text.to_lower()): continue
+        var day := str(item.get("day", ""))
+        if day.is_empty():
+            var stamp := int(item.get("updated_at", 0)) / 1000
+            day = Time.get_date_string_from_unix_time(stamp + int(Time.get_time_zone_from_system().bias) * 60)
+        if not days.has(day): days[day] = []
+        days[day].append(item)
+    var ordered: Array = days.keys()
+    ordered.sort()
+    ordered.reverse()
+    for day in ordered:
+        label(gallery, str(day), 26)
+        for item in days[day]: add_update_row(item)
+    subtitle.text = "%d updates" % update_items.size()
+    message.text = "No library updates yet." if days.is_empty() else ""
+    update_navigation()
+
+func add_update_row(item: Dictionary) -> void:
+    var card := PanelContainer.new()
+    card.custom_minimum_size.y = 174
+    card.add_theme_stylebox_override("panel", reader.ui.style(Color(0.46, 0.45, 0.43, 0.12), 22))
+    gallery.add_child(card)
+    virtual_cards.append({"node": card, "item": item, "updates": true, "loaded": false})
+
+func fill_update_row(item: Dictionary, card: PanelContainer) -> void:
+    var row := HBoxContainer.new()
+    row.add_theme_constant_override("separation", 24)
+    card.add_child(row)
+    var cover := TextureButton.new()
+    cover.custom_minimum_size = Vector2(96, 140)
+    cover.ignore_texture_size = true
+    cover.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_COVERED
+    row.add_child(cover)
+    var column := VBoxContainer.new()
+    column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_theme_constant_override("separation", 12)
+    row.add_child(column)
+    var entry := item.duplicate()
+    var select := func(): select_book(entry, cover)
+    cover.pressed.connect(select)
+    var title := button(column, "", select)
+    title.custom_minimum_size.y = 64
+    title.clip_contents = true
+    title.tooltip_text = str(item.title)
+    var caption := Label.new()
+    caption.text = str(item.title)
+    caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    caption.max_lines_visible = 2
+    caption.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    caption.add_theme_font_size_override("font_size", 24)
+    title.add_child(caption)
+    caption.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    caption.offset_left = 16
+    caption.offset_right = -16
+    caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    var chapter := label(column, str(item.get("update_chapter", "New chapters")), 22)
+    chapter.clip_text = true
+    chapter.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    chapter.tooltip_text = chapter.text
+    if int(item.get("update_count", 1)) > 1:
+        label(column, "%d new chapters" % int(item.update_count), 20)
+    var id := str(item.id)
+    register_cover(id, cover)
+
+# Keep only inexpensive layout placeholders for distant books. The scroll extent
+# stays fixed while labels, buttons, materials and textures exist near the view.
+func refresh_visible_covers() -> void:
+    if not is_instance_valid(gallery_scroll): return
+    var visible_gallery: bool = section in ["Home", "Source Search"] and hud.node.visible and not previewing
+    var bounds := gallery_scroll.get_global_rect()
+    bounds = bounds.grow_individual(0, bounds.size.y * 0.65, 0, bounds.size.y * 0.65)
+    for entry in virtual_cards:
+        var card: PanelContainer = entry.node
+        if not is_instance_valid(card): continue
+        var nearby: bool = visible_gallery and bounds.intersects(card.get_global_rect())
+        if nearby and not entry.loaded:
+            entry.loaded = true
+            if entry.updates: fill_update_row(entry.item, card)
+            else: fill_card(entry.item, card)
+        elif not nearby and entry.loaded:
+            entry.loaded = false
+            for child in card.get_children():
+                card.remove_child(child)
+                child.queue_free()
+    # Rebuild targets from live controls only; detached queued nodes must never
+    # receive a late image response after scrolling or changing sections.
+    for id in cover_targets.keys():
+        var live: Array = []
+        for control in cover_targets[id]:
+            if is_instance_valid(control) and control.is_inside_tree(): live.append(control)
+        if live.is_empty(): cover_targets.erase(id)
+        else: cover_targets[id] = live
+    trim_cover_cache()
+    for id in cover_targets:
+        if cover_pending.size() >= COVER_REQUEST_LIMIT: break
+        if cover_cache.has(id) or cover_pending.has(id): continue
+        if int(cover_failed.get(id, 0)) > Time.get_ticks_msec(): continue
+        cover_failed.erase(id)
+        cover_pending[id] = true
+        reader._request("cover", {"manga": id})
+
+func register_cover(id: String, control: TextureButton) -> void:
+    if not cover_targets.has(id): cover_targets[id] = []
+    cover_targets[id].append(control)
+    if cover_cache.has(id):
+        var texture = cover_cache[id]
+        cover_cache.erase(id)
+        cover_cache[id] = texture
+        control.texture_normal = texture
+
+func trim_cover_cache() -> void:
+    for id in cover_cache.keys():
+        if cover_cache.size() <= COVER_CACHE_LIMIT: break
+        if not cover_targets.has(id): cover_cache.erase(id)
+    for id in cover_failed.keys():
+        if int(cover_failed[id]) <= Time.get_ticks_msec(): cover_failed.erase(id)

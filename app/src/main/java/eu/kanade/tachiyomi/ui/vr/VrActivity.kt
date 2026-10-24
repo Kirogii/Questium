@@ -1,10 +1,12 @@
 package eu.kanade.tachiyomi.ui.vr
 
 // KMK -->
+import android.content.Intent
 import android.os.Bundle
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.lifecycleScope
+import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.ui.reader.ReaderViewModel
 import kotlinx.coroutines.launch
 import mihon.app.di.appGraph
@@ -59,6 +61,22 @@ class VrActivity : GodotActivity() {
             contentBridge = it
         },
     )
+
+    override fun startActivity(intent: Intent, options: Bundle?) {
+        if (intent.component?.className == eu.kanade.tachiyomi.ui.reader.ReaderActivity::class.java.name && contentBridge != null) {
+            val mangaId = intent.getLongExtra("manga", -1L)
+            val chapterId = intent.getLongExtra("chapter", -1L)
+            if (mangaId > 0 && chapterId > 0) {
+                contentBridge?.openNativeReader(mangaId, chapterId, intent.getIntExtra("page", -1).takeIf { it >= 0 })
+                return
+            }
+        }
+        super.startActivity(intent, options)
+    }
+
+    fun applySourceFilters(sourceId: Long, filters: List<Filter<*>>, query: String?) {
+        contentBridge?.applyNativeSourceFilters(sourceId, filters, query)
+    }
 
     fun reader(mangaId: Long, chapterId: Long): ReaderViewModel {
         check(android.os.Looper.myLooper() == android.os.Looper.getMainLooper())

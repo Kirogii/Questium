@@ -915,31 +915,10 @@ class MangaScreenModel(
                     }
                 }
 
-                // Now check if user previously set categories, when available
-                val categories = getCategories()
-                val defaultCategoryId = libraryPreferences.defaultCategory().get().toLong()
-                val defaultCategory = categories.find { it.id == defaultCategoryId }
-                when {
-                    // Default category set
-                    defaultCategory != null -> {
-                        val result = updateManga.awaitUpdateFavorite(manga.id, true)
-                        if (!result) return@launchIO
-                        moveMangaToCategory(defaultCategory)
-                    }
-
-                    // Automatic 'Default' or no categories
-                    defaultCategoryId == 0L || categories.isEmpty() -> {
-                        val result = updateManga.awaitUpdateFavorite(manga.id, true)
-                        if (!result) return@launchIO
-                        moveMangaToCategory(null)
-                    }
-
-                    // Choose a category
-                    else -> {
-                        showTrackDialogAfterCategorySelection = true
-                        showChangeCategoryDialog()
-                    }
-                }
+                // KMK --> Always show the category popup with the per-book sync choice.
+                showTrackDialogAfterCategorySelection = true
+                showChangeCategoryDialog()
+                // KMK <--
 
                 // Finally match with enhanced tracking when available
                 addTracks.bindEnhancedTrackers(manga, state.source)
@@ -954,7 +933,7 @@ class MangaScreenModel(
         val manga = successState?.manga ?: return
         screenModelScope.launch {
             val categories = getCategories()
-            val selection = getMangaCategoryIds(manga)
+            val selection = if (manga.favorite) getMangaCategoryIds(manga) else listOf(libraryPreferences.defaultCategory().get().toLong())
             updateSuccessState { successState ->
                 successState.copy(
                     dialog = Dialog.ChangeCategory(

@@ -1,6 +1,9 @@
 extends RefCounted
 
 const ACTIONS = ["Next page", "Previous page", "Interact", "Grab", "Book Options", "Library", "Center", "Switch hands", "See through", "None"]
+var palette: Dictionary = {}
+var palette_id := "questium_frost"
+var palette_icons: Dictionary = {}
 var reader: Node3D
 var config := ConfigFile.new()
 var config_path := "user://controls.cfg"
@@ -30,6 +33,9 @@ func _init(host: Node3D) -> void:
 func style(color: Color, radius: int, outline: bool = false) -> StyleBoxFlat:
     var box := StyleBoxFlat.new()
     box.bg_color = color
+    if palette_id != "questium_frost" and not palette.is_empty():
+        var tint := theme_color("surface", color) if color.s < 0.3 else theme_color("primary", color)
+        box.bg_color = Color(tint, color.a)
     box.set_corner_radius_all(radius)
     box.content_margin_left = 16
     box.content_margin_right = 16
@@ -39,6 +45,38 @@ func style(color: Color, radius: int, outline: bool = false) -> StyleBoxFlat:
         box.set_border_width_all(2)
         box.border_color = Color(0.85, 0.86, 0.89)
     return box
+
+func theme_color(key: String, fallback: Color) -> Color:
+    if palette_id == "questium_frost" or not palette.has(key): return fallback
+    var argb := int(palette[key])
+    return Color8((argb >> 16) & 255, (argb >> 8) & 255, argb & 255, (argb >> 24) & 255)
+
+func palette_icon(path: String, original: String) -> Texture2D:
+    if palette_id == "questium_frost": return load(path)
+    var key := path + palette_id + str(palette.get("primary", 0))
+    if not palette_icons.has(key):
+        var svg := FileAccess.get_file_as_string(path).replace(original, "#" + theme_color("primary", Color.WHITE).to_html(false))
+        var image := Image.new()
+        if image.load_svg_from_string(svg) == OK: palette_icons[key] = ImageTexture.create_from_image(image)
+    return palette_icons.get(key, load(path))
+
+func apply_palette(id: String, colors: Dictionary) -> void:
+    palette_id = id
+    palette = colors
+    palette_icons.clear()
+    for panel in reader.panels:
+        if panel.has("viewport"):
+            theme_settings(panel.viewport)
+            if panel.has("background"):
+                var old: StyleBoxFlat = panel.background.get_theme_stylebox("panel").duplicate()
+                if not panel.background.has_meta("original_surface"): panel.background.set_meta("original_surface", old.bg_color)
+                var original: Color = panel.background.get_meta("original_surface")
+                var tint := theme_color("surface", original)
+                old.bg_color = Color(tint, original.a)
+                panel.background.add_theme_stylebox_override("panel", old)
+        for child in panel.node.get_children():
+            if child is MeshInstance3D and child.material_override is ShaderMaterial:
+                child.material_override.set_shader_parameter("theme_tint", theme_color("surface", Color(0.30, 0.31, 0.33)))
 
 func load_config() -> void:
     config.load(config_path)
@@ -104,6 +142,7 @@ func clear_book_stretch_override() -> void:
 func label(parent: Container, text: String, font_size: int = 24) -> Label:
     var node := Label.new()
     node.text = reader._label(text)
+    node.add_theme_color_override("font_color", theme_color("on_surface", Color.WHITE))
     node.add_theme_font_size_override("font_size", font_size)
     parent.add_child(node)
     return node
@@ -158,7 +197,9 @@ func set_icon_label(button: Button, caption: String) -> void:
     if is_instance_valid(text): text.text = reader._label(caption)
 
 func build() -> void:
-    var panel: Dictionary = reader._panel(reader.book, Vector2(0.34, 0.082), Vector2i(1000, 242), Vector3.ZERO)
+    var panel: Dictionary = reader._panel(reader.book, Vector2(0.34, 0.082), Vector2i(1000, 242), Vector3.ZERO, false)
+    panel["hand_attached"] = true
+    panel["popup"] = true
     panel.background.add_theme_stylebox_override("panel", style(Color(0.04, 0.045, 0.055, 0.86), 22))
     reader.toolbar_view = panel.viewport
     var column: VBoxContainer = panel.content
@@ -254,7 +295,7 @@ func show_book() -> void:
     options_title.clip_text = true
     line(content)
     render_book_options(content, options_page)
-    reader._button(footer, "Recenter", reader.recenter)
+    reader._button(footer, "Recenter", reader.request_recenter)
     theme_settings(footer)
 
 func render_book_options(content: VBoxContainer, page: int, embedded: bool = false) -> void:
@@ -357,9 +398,9 @@ func switch_row(parent: Container, caption: String, value: bool, callback: Calla
     )
 
 func theme_switch(toggle: CheckButton) -> void:
-    toggle.add_theme_icon_override("checked", preload("res://icons/switch_on.svg"))
+    toggle.add_theme_icon_override("checked", palette_icon("res://icons/switch_on.svg", "#85bb79"))
     toggle.add_theme_icon_override("unchecked", preload("res://icons/switch_off.svg"))
-    toggle.add_theme_icon_override("checked_disabled", preload("res://icons/switch_on.svg"))
+    toggle.add_theme_icon_override("checked_disabled", palette_icon("res://icons/switch_on.svg", "#85bb79"))
     toggle.add_theme_icon_override("unchecked_disabled", preload("res://icons/switch_off.svg"))
     toggle.custom_minimum_size.y = 60
 
@@ -370,6 +411,9 @@ func settings_surface(radius: int = 32) -> StyleBoxFlat:
     return panel
 
 func theme_settings(node: Node) -> void:
+    if node is Label:
+        if not node.has_meta("original_font_color"): node.set_meta("original_font_color", node.get_theme_color("font_color"))
+        node.add_theme_color_override("font_color", theme_color("on_surface", node.get_meta("original_font_color")))
     if node is Button:
         for state in ["normal", "hover", "pressed", "disabled"]:
             var box := style(Color(0.64, 0.63, 0.60, 0.18 if state == "normal" else 0.28), 22)
@@ -378,10 +422,10 @@ func theme_settings(node: Node) -> void:
             node.add_theme_stylebox_override(state, box)
         var focus := style(Color(0.74, 0.48, 0.25, 0.18), 22)
         focus.set_border_width_all(2)
-        focus.border_color = Color(0.90, 0.65, 0.38, 0.65)
+        focus.border_color = Color(theme_color("primary", Color(0.90, 0.65, 0.38)), 0.65)
         node.add_theme_stylebox_override("focus", focus)
         node.add_theme_font_size_override("font_size", 22)
-        node.add_theme_color_override("font_color", Color(0.96, 0.95, 0.93))
+        node.add_theme_color_override("font_color", theme_color("on_surface", Color(0.96, 0.95, 0.93)))
         node.add_theme_color_override("font_disabled_color", Color(0.96, 0.95, 0.93, 0.40))
         node.custom_minimum_size.y = maxf(node.custom_minimum_size.y, 56)
         if node is CheckButton or node is CheckBox:
@@ -390,7 +434,7 @@ func theme_settings(node: Node) -> void:
         if node is CheckButton: theme_switch(node)
         if node is CheckBox:
             for suffix in ["", "_disabled"]:
-                node.add_theme_icon_override("checked" + suffix, preload("res://icons/checkbox_on.svg"))
+                node.add_theme_icon_override("checked" + suffix, palette_icon("res://icons/checkbox_on.svg", "#8ac47e"))
                 node.add_theme_icon_override("unchecked" + suffix, preload("res://icons/checkbox_off.svg"))
             node.add_theme_constant_override("h_separation", 14)
         if node is OptionButton:
@@ -402,14 +446,14 @@ func theme_settings(node: Node) -> void:
             popup.add_theme_stylebox_override("hover", focus)
             popup.add_theme_font_size_override("font_size", 22)
             popup.add_theme_constant_override("v_separation", 18)
-            popup.add_theme_color_override("font_color", Color(0.96, 0.95, 0.93))
+            popup.add_theme_color_override("font_color", theme_color("on_surface", Color(0.96, 0.95, 0.93)))
             popup.add_theme_color_override("font_hover_color", Color.WHITE)
     elif node is HSlider:
         theme_slider(node)
     elif node is LineEdit:
         node.add_theme_stylebox_override("normal", settings_surface(18))
         var focus := settings_surface(18)
-        focus.border_color = Color(0.90, 0.65, 0.38, 0.65)
+        focus.border_color = Color(theme_color("primary", Color(0.90, 0.65, 0.38)), 0.65)
         node.add_theme_stylebox_override("focus", focus)
         node.add_theme_font_size_override("font_size", 22)
     for child in node.get_children(): theme_settings(child)
@@ -432,6 +476,12 @@ func theme_slider(slider: HSlider) -> void:
 func update_palm_options(facing: bool, palm: Vector3) -> void:
     if not palm_options_requested: return
     options.visible = facing and not reader.chapter_token.is_empty()
+    options.set_meta("hand_attached", true)
+    for panel in reader.panels:
+        if panel.node == options:
+            panel["hand_attached"] = true
+            panel["popup"] = true
+            if is_instance_valid(panel.get("drag_bar")): panel.drag_bar.visible = false
     if options.visible:
         var right: Vector3 = reader.camera.global_basis.x.normalized()
         options.global_position = palm + Vector3.UP * 0.28 + right * 0.12
@@ -563,6 +613,10 @@ func toggle(from_palm: bool = false) -> void:
         close_options()
         return
     palm_options_requested = from_palm and reader.tracked.values().any(func(value): return value.get("natural_hand", false))
+    for panel in reader.panels:
+        if panel.node == options:
+            panel["hand_attached"] = palm_options_requested
+            if is_instance_valid(panel.get("drag_bar")): panel.drag_bar.visible = not palm_options_requested
     options.visible = true
     show_book()
     if reader.workspace: reader.workspace.place_settings()
@@ -591,7 +645,7 @@ func perform(action: String) -> void:
             if not reader.toolbar_forced:
                 close_options()
         "Library": reader.toggle_library()
-        "Center": reader.recenter()
+        "Center": reader.request_recenter()
         "See through": reader._set_passthrough(not reader.passthrough_enabled)
         "Switch hands":
             reader._cancel_interactions()

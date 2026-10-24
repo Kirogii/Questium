@@ -529,6 +529,16 @@ class MangaScreen(
             is MangaScreenModel.Dialog.ChangeCategory -> {
                 ChangeCategoryDialog(
                     initialSelection = dialog.initialSelection,
+                    // KMK -->
+                    onSyncToMain = if (!dialog.manga.favorite) {
+                        { syncToMain ->
+                            eu.kanade.tachiyomi.data.questiumsync.QuestiumSync.get(context)
+                                .setLibrarySync(dialog.manga.source, dialog.manga.url, syncToMain)
+                        }
+                    } else {
+                        null
+                    },
+                    // KMK <--
                     onDismissRequest = onDismissRequest,
                     onEditCategories = { navigator.push(CategoryScreen()) },
                     onConfirm = { include, _ ->

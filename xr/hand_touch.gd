@@ -77,6 +77,7 @@ func update(hand: String, tip: Vector3, valid: bool, pinched: bool) -> bool:
     var nearest: Dictionary = {}
     var depth := 0.14
     for candidate in reader.panels:
+        if candidate.get("hand_attached", false) and hand == reader.palm_hand: continue
         if candidate.get("android", false) or not candidate.node.is_visible_in_tree():
             continue
         var local: Vector3 = candidate.node.to_local(tip)

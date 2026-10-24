@@ -3,6 +3,7 @@ package eu.kanade.tachiyomi.data.questiumsync
 // KMK -->
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.net.InetAddress
@@ -10,6 +11,9 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.zip.Deflater
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -29,17 +33,21 @@ data class SyncMessage(
     val devices: List<SyncPeer> = emptyList(),
     val library: SyncLibrary? = null,
     val error: String = "",
+    val deltaVersion: Int = 0,
+    val baseline: String = "",
+    val acknowledgement: String = "",
+    val transfer: SyncTransfer? = null,
 )
 
 /** Versioned, bounded, encrypted LAN protocol. Fresh server challenges prevent replay. */
 object SyncWire {
     const val PORT = 37443
-    private const val MAGIC = 0x51535931
+    private const val MAGIC = 0x51535932
     // The wire length is an Int, so the protocol itself is the only practical bound.
     private const val MAX_BYTES = Int.MAX_VALUE - 28
     val json = Json {
         ignoreUnknownKeys = true
-        encodeDefaults = true
+        encodeDefaults = false
     }
     private val random = SecureRandom()
 
@@ -55,7 +63,7 @@ object SyncWire {
     fun call(peer: SyncPeer, request: SyncMessage): SyncMessage = Socket().use { socket ->
         require(peer.port in 1024..65535)
         socket.connect(InetSocketAddress(address(peer.host), peer.port), 5000)
-        socket.soTimeout = 120000
+        socket.soTimeout = 5000
         val input = DataInputStream(socket.getInputStream())
         val output = DataOutputStream(socket.getOutputStream())
         output.writeUTF(if (request.operation == "pair") "" else request.id)
@@ -64,6 +72,7 @@ object SyncWire {
         val challenge = ByteArray(32).also(input::readFully)
         write(output, peer.secret, challenge + byteArrayOf(2), SyncMessage(operation = "authenticate"))
         require(read(input, peer.secret, challenge + byteArrayOf(3), 4096).operation == "authenticated")
+        socket.soTimeout = 0
         write(output, peer.secret, challenge + byteArrayOf(0), request)
         read(input, peer.secret, challenge + byteArrayOf(1)).also { require(it.error.isEmpty()) { it.error } }
     }
@@ -81,7 +90,7 @@ object SyncWire {
         output.flush()
         require(read(input, secret, challenge + byteArrayOf(2), 4096).operation == "authenticate")
         write(output, secret, challenge + byteArrayOf(3), SyncMessage(operation = "authenticated"))
-        socket.soTimeout = 120000
+        socket.soTimeout = 0
         val request = read(input, secret, challenge + byteArrayOf(0))
         require(if (identity.isEmpty()) request.operation == "pair" else request.id == identity && request.operation != "pair")
         val response = try {
@@ -93,7 +102,13 @@ object SyncWire {
     }
 
     private fun write(output: DataOutputStream, secret: String, aad: ByteArray, message: SyncMessage) {
-        val bytes = json.encodeToString(SyncMessage.serializer(), message).toByteArray(Charsets.UTF_8)
+        val bytes = ByteArrayOutputStream().also { buffer ->
+            object : GZIPOutputStream(buffer) {
+                init {
+                    def.setLevel(Deflater.BEST_COMPRESSION)
+                }
+            }.use { it.write(json.encodeToString(SyncMessage.serializer(), message).toByteArray(Charsets.UTF_8)) }
+        }.toByteArray()
         require(bytes.size <= MAX_BYTES) { "Sync payload is too large for the wire protocol" }
         val nonce = ByteArray(12).also(random::nextBytes)
         val cipher = cipher(Cipher.ENCRYPT_MODE, secret, nonce, aad)
@@ -110,7 +125,22 @@ object SyncWire {
         val nonce = ByteArray(12).also(input::readFully)
         val encrypted = ByteArray(size - 12).also(input::readFully)
         val bytes = cipher(Cipher.DECRYPT_MODE, secret, nonce, aad).doFinal(encrypted)
-        return json.decodeFromString(SyncMessage.serializer(), bytes.toString(Charsets.UTF_8))
+        val decoded = GZIPInputStream(bytes.inputStream()).use { gzip ->
+            if (limit == MAX_BYTES) {
+                gzip.readBytes()
+            } else {
+                ByteArrayOutputStream().also { buffer ->
+                    while (buffer.size() <= limit) {
+                        val next = gzip.read()
+                        if (next < 0) break
+                        buffer.write(next)
+                    }
+                }.toByteArray().also {
+                    require(it.size <= limit) { "Invalid authentication payload size" }
+                }
+            }
+        }
+        return json.decodeFromString(SyncMessage.serializer(), decoded.toString(Charsets.UTF_8))
     }
 
     private fun cipher(mode: Int, secret: String, nonce: ByteArray, aad: ByteArray): Cipher {

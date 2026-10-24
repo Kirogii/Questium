@@ -147,6 +147,12 @@ data object HistoryTab : Tab {
             is HistoryScreenModel.Dialog.ChangeCategory -> {
                 ChangeCategoryDialog(
                     initialSelection = dialog.initialSelection,
+                    // KMK -->
+                    onSyncToMain = { syncToMain ->
+                        eu.kanade.tachiyomi.data.questiumsync.QuestiumSync.get(context)
+                            .setLibrarySync(dialog.manga.source, dialog.manga.url, syncToMain)
+                    },
+                    // KMK <--
                     onDismissRequest = onDismissRequest,
                     onEditCategories = { navigator.push(CategoryScreen()) },
                     onConfirm = { include, _ ->

@@ -101,6 +101,16 @@ class ExtensionManager(
 
     private val availableExtensionMapFlow = MutableStateFlow(emptyMap<String, Extension.Available>())
 
+    // KMK -->
+    internal fun installedForSync(): List<Extension.Installed> = installedExtensionMapFlow.value.values.toList()
+
+    internal fun availableForSync(packageName: String, signature: String, store: String): Extension.Available? =
+        availableExtensionMapFlow.value.values.firstOrNull {
+            it.pkgName == packageName && it.signatureHash == signature && (store.isEmpty() || it.store.indexUrl == store) &&
+                !it.isBlacklisted()
+        }
+    // KMK <--
+
     // SY -->
     val availableExtensionsFlow = availableExtensionMapFlow.map { it.filterNotBlacklisted().values.toList() }
         .stateIn(scope, SharingStarted.Lazily, availableExtensionMapFlow.value.values.toList())

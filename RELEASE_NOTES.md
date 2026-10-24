@@ -1,4 +1,4 @@
-# Questium v1.0.1 — Slight minor update
+# Questium v1.1.0
 
 - Remove the 32 MiB hard limit from Questium Sync payloads; larger libraries can sync within the wire protocol's framing limits.
 
@@ -120,3 +120,19 @@ files moved. See .github/scripts/release_notes.py.
 
 - Remove automatic HUD/book recentering while looking away; preserve manual recenter controls.
 - Drag the main HUD and popups by clenching inside their panels. Keep popups above books and other UI, with accessible Close controls.
+
+- Compress Questium Sync transfers with maximum gzip compression and no 5 MB cutoff. Sync only reading history/progress and library membership, with a checked-by-default option to sync new books to the main device. Update both devices for the new protocol.
+
+- Add original Android library, history, updates, browse, and More actions through frosted VR controls, including selection and nested dialogs.
+- Reuse the Android source-filter dialog and saved searches in VR; apply its real filter tree to spatial search results.
+- Add backend light/dark color palettes under Questium Settings → Themes. Questium Frost remains the default appearance.
+- Add controller drag bars to world windows while retaining hand dragging.
+- Build Windows Quest APKs without WSL by default: a pinned ARM64 decoder input and native Windows CPU llama builds. Vulkan remains optional.
+
+- Restore the fixed VR sidebar and settings category navigation; resize More controls for readable, usable VR targets and remove its duplicate Settings entry.
+- Open source filters as a Questium options-only popup with Reset and Filter, remove Search by tags, and show library updates as a scrollable day-grouped feed.
+- Fix opposite-hand palm menu taps, remove attached-menu drag bars, and show a three-second recenter countdown before moving windows.
+
+- Load library, history, updates, and search covers only near the visible scroll area, releasing distant covers to keep large collections responsive.
+- Make long-page finger scrolling more reliable while preserving menu taps and page gestures.
+- Sync extension repositories before missing extensions, and keep per-device JSON checkpoints so repeat syncs transfer changed chapter progress instead of the whole library.
