@@ -41,7 +41,7 @@ android {
         // KMK <--
 
         // These need to be updated for every new release that should be automatically pushed
-        versionCode = 204
+        versionCode = 205
         versionName = providers.environmentVariable("VR_RELEASE_VERSION")
             .map { it.removePrefix("v") }.getOrElse("1.1.0")
 
