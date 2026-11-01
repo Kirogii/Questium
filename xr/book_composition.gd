@@ -1,6 +1,7 @@
 extends Node
 
 const PAGE_CLEARANCE := 0.003
+const NATIVE_PAGE_LAYERS_ENABLED := false
 
 # Reuse the actual page meshes/materials in isolated orthographic viewports.
 # Only the active book gets layers; animated/closed pages stay in the 3D scene.
@@ -10,6 +11,7 @@ var suppressed: Dictionary = {}
 
 func setup(host: Node3D) -> void:
     reader = host
+    if not NATIVE_PAGE_LAYERS_ENABLED: return
     if not reader.xr or not reader.xr.is_initialized(): return
     var probe := OpenXRCompositionLayerQuad.new()
     var supported := probe.is_natively_supported()

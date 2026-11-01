@@ -17,7 +17,7 @@ func check() -> void:
     var compositor = load("res://book_composition.gd").new()
     reader.add_child(compositor)
     compositor.setup(reader)
-    for index in 3: compositor.create_entry(index)
+    assert(not compositor.NATIVE_PAGE_LAYERS_ENABLED and compositor.entries.is_empty(), "Use the scene-rendered pages until Quest composition layers present their content reliably")
     var book: SpatialBook = reader.book
     book.token = "test"
     book.visible = true
@@ -31,24 +31,9 @@ func check() -> void:
     book.set_mode("book")
     book.set_open(1.0)
     compositor.sync()
-    assert(compositor.entries[0].layer.visible and compositor.entries[1].layer.visible)
-    assert(not compositor.entries[2].layer.visible)
-    assert(book.left_leaf.layers == 0 and book.right_leaf.layers == 0)
-    assert(compositor.entries[0].meshes[0].material_override == book.left_leaf.material_override)
-    for entry in compositor.entries:
-        assert(entry.layer.sort_order < 0 and entry.layer.enable_hole_punch, "Sharp pages allow closer hands and rays to occlude them")
-        assert(entry.layer.layer_viewport == entry.presentation)
-        assert(entry.presentation.get_child(0).texture == entry.viewport.get_texture())
-    if DisplayServer.get_name() != "headless":
-        await RenderingServer.frame_post_draw
-        compositor.entries[0].viewport.get_texture().get_image().save_png("E:/Questium-Build/logs/composition-left-page.png")
-        compositor.entries[1].viewport.get_texture().get_image().save_png("E:/Questium-Build/logs/composition-right-page.png")
-    book.scale = Vector3.ONE * 1.3
-    compositor.sync()
-    assert(compositor.entries[0].layer.quad_size.is_equal_approx(Vector2(0.28, 0.40) * 1.3))
-    var page_normal: Vector3 = book.global_basis.z
-    var page_center: Vector3 = book.global_transform * Vector3(-book.PAGE_WIDTH / 2, 0, 0)
-    assert(is_equal_approx((compositor.entries[0].layer.global_position - page_center).dot(page_normal.normalized()), compositor.PAGE_CLEARANCE * 1.3), "Depth mask clears the paper stack at the book's scale")
+    assert(book.left_leaf.layers != 0 and book.right_leaf.layers != 0, "Stationary manga pages stay visible in the scene renderer")
+    assert(book.left_leaf.material_override.get_shader_parameter("front_image") == texture)
+    assert(book.right_leaf.material_override.get_shader_parameter("front_image") == texture)
     var geometry = load("res://book_geometry.gd")
     for side in [-1, 1]:
         var stack: ArrayMesh = geometry.stack(side, book.PAGE_WIDTH, book.PAGE_HEIGHT, 0.008)
@@ -57,21 +42,14 @@ func check() -> void:
             assert(vertex.z < 0.0, "Paper stack stays behind the printed page surface")
     assert(book.begin_turn(1))
     compositor.sync()
-    assert(not compositor.entries[0].layer.visible and book.left_leaf.layers != 0, "Animated pages use the original 3D geometry")
-    assert(compositor.entries[0].presentation.render_target_update_mode == SubViewport.UPDATE_DISABLED)
+    assert(book.left_leaf.layers != 0 and book.right_leaf.layers != 0, "Animated pages keep using the scene renderer")
     book.turn_direction = 0
     book.set_mode("scroll")
     compositor.sync()
-    assert(compositor.entries[2].layer.visible and not compositor.entries[0].layer.visible)
-    assert(book.scroll_screen.layers == 0)
-    if DisplayServer.get_name() != "headless":
-        await RenderingServer.frame_post_draw
-        compositor.entries[2].viewport.get_texture().get_image().save_png("E:/Questium-Build/logs/composition-scroll-page.png")
+    assert(book.scroll_screen.layers != 0, "Long pages stay visible in the scene renderer")
     book.hide()
     compositor.sync()
-    assert(not compositor.entries[2].layer.visible and book.scroll_screen.layers != 0)
-    assert(compositor.entries[2].viewport.render_target_update_mode == SubViewport.UPDATE_DISABLED)
     reader.queue_free()
     await process_frame
-    print("PASS: long palm titles, stationary page layers, animated fallback, scrolling, scale and hide/restore")
+    print("PASS: long palm titles and visible scene-rendered manga pages in book and scroll modes")
     quit()
