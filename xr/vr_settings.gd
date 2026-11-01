@@ -72,7 +72,6 @@ func open() -> void:
         anchor.move_child(tabs, workspace.heading.get_parent().get_index() + 1)
     workspace.section = "Settings"
     workspace.library_actions.visible = false
-    workspace.hud.background.add_theme_stylebox_override("panel", workspace.reader.ui.settings_surface(40))
     tabs.visible = true
     workspace.hud_back.icon = preload("res://icons/back.svg")
     workspace.hud_back.tooltip_text = "Back to main UI"
@@ -107,6 +106,9 @@ func select_tab(index: int) -> void:
     if index == 1:
         workspace.navigation(sidebar, "Questium Sync", open_sync)
         workspace.navigation(sidebar, "Themes", open_themes)
+        workspace.navigation(sidebar, "Graphics", render_graphics)
+        workspace.navigation(sidebar, "Controls", render_controls)
+        workspace.navigation(sidebar, "Map", render_map)
         workspace.reader.ui.apply_book_settings()
         for page in 3:
             var caption: String = ["Book Options", "Layout", "System Settings"][page]
@@ -133,11 +135,155 @@ func select_tab(index: int) -> void:
     workspace.reader.ui.theme_settings(sidebar)
     workspace.reader.ui.theme_settings(tabs)
 
+func render_controls() -> void:
+    workspace.clear(workspace.gallery)
+    workspace.heading.text = "Controls"
+    workspace.label(workspace.gallery, "Controller button assignments", 28)
+    var ui = workspace.reader.ui
+    ui.render_bindings(workspace.gallery)
+    workspace.label(workspace.gallery, "Hand gestures", 28)
+    var captions := {"palm_menu": "Palm-facing menu", "depth": "Thumb-up window distance", "resize": "Two-hand book and HUD resize", "swipe_scroll": "Hand swipe scrolling", "page_turn": "Hand sweep / chop page turns", "touch": "Touch buttons and close marker", "fist_grab": "Fist grab book and windows"}
+    for key in ui.gestures:
+        var gesture: String = key
+        var toggle := CheckButton.new()
+        toggle.text = captions[key]
+        toggle.button_pressed = ui.gestures[key]
+        toggle.custom_minimum_size.y = 56
+        workspace.gallery.add_child(toggle)
+        toggle.toggled.connect(func(enabled: bool):
+            workspace.reader._cancel_interactions()
+            ui.gestures[gesture] = enabled
+            ui.save()
+        )
+    workspace.reader.ui.theme_settings(workspace.gallery)
+
+func render_graphics() -> void:
+    workspace.clear(workspace.gallery)
+    workspace.heading.text = "Graphics"
+    workspace.label(workspace.gallery, "Quest headset performance", 28)
+    var description: Label = workspace.label(workspace.gallery, "Quest 3S is the default and keeps headroom for passthrough, hand tracking and long pages. Choose a preset or tune each part below.", 18)
+    description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+
+    var preset_row := HBoxContainer.new()
+    workspace.gallery.add_child(preset_row)
+    workspace.label(preset_row, "Preset", 22).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    var preset := OptionButton.new()
+    preset.custom_minimum_size = Vector2(300, 64)
+    for caption in ["Quest 3S (default)", "Quest 3", "Custom"]: preset.add_item(caption)
+    preset.select({"quest_3s": 0, "quest_3": 1, "custom": 2}.get(workspace.reader.ui.graphics_preset, 0))
+    preset_row.add_child(preset)
+    preset.item_selected.connect(func(index: int):
+        if index < 2:
+            workspace.reader.ui.apply_graphics_preset(["quest_3s", "quest_3"][index])
+        else:
+            workspace.reader.ui.graphics_preset = "custom"
+            workspace.reader.ui.save_graphics()
+            workspace.reader.ui.config.save(workspace.reader.ui.config_path)
+        render_graphics.call_deferred()
+    )
+
+    graphics_slider("Eye resolution", "How much resolution each eye renders.", 0.75, 1.15, workspace.reader.ui.graphics_eye_scale, 0.05, "eye_scale")
+    graphics_slider("UI resolution", "Backing resolution for Questium panels and text.", 1.0, 1.6, workspace.reader.ui.graphics_ui_scale, 0.05, "ui_scale")
+    graphics_slider("Foveation", "Off keeps text and images sharp across the view. Higher levels reduce detail away from the view center.", 0, 3, workspace.reader.ui.graphics_foveation, 1, "foveation")
+    graphics_switch("Dynamic foveation", "Vary peripheral resolution with GPU load; this can make sharpness change during use.", workspace.reader.ui.graphics_dynamic_foveation, "dynamic_foveation")
+    graphics_slider("Refresh rate", "Requested headset refresh rate; the closest supported rate is used.", 72, 90, workspace.reader.ui.graphics_refresh_rate, 18, "refresh_rate")
+    graphics_slider("Antialiasing", "Higher values smooth edges but use more GPU time.", 1, 3, workspace.reader.ui.graphics_msaa, 1, "msaa", ["2x", "4x", "8x"])
+    graphics_switch("Room detail", "Show the bar scene; turning it off leaves more headroom for reading.", workspace.reader.ui.graphics_room_detail, "room_detail")
+    workspace.reader.ui.theme_settings(workspace.gallery)
+
+func graphics_slider(title: String, subtitle: String, minimum: float, maximum: float, value: float, step: float, key: String, labels: Array = []) -> void:
+    var card := PanelContainer.new()
+    card.add_theme_stylebox_override("panel", workspace.reader.ui.style(Color(0.46, 0.45, 0.43, 0.12), 22))
+    workspace.gallery.add_child(card)
+    var column := VBoxContainer.new()
+    card.add_child(column)
+    var header := HBoxContainer.new()
+    column.add_child(header)
+    var text := VBoxContainer.new()
+    text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    header.add_child(text)
+    workspace.label(text, title, 22)
+    var help: Label = workspace.label(text, subtitle, 17)
+    help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    help.modulate.a = 0.7
+    var value_label: Label = workspace.label(header, graphics_value_text(key, value, labels), 18)
+    var slider := HSlider.new()
+    workspace.reader.ui.theme_slider(slider)
+    slider.min_value = minimum
+    slider.max_value = maximum
+    slider.step = step
+    slider.value = value
+    slider.custom_minimum_size.y = 56
+    column.add_child(slider)
+    slider.value_changed.connect(func(next: float): value_label.text = graphics_value_text(key, next, labels))
+    slider.drag_ended.connect(func(changed: bool):
+        if changed:
+            workspace.reader.ui.set_graphics_value(key, slider.value)
+            value_label.text = graphics_value_text(key, slider.value, labels)
+    )
+
+func graphics_switch(title: String, subtitle: String, value: bool, key: String) -> void:
+    var row := HBoxContainer.new()
+    workspace.gallery.add_child(row)
+    var text := VBoxContainer.new()
+    text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    row.add_child(text)
+    workspace.label(text, title, 22)
+    var help: Label = workspace.label(text, subtitle, 17)
+    help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+    help.modulate.a = 0.7
+    var toggle := CheckButton.new()
+    workspace.reader.ui.theme_switch(toggle)
+    toggle.button_pressed = value
+    row.add_child(toggle)
+    toggle.toggled.connect(func(next: bool): workspace.reader.ui.set_graphics_value(key, next))
+
+func graphics_value_text(key: String, value: float, labels: Array) -> String:
+    if not labels.is_empty(): return labels[clampi(roundi(value) - 1, 0, labels.size() - 1)]
+    if key == "eye_scale" or key == "ui_scale": return "%.2fx" % value
+    if key == "refresh_rate": return "%d Hz" % roundi(value)
+    return str(roundi(value))
+
+func render_map() -> void:
+    workspace.clear(workspace.gallery)
+    workspace.heading.text = "Map"
+    workspace.label(workspace.gallery, "Select a seat", 28)
+    workspace.label(workspace.gallery, "Choose any booth or stool to move there and sit down.", 18)
+    var map_panel := PanelContainer.new()
+    map_panel.custom_minimum_size = Vector2(760, 560)
+    map_panel.add_theme_stylebox_override("panel", workspace.reader.ui.style(Color(0.08, 0.09, 0.10, 0.88), 28))
+    workspace.gallery.add_child(map_panel)
+    var map := Control.new()
+    map.custom_minimum_size = Vector2(720, 520)
+    map_panel.add_child(map)
+    var bounds: Rect2 = workspace.reader.room.bounds
+    var inner := Rect2(36, 34, 648, 440)
+    var floor := ColorRect.new()
+    floor.position = inner.position
+    floor.size = inner.size
+    floor.color = Color(0.18, 0.20, 0.22, 1.0)
+    map.add_child(floor)
+    var title: Label = workspace.label(map, "OVERHEAD MAP", 18)
+    title.position = Vector2(36, 8)
+    for seat in workspace.reader.room.get_seat_points():
+        var world: Vector3 = seat.global_position
+        var px := inner.position.x + ((world.x - bounds.position.x) / maxf(bounds.size.x, 0.01)) * inner.size.x
+        var py := inner.position.y + ((world.z - bounds.position.y) / maxf(bounds.size.y, 0.01)) * inner.size.y
+        var button := Button.new()
+        button.text = "●"
+        button.tooltip_text = "%s seat %d" % [str(seat.get_meta("seat_group", "Booth")), int(seat.get_meta("booth_seat_index", seat.get_meta("seat_index", 0))) + 1]
+        button.custom_minimum_size = Vector2(48, 48)
+        button.position = Vector2(px - 24, py - 24)
+        button.add_theme_font_size_override("font_size", 24)
+        button.add_theme_color_override("font_color", Color("b8ff48"))
+        button.pressed.connect(func(): workspace.reader.teleport_to_seat(seat))
+        map.add_child(button)
+    workspace.reader.ui.theme_settings(map)
+
 func leave() -> void:
     close_backend()
     if workspace.section == "Settings": workspace.reader._request("settings_dismiss")
     tabs.visible = false
-    workspace.hud.background.add_theme_stylebox_override("panel", workspace.reader.ui.style(Color(0.40, 0.39, 0.37, 0.08), 40))
     workspace.hud_back.icon = preload("res://icons/close.svg")
     workspace.hud_back.tooltip_text = "Close"
     sidebar_scroll.visible = false

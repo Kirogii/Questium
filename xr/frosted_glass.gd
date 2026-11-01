@@ -3,6 +3,7 @@ extends RefCounted
 var materials: Array[ShaderMaterial] = []
 var room: ImageTexture
 var elapsed := 0.0
+const UPDATE_INTERVAL := 0.12
 var stale := 10.0
 
 func register(material: ShaderMaterial) -> void:
@@ -11,7 +12,7 @@ func register(material: ShaderMaterial) -> void:
 func update(reader: Node3D, delta: float) -> void:
     elapsed += delta
     stale += delta
-    if elapsed < 0.08: return
+    if elapsed < UPDATE_INTERVAL: return
     elapsed = 0
     if reader.bridge:
         var data: PackedByteArray = reader.bridge.call("frostedRoomFrame")

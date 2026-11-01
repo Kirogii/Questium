@@ -23,11 +23,11 @@ func check() -> void:
     if DisplayServer.get_name() != "headless":
         await RenderingServer.frame_post_draw
         ui.hud.viewport.get_texture().get_image().save_png("E:/Questium-Build/logs/vr-fixed-hud.png")
-    assert(ui.nav_buttons.size() == 9 and not ui.nav_buttons.has("Updates") and not ui.nav_buttons.has("More"))
+    assert(ui.nav_buttons.size() == 10 and ui.nav_buttons.has("Updates") and ui.nav_buttons.has("Browse") and not ui.nav_buttons.has("More"))
     for nav in ui.nav_buttons.values():
         assert(nav.is_visible_in_tree() and nav.get_global_rect().end.y <= 900, "All original buttons fit without scrolling")
         assert(not nav.get_parent() is ScrollContainer)
-    assert(ui.source_category_row.get_child_count() == 3)
+    assert(ui.source_category_row.get_child_count() == 4)
     assert(not find_button(ui.source_category_row, "Search by tags"))
     ui.selected_source = "123"
     ui.native_source_filters = true

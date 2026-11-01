@@ -27,6 +27,8 @@ import coil3.asDrawable
 import coil3.imageLoader
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
+import coil3.size.Precision
+import coil3.size.Scale
 import eu.kanade.domain.ui.model.AppTheme
 import eu.kanade.presentation.theme.getThemeColorScheme
 import eu.kanade.tachiyomi.data.download.model.Download
@@ -515,6 +517,11 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 settings.publishFilters()
             }
             "reader_filters" -> settings.publishFilters()
+            "scene_mode" -> {
+                graph.preferenceStore.getBoolean(VrSettingKeys.SCENES.key, VrSettingKeys.SCENES.default)
+                    .set(request.getBoolean("enabled"))
+                settings.publishFilters()
+            }
             "settings", "setting", "settings_back", "settings_dismiss", "settings_detail", "settings_semantic" -> settings.request(request)
             "sources" -> sources()
             "extensions" -> extensions()
@@ -706,8 +713,14 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         // Extensions can populate their tag cache while loading the first page.
         send(JSONObject().put("kind", "source_filters").put("source", source.id.toString()).put("items", filterDefinitions(source.getFilterList())))
         val items = JSONArray()
+        val libraryById = graph.getLibraryManga.await().associateBy { it.id }
         graph.networkToLocalManga(result.mangas.map { it.toDomainManga(source.id) }).forEach {
-            items.put(JSONObject().put("id", it.id.toString()).put("title", it.title))
+            val library = libraryById[it.id]
+            items.put(
+                JSONObject().put("id", it.id.toString()).put("title", it.title)
+                    .put("source", source.id.toString()).put("favorite", library != null)
+                    .put("unread_count", library?.unreadCount ?: 0),
+            )
         }
         send(
             JSONObject().put("kind", "source_results").put("source", source.id.toString()).put("page", page)
@@ -816,6 +829,7 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
                 JSONObject().put("id", it.id.toString()).put("title", it.manga.title)
                     .put("favorite", it.manga.favorite).put("last_read", it.lastRead)
                     .put("added", it.manga.dateAdded).put("chapters", it.totalChapters)
+                    .put("source", it.manga.source.toString()).put("unread_count", it.unreadCount)
                     .put("unread", it.unreadCount).put("categories", JSONArray(it.categories.map(Long::toString))),
             )
         }
@@ -890,7 +904,13 @@ class HouriVrBridge(godot: Godot, private val host: VrActivity) : GodotPlugin(go
         var path = ""
         try {
             val manga = graph.getManga.await(mangaId) ?: return
-            val request = ImageRequest.Builder(host).data(manga.asMangaCover()).size(384, 512).allowHardware(false).build()
+            val request = ImageRequest.Builder(host)
+                .data(manga.asMangaCover())
+                .size(1536, 1536)
+                .scale(Scale.FIT)
+                .precision(Precision.INEXACT)
+                .allowHardware(false)
+                .build()
             val drawable = host.imageLoader.execute(request).image?.asDrawable(host.resources) ?: return
             val bitmap = drawable.toBitmap()
             val file = File(session, "cover-$mangaId.png")

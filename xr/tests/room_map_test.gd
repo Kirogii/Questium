@@ -15,7 +15,7 @@ func _check(room: Node3D) -> void:
         printerr("Expected the shipped FBX, got: ", room.map_source)
         quit(1)
         return
-    if room.imported_map == null or room.collision_bodies.size() < 28 or room.seat_points.size() != 21:
+    if room.imported_map == null or room.collision_bodies.size() < 28 or room.seat_points.size() < 21:
         printerr("Imported geometry, collision, or seat points missing")
         quit(1)
         return

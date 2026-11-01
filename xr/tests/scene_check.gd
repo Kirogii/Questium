@@ -11,7 +11,7 @@ func check() -> void:
     assert(reader.scenes_enabled, "Scenes default to enabled")
     assert(is_instance_valid(reader.room), "Reader owns the scene/map host")
     assert(reader.room.map_source == "res://scenes/bar_end.fbx", "Default scene is the supplied bar")
-    assert(reader.room.get_seat_points().size() == 21, "Map exposes actual stools and booth seats")
+    assert(reader.room.get_seat_points().size() >= 21, "Map exposes all stools and booth seats")
     for point in reader.room.get_seat_points():
         assert(point.get_meta("interactable", false), "Seat points are interactable")
         assert(not str(point.get_meta("seat_group")) in reader.room.TABLE_MESHES, "Tables cannot be mistaken for seats")

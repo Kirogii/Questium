@@ -41,9 +41,9 @@ android {
         // KMK <--
 
         // These need to be updated for every new release that should be automatically pushed
-        versionCode = 205
+        versionCode = 206
         versionName = providers.environmentVariable("VR_RELEASE_VERSION")
-            .map { it.removePrefix("v") }.getOrElse("1.1.0")
+            .map { it.removePrefix("v") }.getOrElse("1.1.1")
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
         buildConfigField("String", "COMMIT_SHA", "\"${getGitSha()}\"")

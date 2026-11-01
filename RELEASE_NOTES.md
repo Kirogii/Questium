@@ -1,4 +1,20 @@
-# Questium v1.1.0
+# Questium v1.1.1 — Bluriness Fix
+
+- Keep hands and pointers visible in front of the sharp book pages and main HUD, with depth clearance to prevent page stripes.
+
+- Keep See through synchronized with the scene setting across Settings navigation, and keep the main HUD opaque when entering or leaving Settings.
+
+- Fix a startup crash in optimized Android builds by preserving Godot's native engine callbacks.
+
+- Make the main HUD background fully opaque and match navigation icons to the selected theme's primary color.
+
+- Keep the book's position, rotation, and size when changing chapters; hide the virtual scene when enabling See through; restore a readable main HUD background.
+
+- Restore rounded VR HUD corners, open Browse without automatically showing the source picker, and add Questium Settings > Controls with saved button assignments and individual hand-gesture switches.
+
+- Fix striped stationary reader pages by removing depth interference with the book's paper stack and rendering pages to a texture before OpenXR presentation.
+
+- Render the VR library and Browse HUD through an intermediate texture before OpenXR presentation to keep manga covers and titles clipped inside their scroll area.
 
 - Remove the 32 MiB hard limit from Questium Sync payloads; larger libraries can sync within the wire protocol's framing limits.
 
@@ -22,6 +38,10 @@ files moved. See .github/scripts/release_notes.py.
 -->
 
 ### New
+- Add Questium Settings > Graphics with Quest 3S and Quest 3 presets plus independent eye resolution, UI resolution, foveation, refresh rate, antialiasing and room-detail controls; Quest 3S is the default.
+- Added multiple selectable seats to every booth and a Questium Settings > Map overhead map with one-tap seat buttons.
+- VR Browse now opens with the source list, then enters the source's Latest, Browse, and Library views.
+- Library Updates is available as a first-class category with new-chapter count pills on each manga.
 - Check stable releases from Questium’s own GitHub repository at startup and offer Update now or Continue. Testing releases are excluded. Downloads verify the installed app variant and signing key before opening Android’s installer.
 - Add Questium Sync in Questium Settings: pair and select multiple local devices, coordinate library sync on an Android main device, keep furthest reading progress, and save previous progress in a Revert log. Includes manual backup uploads through Google Drive and Proton Drive.
 - Add an enabled-by-default VR Scenes setting with persisted map selection, a bar-scene loader, a procedural fallback bar, interactable two-person seat points, room collision surfaces, and animated toon/fire scene materials.
@@ -36,6 +56,9 @@ files moved. See .github/scripts/release_notes.py.
 - Quest VR reader development: adds an immersive Settings entry, spatial reader controls and a native page-turn renderer. This work is experimental and still requires APK and headset validation.
 
 ### Improve
+- Use OpenXR composition layers for stationary open book pages and the scrolling reader, preserving reader filters and falling back to curved 3D pages during turns or cover movement.
+- Render the main VR HUD through a native OpenXR composition layer for clearer text and covers, with a dark backing and depth-aware hand/popup visibility; retain mesh rendering when unavailable.
+- Load VR manga covers at source quality up to 1,536 pixels on the longest edge, preserving aspect ratio without enlarging smaller sources.
 - Add a Windows Quest build helper that reuses and verifies an existing ARM64 decoder and stages the APK through the current Android build tools.
 - Raise Quest eye rendering to 150% and UI to 200%, request the highest supported antialiasing up to 8x, and use 16x anisotropic filtering for clearer angled book pages, covers and room textures. Preserve higher-resolution page images and long-page strips up to the GPU texture limit with bounded page memory.
 - Unify spatial settings and source filters with frosted panels, pill buttons and option menus, green switches, rounded checkboxes and matching sliders.
@@ -84,6 +107,9 @@ files moved. See .github/scripts/release_notes.py.
 - Replace the three-window workspace with a single frosted Home, Source Search and Reader interface in the VR room; selecting a cover brings out the physical book preview.
 
 ### Fix
+- Keep palm-menu buttons visible when manga titles are long by truncating the title within the panel.
+- Improve Quest 3S text and manga clarity with full eye resolution, sharper panels, 4x antialiasing, stable preset foveation, and higher-resolution covers; existing named presets update automatically.
+- Prevent downward swipes over library cards from being delivered as taps that open book information.
 - Refresh source-provided tags when opening Filters or Search by tags, including tags loaded asynchronously by extensions; preserve selected filters during refresh.
 - Keep History and library cards uniform with cropped covers, two-line titles and clipped chapter names; long text no longer expands the grid.
 - Make Source Search use typed queries and selected filters even from Latest, and ignore results from an older search when a newer search is pending.
@@ -136,3 +162,12 @@ files moved. See .github/scripts/release_notes.py.
 - Load library, history, updates, and search covers only near the visible scroll area, releasing distant covers to keep large collections responsive.
 - Make long-page finger scrolling more reliable while preserving menu taps and page gestures.
 - Sync extension repositories before missing extensions, and keep per-device JSON checkpoints so repeat syncs transfer changed chapter progress instead of the whole library.
+### New
+
+- VR source browsing now includes Latest, Browse, and Library sections, with library update-count pills on covers.
+
+### Improve
+- Reduce VR UI fill-rate pressure on Quest 3S so text stays at a stable readable sharpness instead of triggering sudden blurry quality drops.
+- Re-centering from the Meta button while reading keeps the reader view active instead of returning the library HUD.
+
+- VR source results append the next source page as you approach the bottom instead of stopping after the first batch.

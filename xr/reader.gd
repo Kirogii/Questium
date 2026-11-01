@@ -17,6 +17,8 @@ var panels: Array[Dictionary] = []
 var window_drag = preload("res://window_drag.gd").new(self)
 var library_panel: Node3D
 var android_app: Object
+var hud_composition: OpenXRCompositionLayerQuad
+var hud_composition_view: SubViewport
 var android_layer: OpenXRCompositionLayerQuad
 var android_started := false
 var android_status: Label
@@ -86,6 +88,10 @@ var pending_seek := -1
 var chapter_token := ""
 var local_pages: Array[String] = []
 var frosted_glass = preload("res://frosted_glass.gd").new()
+## Keep the default below Quest 3S load so the runtime has headroom for hand
+## tracking, passthrough and long-page textures instead of dropping quality.
+const DEFAULT_VR_UI_VIEWPORT_SCALE := 1.50
+var vr_ui_viewport_scale := DEFAULT_VR_UI_VIEWPORT_SCALE
 var ui: RefCounted
 var preferred_hand := "right"
 var haptics := true
@@ -93,6 +99,7 @@ var ui_hand := ""
 var passthrough_enabled := false
 var passthrough_dimmer: MeshInstance3D
 var scenes_enabled := true
+var pending_scene_mode: Variant = null
 var awaiting_head_pose := false
 var startup_height_samples: Array[float] = []
 var startup_height_time := 0.0
@@ -117,14 +124,15 @@ func _ready() -> void:
     add_child(origin)
     xr = XRServer.find_interface("OpenXR")
     if xr and xr.is_initialized():
-        # Godot 4.6 recreates the eye swapchains when this multiplier changes.
-        xr.set("render_target_size_multiplier", 1.5)
+        # Start with stable reading clarity; the Graphics page reapplies the
+        # selected profile after the reader configuration has loaded.
+        xr.set("render_target_size_multiplier", 1.0)
         xr.set("foveation_level", 0)
         xr.set("foveation_dynamic", false)
         xr.call("set_gpu_level", OpenXRInterface.PERF_SETTINGS_LEVEL_SUSTAINED_HIGH)
         if 72.0 in xr.call("get_available_display_refresh_rates"):
             xr.set("display_refresh_rate", 72.0)
-        print("VR quality: eye target ", xr.get_render_target_size(), ", up to 8x MSAA (driver limit), 16x anisotropy, full-resolution periphery")
+        print("VR quality: Quest 3S reading profile, eye target ", xr.get_render_target_size(), ", foveation off, 4x MSAA")
         get_viewport().use_xr = true
         awaiting_head_pose = true
         var xr_camera := XRCamera3D.new()
@@ -153,11 +161,13 @@ func _ready() -> void:
             labels = translated
     ui = preload("res://reader_ui.gd").new(self)
     ui.load_config()
+    apply_graphics_settings()
     book.set_hard_cover(ui.hard_cover)
     book.sfx_enabled = ui.book_sfx
     room = RoomScript.new()
-    room.visible = scenes_enabled
+    room.visible = scenes_enabled and ui.graphics_room_detail
     add_child(room)
+    apply_graphics_settings()
     _build_toolbar()
     toolbar = toolbar_view.get_parent()
     toolbar.reparent(self)
@@ -180,6 +190,10 @@ func _ready() -> void:
     workspace = preload("res://frosted_workspace.gd").new(self)
     workspace.build()
     _protect_workspace_depth()
+    _build_hud_composition()
+    var page_compositor := preload("res://book_composition.gd").new()
+    add_child(page_compositor)
+    page_compositor.setup(self)
     hand_page_turn = preload("res://hand_page_turn.gd").new(self)
     hand_touch = preload("res://hand_touch.gd").new(self)
     hand_controls = preload("res://hand_controls.gd").new(self)
@@ -192,7 +206,15 @@ func _ready() -> void:
         _load_desktop_pages()
         book.visible = not local_pages.is_empty()
     if bridge: _request("app_update_check")
-    _set_passthrough(true)
+    _set_passthrough(not scenes_enabled, false)
+    if FileAccess.file_exists("/storage/emulated/0/Android/data/app.houri.beta/files/book-probe.flag"):
+        var page_probe := preload("res://book_probe.gd").new()
+        add_child(page_probe)
+        page_probe.run.call_deferred(self)
+    if FileAccess.file_exists("/storage/emulated/0/Android/data/app.houri.beta/files/hud-probe.flag"):
+        var probe := preload("res://hud_probe.gd").new()
+        add_child(probe)
+        probe.run.call_deferred(self)
     if bridge and bridge.call("keyboardProbeEnabled"):
         _probe_keyboard.call_deferred()
     if xr and xr.has_signal("pose_recentered"):
@@ -252,11 +274,33 @@ func _build_tracking() -> void:
 func _label(text: String) -> String:
     return str(labels.get(text, text))
 
+func apply_graphics_settings() -> void:
+    if not ui: return
+    vr_ui_viewport_scale = clampf(ui.graphics_ui_scale, 1.0, 1.6)
+    if xr and xr.is_initialized():
+        xr.set("render_target_size_multiplier", clampf(ui.graphics_eye_scale, 0.75, 1.15))
+        xr.set("foveation_level", clampi(ui.graphics_foveation, 0, 3))
+        xr.set("foveation_dynamic", ui.graphics_dynamic_foveation)
+        var rates: Array = xr.call("get_available_display_refresh_rates")
+        if not rates.is_empty():
+            var requested: float = ui.graphics_refresh_rate
+            var closest: float = rates[0]
+            for rate in rates:
+                if absf(float(rate) - requested) < absf(closest - requested): closest = float(rate)
+            xr.set("display_refresh_rate", closest)
+    get_viewport().msaa_3d = [Viewport.MSAA_2X, Viewport.MSAA_4X, Viewport.MSAA_8X][clampi(ui.graphics_msaa - 1, 0, 2)]
+    for panel in panels:
+        if panel.has("viewport"):
+            panel.viewport.size = Vector2i(Vector2(panel.pixels) * vr_ui_viewport_scale)
+    if is_instance_valid(room): room.visible = scenes_enabled and ui.graphics_room_detail
+    if is_instance_valid(passthrough_dimmer): passthrough_dimmer.visible = passthrough_enabled and not scenes_enabled and ui.graphics_room_detail
+
 func request_recenter() -> void:
     if workspace: workspace.request_recenter()
     else: recenter()
 
 func recenter() -> void:
+    var stay_in_reader: bool = workspace != null and workspace.reading and not book.token.is_empty()
     if workspace:
         _cancel_interactions()
     var head := camera.global_transform
@@ -269,11 +313,17 @@ func recenter() -> void:
     if book.token.is_empty() and not workspace:
         book.global_position = head.origin - facing.z * 0.75 - Vector3.UP * 0.12
         book.global_rotation = Vector3(deg_to_rad(-12.0), facing.get_euler().y, 0.0)
-    if is_instance_valid(library_panel):
+    if is_instance_valid(library_panel) and not (workspace and workspace.reading):
         library_panel.global_position = head.origin - facing.z * 1.1
         library_panel.global_basis = facing
     if workspace:
         workspace.recenter(head)
+        if stay_in_reader:
+            workspace.section = "Reader"
+            workspace.reading = true
+            workspace.hud.node.visible = false
+            workspace.previewing = false
+            book.visible = true
 
 func _head_is_tracked() -> bool:
     var tracker := XRServer.get_tracker("head") as XRPositionalTracker
@@ -296,7 +346,7 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3, 
     parent.add_child(node)
     node.position = position
     var viewport := SubViewport.new()
-    viewport.size = Vector2i(Vector2(pixels) * 2.0)
+    viewport.size = Vector2i(Vector2(pixels) * vr_ui_viewport_scale)
     viewport.size_2d_override = pixels
     viewport.size_2d_override_stretch = true
     viewport.transparent_bg = true
@@ -336,10 +386,80 @@ func _panel(parent: Node3D, size: Vector2, pixels: Vector2i, position: Vector3, 
     content.size = Vector2(pixels) - Vector2(32.0, 24.0)
     viewport.add_child(content)
     node.set_meta("raycast_priority", 0)
-    var data := {"node": node, "viewport": viewport, "size": size, "pixels": pixels, "content": content, "background": background}
+    var data := {"node": node, "surface": surface, "frost": frost, "viewport": viewport, "size": size, "pixels": pixels, "content": content, "background": background}
     panels.append(data)
     if draggable: window_drag.register(data)
     return data
+
+func _build_hud_composition() -> void:
+    if not xr or not xr.is_initialized(): return
+    var layer := OpenXRCompositionLayerQuad.new()
+    if not layer.is_natively_supported():
+        layer.free()
+        return
+    hud_composition = layer
+    layer.name = "HUDComposition"
+    layer.alpha_blend = true
+    # Punch a depth-tested opening in the scene so nearby hands and rays stay
+    # in front without sacrificing the compositor's sharp text.
+    layer.sort_order = -1
+    layer.enable_hole_punch = true
+    # The compositor pose is relative to XROrigin3D, not the panel's parent.
+    origin.add_child(layer)
+    _build_hud_composition_view()
+    layer.layer_viewport = hud_composition_view
+    workspace.hud.surface.visible = false
+    workspace.hud.frost.visible = false
+    _sync_hud_composition()
+    RenderingServer.frame_pre_draw.connect(_sync_hud_composition)
+    print("VR HUD: native OpenXR composition layer enabled")
+
+func _build_hud_composition_view() -> void:
+    # Keep Control scissor rectangles in a normal render target. The GLES
+    # OpenXR swapchain only receives a full-frame copy, with no scroll clips.
+    hud_composition_view = SubViewport.new()
+    hud_composition_view.name = "HUDCompositionView"
+    hud_composition_view.transparent_bg = true
+    hud_composition_view.disable_3d = true
+    hud_composition_view.render_target_update_mode = SubViewport.UPDATE_DISABLED
+    origin.add_child(hud_composition_view)
+    var image := TextureRect.new()
+    image.texture = workspace.hud.viewport.get_texture()
+    image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    var mask := ShaderMaterial.new()
+    mask.shader = preload("res://hud_round.gdshader")
+    image.material = mask
+    hud_composition_view.add_child(image)
+    image.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    workspace.hud.surface.material_override.albedo_texture = hud_composition_view.get_texture()
+
+func _sync_hud_composition() -> void:
+    if not is_instance_valid(hud_composition): return
+    var hud: Dictionary = workspace.hud
+    var popup_visible := false
+    for panel in panels:
+        if panel.node != hud.node and panel.get("popup", false) and panel.node.is_visible_in_tree():
+            popup_visible = true
+            break
+    # Composition layers cannot share depth/input with scene-backed popup
+    # windows. Fall back to the original surface while a popup is open.
+    var use_layer: bool = hud.node.is_visible_in_tree() and not popup_visible
+    if is_instance_valid(hud_composition_view):
+        hud_composition_view.size = hud.viewport.size
+        hud_composition_view.render_target_update_mode = SubViewport.UPDATE_ALWAYS if hud.node.is_visible_in_tree() else SubViewport.UPDATE_DISABLED
+    hud_composition.visible = use_layer
+    hud.surface.visible = not use_layer and hud.node.is_visible_in_tree()
+    hud.frost.visible = hud.surface.visible
+    if not use_layer:
+        hud.viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS if hud.node.is_visible_in_tree() else SubViewport.UPDATE_DISABLED
+        return
+    var pose: Transform3D = hud.node.global_transform
+    # OpenXR quad dimensions carry scale; the submitted pose must be rigid.
+    hud_composition.global_transform = Transform3D(pose.basis.orthonormalized(), pose.origin)
+    hud_composition.quad_size = hud.size * Vector2(pose.basis.x.length(), pose.basis.y.length())
+    # A composition viewport has no visible mesh to trigger WHEN_VISIBLE.
+    hud.viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 
 func _protect_workspace_depth() -> void:
     # Map meshes are ordinary depth-tested geometry. HUD and popup surfaces
@@ -357,7 +477,7 @@ func _protect_workspace_depth() -> void:
                     var material: Material = child.material_override
                     if material is StandardMaterial3D:
                         material.render_priority = 120
-                        material.no_depth_test = true
+                        material.no_depth_test = false
                     elif material is ShaderMaterial:
                         material.render_priority = 119
 
@@ -745,6 +865,11 @@ func _commit_locomotion_target() -> void:
     if workspace: workspace.recenter(camera.global_transform)
     _set_locomotion_target(null)
 
+func teleport_to_seat(seat: Node3D) -> void:
+    if not is_instance_valid(seat): return
+    _set_locomotion_target(seat)
+    _commit_locomotion_target()
+
 func _calibrate_player_height(tracked_height: float) -> void:
     # Offset the origin once; scaling tracked hands would distort reach and IPD.
     var physical_height := clampf(tracked_height, 0.8, 2.2)
@@ -837,7 +962,10 @@ func _response(json: String) -> void:
         "reader_filters":
             reader_filters.merge(data)
             if data.has("scenes"):
-                _set_scenes_enabled(bool(data.get("scenes", true)))
+                var enabled := bool(data.scenes)
+                if pending_scene_mode == null or pending_scene_mode == enabled:
+                    pending_scene_mode = null
+                    _set_scenes_enabled(enabled, false)
             for model in books: model.apply_reader_filters(reader_filters)
             ui.number.visible = bool(data.get("page_numbers", false))
             ui.total.visible = bool(data.get("page_numbers", false))
@@ -874,6 +1002,7 @@ func _response(json: String) -> void:
             for existing in books:
                 if existing.token == replaced and not replaced.is_empty():
                     target = existing
+            var preserve_placement := target != null
             if target == null:
                 if book.token.is_empty():
                     target = book
@@ -910,7 +1039,7 @@ func _response(json: String) -> void:
             _preload(book.first_page)
             if workspace:
                 if data.has("manga"): workspace.active_manga = str(data.manga)
-                workspace.chapter_opened()
+                workspace.chapter_opened(preserve_placement)
             # Resumed chapters still need the first image for their cover.
             _request("page", {"token": chapter_token, "index": 0})
         "page":
@@ -983,13 +1112,16 @@ func _scroll_reader(distance: float) -> void:
     elif need != 0:
         _preload(book.first_page + need)
 
-func _set_passthrough(enabled: bool) -> void:
+func _set_passthrough(enabled: bool, hide_scene: bool = true) -> void:
+    if hide_scene:
+        _set_scenes_enabled(not enabled)
+        return
     var supported := xr and xr.get_supported_environment_blend_modes().has(XRInterface.XR_ENV_BLEND_MODE_ALPHA_BLEND)
     var active: bool = enabled and supported
     passthrough_enabled = active
     if is_instance_valid(passthrough_dimmer): passthrough_dimmer.visible = active and not scenes_enabled
     if is_instance_valid(room):
-        room.visible = scenes_enabled
+        room.visible = scenes_enabled and ui.graphics_room_detail
     get_viewport().transparent_bg = active
     environment.environment.background_color = Color(0.0, 0.0, 0.0, 0.0 if active else 1.0)
     if xr:
@@ -997,13 +1129,14 @@ func _set_passthrough(enabled: bool) -> void:
     if enabled and not supported:
         status.text = _label("Passthrough unavailable; using black")
 
-func _set_scenes_enabled(enabled: bool) -> void:
+func _set_scenes_enabled(enabled: bool, persist: bool = true) -> void:
     scenes_enabled = enabled
-    if is_instance_valid(passthrough_dimmer): passthrough_dimmer.visible = passthrough_enabled and not enabled
+    _set_passthrough(not enabled, false)
     if ui:
         ui.save()
-    if is_instance_valid(room):
-        room.visible = scenes_enabled
+    if persist:
+        pending_scene_mode = enabled if bridge else null
+        _request("scene_mode", {"enabled": enabled})
 
 func _process(_delta: float) -> void:
     if workspace:
@@ -1041,7 +1174,7 @@ func _process(_delta: float) -> void:
     for hand in ["left", "right"]:
         if hand == preferred_hand or not tracked.has(hand): continue
         var menu_tracker := XRServer.get_tracker("/user/hand_tracker/" + hand) as XRHandTracker
-        if HandVisual.natural_tracking(menu_tracker) and hand_controls.seeker_facing(menu_tracker, palm_revealed):
+        if ui.gestures.palm_menu and HandVisual.natural_tracking(menu_tracker) and hand_controls.seeker_facing(menu_tracker, palm_revealed):
             palm_visible = true
             palm_hand = hand
             palm_position = origin.global_transform * menu_tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
@@ -1068,7 +1201,7 @@ func _process(_delta: float) -> void:
             natural_hand = true
             var required := XRHandTracker.HAND_JOINT_FLAG_POSITION_TRACKED
             var palm := origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM)
-            chopping = hand_controls.edge_hand(tracker, tracked[hand].get("chopping", false))
+            chopping = ui.gestures.page_turn and hand_controls.edge_hand(tracker, tracked[hand].get("chopping", false))
             # Quest can briefly report a valid palm without the TRACKED bit
             # while the fingers are occluded.  Keep fist/body capture alive
             # through that frame; the pose validity check still rejects stale
@@ -1077,7 +1210,7 @@ func _process(_delta: float) -> void:
             var pinch_tracked := (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP) & required) != 0 and (tracker.get_hand_joint_flags(XRHandTracker.HAND_JOINT_THUMB_TIP) & required) != 0
             finger_tracked = hand_controls._position_available(tracker, XRHandTracker.HAND_JOINT_INDEX_FINGER_TIP)
             tracked[hand].was_fist = tracked[hand].get("fist", false)
-            tracked[hand].fist = palm_tracked and hand_controls.is_fist(tracker, tracked[hand].was_fist)
+            tracked[hand].fist = ui.gestures.fist_grab and palm_tracked and hand_controls.is_fist(tracker, tracked[hand].was_fist)
             valid = finger_tracked or (palm_tracked and (chopping or tracked[hand].fist))
             chopping = chopping and palm_tracked
             if valid:
@@ -1121,23 +1254,23 @@ func _process(_delta: float) -> void:
             tracked[hand].ray.global_position = pointer_origin
             tracked[hand].ray.look_at(pointer_origin + direction, Vector3.UP)
         ui_hand = hand
-        var closing: bool = hand_touch.update_close(hand, tip, valid and finger_tracked and natural_hand, pressed)
+        var closing: bool = hand_touch.update_close(hand, tip, ui.gestures.touch and valid and finger_tracked and natural_hand, pressed)
         var touching_popup: bool = natural_hand and finger_tracked and hand_touch.near_popup(tip)
-        var joystick: bool = hand_controls.joystick(hand, tracker, valid and natural_hand and not closing, _delta)
-        var hud_resizing: bool = hand_controls.resize_hud(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
-        var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
+        var joystick: bool = hand_controls.joystick(hand, tracker, ui.gestures.depth and valid and natural_hand and not closing, _delta)
+        var hud_resizing: bool = hand_controls.resize_hud(hand, tip, ui.gestures.resize and valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
+        var resizing: bool = hud_resizing or hand_controls.resize(hand, tip, ui.gestures.resize and valid and natural_hand and not joystick and not chopping, pressed and not tracked[hand].get("fist", false))
         # Vertical page contact takes priority over the broad edge-hand pose;
         # a phone-style swipe often also looks like a chopping hand.
-        var scrolling: bool = hand_controls.swipe(hand, tip, valid and finger_tracked and natural_hand and not closing and not touching_popup and not resizing and not joystick, pressed, _delta)
+        var scrolling: bool = hand_controls.swipe(hand, tip, ui.gestures.swipe_scroll and valid and finger_tracked and natural_hand and not closing and not touching_popup and not resizing and not joystick, pressed, _delta)
         var fist: bool = natural_hand and tracked[hand].get("fist", false)
         var sweep_tip := tip
         if valid and natural_hand and not fist and chopping:
             sweep_tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
         if fist and not resizing:
             tip = origin.global_transform * tracker.get_hand_joint_transform(XRHandTracker.HAND_JOINT_PALM).origin
-        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, valid and natural_hand and not closing and not touching_popup and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
+        var sweeping: bool = hand_page_turn.update(hand, sweep_tip, ui.gestures.page_turn and valid and natural_hand and not closing and not touching_popup and not resizing and not scrolling and not fist and not joystick, pressed and not chopping, _delta)
         var chopping_book: bool = not fist and not touching_popup and chopping and book.visible and not book.preview_only and (book.scroll_mode or book.openness >= 0.8) and hand_page_turn.in_volume(book.to_local(sweep_tip))
-        var touching: bool = hand_touch.update(hand, tip, valid and finger_tracked and natural_hand and not closing and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
+        var touching: bool = hand_touch.update(hand, tip, ui.gestures.touch and valid and finger_tracked and natural_hand and not closing and not chopping_book and not sweeping and not resizing and not scrolling and not fist, pressed)
         # A body/window capture owns its release even when opening the hand
         # looks like a chopping pose inside the screen's page-turn volume.
         if (holder == hand and moving) or window_holder == hand or (not closing and not chopping_book and not sweeping and not touching and not resizing and not scrolling and not joystick):
@@ -1522,7 +1655,24 @@ func _panel_input(start: Vector3, direction: Vector3, pressed: bool, previous: b
         motion.global_position = pixel
         motion.button_mask = MOUSE_BUTTON_MASK_LEFT if pressed else 0
         panel.viewport.push_input(motion, true)
-        if workspace and workspace.drag_scroll(panel, pixel, pressed, previous):
+        # Scrollable cards hold the initial press until the movement is known;
+        # otherwise a downward swipe can activate the book card underneath it.
+        var scroll_handled: bool = workspace != null and workspace.drag_scroll(panel, pixel, pressed, previous)
+        if scroll_handled:
+            var pending_tap := not bool(ui_capture.get("scroll_drag", false)) and not pressed and bool(ui_capture.get("scroll_pending", false))
+            if pending_tap:
+                var tap_down := InputEventMouseButton.new()
+                tap_down.position = ui_capture.pixel
+                tap_down.global_position = tap_down.position
+                tap_down.button_index = MOUSE_BUTTON_LEFT
+                tap_down.pressed = true
+                panel.viewport.push_input(tap_down, true)
+                var tap_up := InputEventMouseButton.new()
+                tap_up.position = pixel
+                tap_up.global_position = pixel
+                tap_up.button_index = MOUSE_BUTTON_LEFT
+                tap_up.pressed = false
+                panel.viewport.push_input(tap_up, true)
             if not pressed:
                 ui_capture.clear()
             return true

@@ -375,4 +375,7 @@
 
 # KMK: Godot calls the bridge by reflection from native code.
 -keep class eu.kanade.tachiyomi.ui.vr.HouriVrBridge { *; }
+# Godot's JNI engine looks up Java callbacks by name (including restart and
+# setKeepScreenOn). Preserve its runtime members in optimized APKs.
+-keep class org.godotengine.godot.** { *; }
 -keep class org.godotengine.openxr.vendors.** { *; }

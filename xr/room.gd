@@ -190,18 +190,31 @@ func _build_furniture(node: Node) -> void:
         if node.name in STOOL_MESHES or node.name in BOOTH_MESHES:
             var seat_height := box.end.y if node.name in STOOL_MESHES else box.position.y + 0.47
             _surface_collision(Vector3(box.size.x, seat_height - floor_y, box.size.z), Vector3(box.get_center().x, (floor_y + seat_height) * 0.5, box.get_center().z), node.name + "SeatSurface")
-            var point := Marker3D.new()
-            point.name = "SeatPoint_%02d" % seat_points.size()
-            point.position = Vector3(box.get_center().x, seat_height, box.get_center().z)
-            point.set_meta("seat_group", String(node.name))
-            point.set_meta("seat_index", seat_points.size())
-            point.set_meta("interactable", true)
-            point.set_meta("movable", true)
-            point.set_meta("target_kind", "seat")
-            point.set_meta("seat_height", point.position.y)
-            point.set_meta("reach_radius", 0.72)
-            add_child(point)
-            seat_points.append(point)
+            var count := 1
+            if node.name in BOOTH_MESHES:
+                var length := maxf(box.size.x, box.size.z)
+                count = clampi(int(ceil(length / 0.62)), 2, 4)
+            var along_x := box.size.x >= box.size.z
+            for seat_index in count:
+                var fraction := 0.5 if count == 1 else float(seat_index + 1) / float(count + 1)
+                var seat_position := Vector3(box.get_center().x, seat_height, box.get_center().z)
+                if along_x:
+                    seat_position.x = lerpf(box.position.x + 0.16, box.end.x - 0.16, fraction)
+                else:
+                    seat_position.z = lerpf(box.position.z + 0.16, box.end.z - 0.16, fraction)
+                var point := Marker3D.new()
+                point.name = "SeatPoint_%02d" % seat_points.size()
+                point.position = seat_position
+                point.set_meta("seat_group", String(node.name))
+                point.set_meta("seat_index", seat_points.size())
+                point.set_meta("booth_seat_index", seat_index)
+                point.set_meta("interactable", true)
+                point.set_meta("movable", true)
+                point.set_meta("target_kind", "seat")
+                point.set_meta("seat_height", point.position.y)
+                point.set_meta("reach_radius", 0.72)
+                add_child(point)
+                seat_points.append(point)
     for child in node.get_children():
         _build_furniture(child)
 

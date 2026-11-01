@@ -1,6 +1,10 @@
 extends RefCounted
 
 const ACTIONS = ["Next page", "Previous page", "Interact", "Grab", "Book Options", "Library", "Center", "Switch hands", "See through", "None"]
+const GRAPHICS_PRESETS := {
+    "quest_3s": {"eye_scale": 1.0, "ui_scale": 1.50, "foveation": 0, "dynamic_foveation": false, "refresh_rate": 72.0, "msaa": 2, "room_detail": true},
+    "quest_3": {"eye_scale": 1.10, "ui_scale": 1.50, "foveation": 0, "dynamic_foveation": false, "refresh_rate": 90.0, "msaa": 2, "room_detail": true},
+}
 var palette: Dictionary = {}
 var palette_id := "questium_frost"
 var palette_icons: Dictionary = {}
@@ -26,6 +30,15 @@ var swipe_start := Vector2.ZERO
 var swiping := false
 var swipe_eligible := false
 var book_settings_section := ""
+var graphics_preset := "quest_3s"
+var graphics_eye_scale := 1.0
+var graphics_ui_scale := 1.50
+var graphics_foveation := 0
+var graphics_dynamic_foveation := false
+var graphics_refresh_rate := 72.0
+var graphics_msaa := 2
+var graphics_room_detail := true
+var gestures := {"palm_menu": true, "depth": true, "resize": true, "swipe_scroll": true, "page_turn": true, "touch": true, "fist_grab": true}
 
 func _init(host: Node3D) -> void:
     reader = host
@@ -80,6 +93,8 @@ func apply_palette(id: String, colors: Dictionary) -> void:
 
 func load_config() -> void:
     config.load(config_path)
+    for key in gestures:
+        gestures[key] = bool(config.get_value("gestures", key, true))
     reader.preferred_hand = str(config.get_value("reader", "hand", "right"))
     reader.haptics = bool(config.get_value("reader", "haptics", true))
     reader.scenes_enabled = bool(config.get_value("reader", "scenes", true))
@@ -88,6 +103,26 @@ func load_config() -> void:
     book_sfx = bool(config.get_value("reader", "book_sfx", true))
     reading_direction = str(config.get_value("reader", "reading_direction", "auto"))
     if reading_direction not in ["auto", "ltr", "rtl"]: reading_direction = "auto"
+    graphics_preset = str(config.get_value("graphics", "preset", "quest_3s"))
+    if graphics_preset not in ["quest_3s", "quest_3", "custom"]: graphics_preset = "quest_3s"
+    var default_graphics: Dictionary = GRAPHICS_PRESETS.get(graphics_preset, GRAPHICS_PRESETS.quest_3s)
+    graphics_eye_scale = float(config.get_value("graphics", "eye_scale", default_graphics.eye_scale))
+    graphics_ui_scale = float(config.get_value("graphics", "ui_scale", default_graphics.ui_scale))
+    graphics_foveation = clampi(int(config.get_value("graphics", "foveation", default_graphics.foveation)), 0, 3)
+    graphics_dynamic_foveation = bool(config.get_value("graphics", "dynamic_foveation", default_graphics.dynamic_foveation))
+    graphics_refresh_rate = float(config.get_value("graphics", "refresh_rate", default_graphics.refresh_rate))
+    graphics_msaa = clampi(int(config.get_value("graphics", "msaa", default_graphics.msaa)), 1, 3)
+    graphics_room_detail = bool(config.get_value("graphics", "room_detail", default_graphics.room_detail))
+    # Named presets follow updated defaults; manual changes are saved as custom.
+    # This also upgrades existing installs that saved the old blurry presets.
+    if graphics_preset != "custom":
+        graphics_eye_scale = float(default_graphics.eye_scale)
+        graphics_ui_scale = float(default_graphics.ui_scale)
+        graphics_foveation = int(default_graphics.foveation)
+        graphics_dynamic_foveation = bool(default_graphics.dynamic_foveation)
+        graphics_refresh_rate = float(default_graphics.refresh_rate)
+        graphics_msaa = int(default_graphics.msaa)
+        graphics_room_detail = bool(default_graphics.room_detail)
     for model in reader.books: model.set_reading_direction(reading_direction)
     for key in reader.bindings:
         var saved := str(config.get_value("buttons", key, reader.bindings[key]))
@@ -99,6 +134,8 @@ func load_config() -> void:
         save()
 
 func save() -> void:
+    for key in gestures:
+        config.set_value("gestures", key, gestures[key])
     config.set_value("reader", "controls_version", 1)
     for key in reader.bindings:
         config.set_value("buttons", key, reader.bindings[key])
@@ -106,7 +143,47 @@ func save() -> void:
     config.set_value("reader", "haptics", reader.haptics)
     config.set_value("reader", "scenes", reader.scenes_enabled)
     config.set_value("reader", "book_sfx", book_sfx)
+    save_graphics()
     config.save(config_path)
+
+func save_graphics() -> void:
+    config.set_value("graphics", "preset", graphics_preset)
+    config.set_value("graphics", "eye_scale", graphics_eye_scale)
+    config.set_value("graphics", "ui_scale", graphics_ui_scale)
+    config.set_value("graphics", "foveation", graphics_foveation)
+    config.set_value("graphics", "dynamic_foveation", graphics_dynamic_foveation)
+    config.set_value("graphics", "refresh_rate", graphics_refresh_rate)
+    config.set_value("graphics", "msaa", graphics_msaa)
+    config.set_value("graphics", "room_detail", graphics_room_detail)
+
+func apply_graphics_preset(value: String) -> void:
+    if not GRAPHICS_PRESETS.has(value): return
+    var preset: Dictionary = GRAPHICS_PRESETS[value]
+    graphics_preset = value
+    graphics_eye_scale = float(preset.eye_scale)
+    graphics_ui_scale = float(preset.ui_scale)
+    graphics_foveation = int(preset.foveation)
+    graphics_dynamic_foveation = bool(preset.dynamic_foveation)
+    graphics_refresh_rate = float(preset.refresh_rate)
+    graphics_msaa = int(preset.msaa)
+    graphics_room_detail = bool(preset.room_detail)
+    save_graphics()
+    config.save(config_path)
+    reader.apply_graphics_settings()
+
+func set_graphics_value(key: String, value: Variant) -> void:
+    graphics_preset = "custom"
+    match key:
+        "eye_scale": graphics_eye_scale = clampf(float(value), 0.75, 1.15)
+        "ui_scale": graphics_ui_scale = clampf(float(value), 1.0, 1.6)
+        "foveation": graphics_foveation = clampi(int(value), 0, 3)
+        "dynamic_foveation": graphics_dynamic_foveation = bool(value)
+        "refresh_rate": graphics_refresh_rate = float(value)
+        "msaa": graphics_msaa = clampi(int(value), 1, 3)
+        "room_detail": graphics_room_detail = bool(value)
+    save_graphics()
+    config.save(config_path)
+    reader.apply_graphics_settings()
 
 func apply_book_settings() -> void:
     reader.book.set_reading_direction(reading_direction)
@@ -204,6 +281,9 @@ func build() -> void:
     reader.toolbar_view = panel.viewport
     var column: VBoxContainer = panel.content
     reader.title = label(column, "Questium", 30)
+    reader.title.clip_text = true
+    reader.title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+    reader.title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     line(column)
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", 16)
@@ -411,6 +491,8 @@ func settings_surface(radius: int = 32) -> StyleBoxFlat:
     return panel
 
 func theme_settings(node: Node) -> void:
+    if node is TextureRect and node.has_meta("theme_primary_icon"):
+        node.modulate = theme_color("primary", Color(0.77, 0.97, 0.15))
     if node is Label:
         if not node.has_meta("original_font_color"): node.set_meta("original_font_color", node.get_theme_color("font_color"))
         node.add_theme_color_override("font_color", theme_color("on_surface", node.get_meta("original_font_color")))
@@ -564,6 +646,16 @@ func show_controllers() -> void:
         help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
         help.custom_minimum_size.x = 620
     line(rows)
+    render_bindings(rows, diagrams)
+    label(content, "Scroll for the control guide and button assignments", 16)
+    var bottom := HBoxContainer.new()
+    content.add_child(bottom)
+    reader._button(bottom, "Switch hands", func(): perform("Switch hands"))
+    reader._button(bottom, "Reset controls", reset_controls)
+    reader._button(bottom, "Back", show_settings)
+    theme_settings(content)
+
+func render_bindings(rows: Container, diagrams: Node = null) -> void:
     for key in reader.bindings:
         var binding_key: String = key
         var row := HBoxContainer.new()
@@ -579,17 +671,10 @@ func show_controllers() -> void:
         choice.item_selected.connect(func(index: int):
             reader.bindings[binding_key] = ACTIONS[index]
             save()
-            for diagram in diagrams.get_children():
-                diagram.queue_redraw()
+            if is_instance_valid(diagrams):
+                for diagram in diagrams.get_children(): diagram.queue_redraw()
             haptic(reader.ui_hand)
         )
-    label(content, "Scroll for the control guide and button assignments", 16)
-    var bottom := HBoxContainer.new()
-    content.add_child(bottom)
-    reader._button(bottom, "Switch hands", func(): perform("Switch hands"))
-    reader._button(bottom, "Reset controls", reset_controls)
-    reader._button(bottom, "Back", show_settings)
-    theme_settings(content)
 
 func reset_controls() -> void:
     reader._cancel_interactions()
