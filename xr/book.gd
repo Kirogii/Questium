@@ -149,7 +149,7 @@ func _ready() -> void:
         add_child(cover)
         body_parts.append(cover)
         var paper_stack := MeshInstance3D.new()
-        paper_stack.mesh = GEOMETRY.stack(side, PAGE_WIDTH, PAGE_HEIGHT, REST_ANGLE)
+        paper_stack.mesh = GEOMETRY.stack(side, PAGE_WIDTH, PAGE_HEIGHT)
         var paper_material := ShaderMaterial.new()
         paper_material.shader = preload("res://paper_stack.gdshader")
         paper_stack.material_override = paper_material
@@ -263,7 +263,7 @@ func set_hard_cover(enabled: bool) -> void:
         body_parts[index].material_override.roughness = 0.82
     body_parts[0].position.z = -board_offset
     for entry in [[1, -1], [3, 1]]:
-        body_parts[entry[0]].mesh = GEOMETRY.stack(entry[1], PAGE_WIDTH, PAGE_HEIGHT, REST_ANGLE, 0.008 if enabled else 0.0016)
+        body_parts[entry[0]].mesh = GEOMETRY.stack(entry[1], PAGE_WIDTH, PAGE_HEIGHT, 0.008 if enabled else 0.0016)
     if enabled:
         var spine := CylinderMesh.new()
         spine.top_radius = 0.006

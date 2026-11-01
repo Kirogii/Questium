@@ -86,8 +86,7 @@ func sync() -> void:
             pose.origin.z = book.scroll_screen.position.z
         else:
             var side := -1.0 if index == 0 else 1.0
-            pose.basis = Basis(Vector3.UP, -side * book.REST_ANGLE)
-            pose.origin = Vector3(side * book.PAGE_WIDTH * cos(book.REST_ANGLE) / 2, 0, book.PAGE_WIDTH * sin(book.REST_ANGLE) / 2)
+            pose.origin.x = side * book.PAGE_WIDTH / 2
         entry.camera.size = size.y
         entry.camera.transform = Transform3D(pose.basis, pose.origin + pose.basis.z)
         for slot in sources.size():
@@ -101,7 +100,7 @@ func sync() -> void:
             suppressed[source] = source.layers
             source.layers = 0
         var world_pose: Transform3D = book.global_transform * pose
-        # Separate the depth mask from the curved paper stack to avoid stripes.
+        # Keep the depth mask ahead of the paper stack without tilting it off the page.
         world_pose.origin += world_pose.basis.z * PAGE_CLEARANCE
         entry.layer.global_transform = Transform3D(world_pose.basis.orthonormalized(), world_pose.origin)
         entry.layer.quad_size = size * Vector2(world_pose.basis.x.length(), world_pose.basis.y.length())

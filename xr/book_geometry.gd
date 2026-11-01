@@ -33,16 +33,16 @@ static func cover(size: Vector3) -> ArrayMesh:
     mesh.generate_normals()
     return mesh.commit()
 
-# Top follows the resting leaf with clearance below its printed surface.
-static func stack(side: int, width: float, height: float, rest_angle: float = 0.035, thickness: float = 0.0016) -> ArrayMesh:
+# Keep the paper block flat behind the page surface; its parent follows the leaf.
+static func stack(side: int, width: float, height: float, thickness: float = 0.0016) -> ArrayMesh:
     var mesh := SurfaceTool.new()
     mesh.begin(Mesh.PRIMITIVE_TRIANGLES)
     for section in range(64):
         for face in range(4):
             var points: Array[Vector3] = []
             for u in [float(section) / 64, float(section + 1) / 64]:
-                var x: float = side * (u * width * cos(rest_angle) - sin(rest_angle) * 0.002 * sin(u * PI))
-                var z: float = u * width * sin(rest_angle) + sin(rest_angle) * 0.002 * sin(u * PI) - 0.0005
+                var x: float = side * u * width
+                var z := -0.0005
                 if face < 2:
                     for y in [-height / 2, height / 2]:
                         points.append(Vector3(x, y, z - face * thickness))
@@ -52,8 +52,8 @@ static func stack(side: int, width: float, height: float, rest_angle: float = 0.
             for i in [0, 1, 2, 2, 1, 3]:
                 mesh.set_uv(Vector2(points[i].x / width, points[i].z / thickness))
                 mesh.add_vertex(points[i])
-    var x := side * width * cos(rest_angle)
-    var z := width * sin(rest_angle) - 0.0005
+    var x := side * width
+    var z := -0.0005
     for v in [Vector3(x, -height / 2, z), Vector3(x, height / 2, z), Vector3(x, -height / 2, z - thickness), Vector3(x, -height / 2, z - thickness), Vector3(x, height / 2, z), Vector3(x, height / 2, z - thickness)]:
         mesh.set_uv(Vector2(v.y / height, v.z / thickness))
         mesh.add_vertex(v)

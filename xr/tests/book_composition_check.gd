@@ -46,9 +46,15 @@ func check() -> void:
     book.scale = Vector3.ONE * 1.3
     compositor.sync()
     assert(compositor.entries[0].layer.quad_size.is_equal_approx(Vector2(0.28, 0.40) * 1.3))
-    var page_normal: Vector3 = book.global_basis * Basis(Vector3.UP, book.REST_ANGLE).z
-    var page_center: Vector3 = book.global_transform * Vector3(-book.PAGE_WIDTH * cos(book.REST_ANGLE) / 2, 0, book.PAGE_WIDTH * sin(book.REST_ANGLE) / 2)
+    var page_normal: Vector3 = book.global_basis.z
+    var page_center: Vector3 = book.global_transform * Vector3(-book.PAGE_WIDTH / 2, 0, 0)
     assert(is_equal_approx((compositor.entries[0].layer.global_position - page_center).dot(page_normal.normalized()), compositor.PAGE_CLEARANCE * 1.3), "Depth mask clears the paper stack at the book's scale")
+    var geometry = load("res://book_geometry.gd")
+    for side in [-1, 1]:
+        var stack: ArrayMesh = geometry.stack(side, book.PAGE_WIDTH, book.PAGE_HEIGHT, 0.008)
+        var vertices: PackedVector3Array = stack.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+        for vertex in vertices:
+            assert(vertex.z < 0.0, "Paper stack stays behind the printed page surface")
     assert(book.begin_turn(1))
     compositor.sync()
     assert(not compositor.entries[0].layer.visible and book.left_leaf.layers != 0, "Animated pages use the original 3D geometry")
